@@ -1,6 +1,14 @@
 #ifndef EI_HTTP_DOCS_H
 #define EI_HTTP_DOCS_H
 
+#ifdef EI_GEMMA2
+#define EI_DOC_MODEL "embeddinggemma-2"
+#define EI_DOC_PORT "42667"
+#else
+#define EI_DOC_MODEL "embeddinggemma-300m"
+#define EI_DOC_PORT "42666"
+#endif
+
 static const char EI_ROOT_JSON[] =
     "{\"name\":\"embeddinggemma\",\"status\":\"ok\","
     "\"docs\":\"/docs\",\"openapi\":\"/openapi.json\","
@@ -56,7 +64,7 @@ static const char EI_DOCS_HTML[] =
     "<pre>{\"status\":\"ok\"}</pre></section>\n"
     "<section><h2><span class=\"method get\">GET</span><code>/api/tags</code></h2>"
     "<p>Lists the model exposed by this server.</p>"
-    "<pre>{\"models\":[{\"name\":\"embeddinggemma-300m\"}]}</pre></section>\n"
+    "<pre>{\"models\":[{\"name\":\"" EI_DOC_MODEL "\"}]}</pre></section>\n"
     "<section><h2><span class=\"method post\">POST</span><code>/api/embed</code></h2>"
     "<p>Embeds one string or an array of strings. Text is processed exactly as "
     "provided; include the EmbeddingGemma prompt prefix for your task, such as "
@@ -69,7 +77,7 @@ static const char EI_DOCS_HTML[] =
     "<td><code>dimensions</code></td><td>integer</td><td>768, 512, 256, or 128; "
     "default 768</td></tr><tr><td><code>encoding_format</code></td><td>string</td>"
     "<td><code>float</code> or <code>base64</code>; default float</td></tr>"
-    "</tbody></table><pre>curl -sS http://127.0.0.1:42666/api/embed \\\n"
+    "</tbody></table><pre>curl -sS http://127.0.0.1:" EI_DOC_PORT "/api/embed \\\n"
     "  -H 'Content-Type: application/json' \\\n"
     "  -d '{\"input\":[\"task: search result | query: what powers the cell\"],"
     "\"dimensions\":256}'</pre><pre>{\"embeddings\":[[0.0123, -0.0456, ...]]}</pre>"
@@ -80,14 +88,27 @@ static const char EI_DOCS_HTML[] =
     "dimensions, and encoding formats as <code>/api/embed</code>, requires a "
     "model name, and returns the OpenAI list envelope with per-item indexes "
     "and tokenizer usage.</p>"
-    "<pre>curl -sS http://127.0.0.1:42666/v1/embeddings \\\n"
+    "<pre>curl -sS http://127.0.0.1:" EI_DOC_PORT "/v1/embeddings \\\n"
     "  -H 'Content-Type: application/json' \\\n"
-    "  -d '{\"model\":\"embeddinggemma-300m\",\"input\":["
+    "  -d '{\"model\":\"" EI_DOC_MODEL "\",\"input\":["
     "\"task: search result | query: what powers the cell\"]}'</pre>"
     "<pre>{\"object\":\"list\",\"data\":[{\"object\":\"embedding\","
     "\"embedding\":[0.0123, -0.0456, ...],\"index\":0}],"
-    "\"model\":\"embeddinggemma-300m\",\"usage\":{\"prompt_tokens\":10,"
+    "\"model\":\"" EI_DOC_MODEL "\",\"usage\":{\"prompt_tokens\":10,"
     "\"total_tokens\":10}}</pre></section>\n"
+#ifdef EI_GEMMA2
+    "<section><h2>Images, audio, video and mixed inputs</h2>"
+    "<p>Both embedding routes accept an input object with ordered content parts, "
+    "or an array of these objects. Text parts contain a text string; image, audio "
+    "and video parts contain base64 bytes in data. A video part can set fps "
+    "(default 1, maximum 30). Include model for the OpenAI route.</p>"
+    "<pre>{\"input\":{\"content\":[{\"type\":\"text\",\"text\":\"A red square\"},"
+    "{\"type\":\"image\",\"data\":\"BASE64_BYTES\"}]},\"dimensions\":256}</pre>"
+    "<p>Inputs are limited to 64 parts, 8192 tokens, 32 sampled video frames, "
+    "16 megapixels per image/frame, 327.68 seconds per audio part, and 128 MiB "
+    "of decoded input/frame buffers. The HTTP body limit is 16 MiB. "
+    "Requests for an unloaded encoder are rejected.</p></section>\n"
+#endif
     "</main>\n"
     "</body>\n"
     "</html>\n";
@@ -97,7 +118,7 @@ static const char EI_OPENAPI_JSON[] =
     "\"openapi\":\"3.1.0\","
     "\"info\":{\"title\":\"embeddinggemma API\",\"version\":\"1.0.0\","
     "\"description\":\"Local EmbeddingGemma inference API.\"},"
-    "\"servers\":[{\"url\":\"http://127.0.0.1:42666\"}],"
+    "\"servers\":[{\"url\":\"http://127.0.0.1:" EI_DOC_PORT "\"}],"
     "\"paths\":{"
     "\"/\":{\"get\":{\"summary\":\"Service discovery\",\"responses\":{"
     "\"200\":{\"description\":\"Service metadata\",\"content\":{"
@@ -142,9 +163,24 @@ static const char EI_OPENAPI_JSON[] =
     "\"EmbedRequest\":{\"type\":\"object\",\"required\":[\"input\"],\"properties\":{"
     "\"model\":{\"type\":\"string\"},\"input\":{\"oneOf\":[{\"type\":\"string\"},"
     "{\"type\":\"array\",\"items\":{\"type\":\"string\"},\"minItems\":1,"
-    "\"maxItems\":32}]},\"dimensions\":{\"type\":\"integer\","
+    "\"maxItems\":32}"
+#ifdef EI_GEMMA2
+    ",{\"$ref\":\"#/components/schemas/MediaInput\"},{\"type\":\"array\","
+    "\"items\":{\"$ref\":\"#/components/schemas/MediaInput\"},\"minItems\":1,\"maxItems\":32}"
+#endif
+    "]},\"dimensions\":{\"type\":\"integer\","
     "\"enum\":[768,512,256,128],\"default\":768},\"encoding_format\":{"
     "\"type\":\"string\",\"enum\":[\"float\",\"base64\"],\"default\":\"float\"}}},"
+#ifdef EI_GEMMA2
+    "\"MediaInput\":{\"type\":\"object\",\"required\":[\"content\"],\"properties\":{"
+    "\"content\":{\"type\":\"array\",\"minItems\":1,\"maxItems\":64,\"items\":{\"oneOf\":["
+    "{\"type\":\"object\",\"required\":[\"type\",\"text\"],\"properties\":{"
+    "\"type\":{\"const\":\"text\"},\"text\":{\"type\":\"string\"}}},"
+    "{\"type\":\"object\",\"required\":[\"type\",\"data\"],\"properties\":{"
+    "\"type\":{\"enum\":[\"image\",\"audio\",\"video\"]},\"data\":{\"type\":\"string\","
+    "\"description\":\"Base64 media bytes or a base64 data URL\"},"
+    "\"fps\":{\"type\":\"number\",\"exclusiveMinimum\":0,\"maximum\":30,\"default\":1}}}]}}}},"
+#endif
     "\"EmbedResponse\":{\"type\":\"object\",\"required\":[\"embeddings\"],"
     "\"properties\":{\"embeddings\":{\"type\":\"array\",\"items\":{\"oneOf\":[{"
     "\"type\":\"array\",\"items\":{\"type\":\"number\",\"format\":\"float\"}},{"

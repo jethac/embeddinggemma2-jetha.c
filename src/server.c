@@ -57,15 +57,16 @@ static int ei_setsockopt(ei_socket fd, int level, int name,
 #ifdef EI_GEMMA2
 #define MODEL_URL "https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf"
 #define DEFAULT_MODEL_NAME "embeddinggemma-2"
+#define EMBEDDINGGEMMA_DEFAULT_PORT 42667
 #define DEFAULT_MODEL_FILE "embeddinggemma-2-Q8_0.gguf"
 #define PROJECT_NAME "embeddinggemma2-jetha.c"
 #else
 #define MODEL_URL "https://huggingface.co/ggml-org/embeddinggemma-300M-qat-q4_0-GGUF/resolve/main/embeddinggemma-300M-qat-Q4_0.gguf"
 #define DEFAULT_MODEL_NAME "embeddinggemma-300m"
+#define EMBEDDINGGEMMA_DEFAULT_PORT 42666
 #define DEFAULT_MODEL_FILE "embeddinggemma-300M-qat-Q4_0.gguf"
 #define PROJECT_NAME "embeddinggemma.c"
 #endif
-#define EMBEDDINGGEMMA_DEFAULT_PORT 42666
 #define MAX_BODY_BYTES (16u * 1024u * 1024u)
 #define MAX_HEADER_BYTES (64u * 1024u)
 
@@ -795,6 +796,12 @@ static void handle_embed(ei_socket fd, ei_inference_service *service,
                          ei_response_cache *response_cache,
                          embedding_api api) {
     char err[256];
+    sv_string model = {0};
+    if (api == EMBEDDING_API_OPENAI &&
+        !parse_required_model(body, &model, err, sizeof err)) {
+        openai_http_error(fd, 400, "Bad Request", err, "model", keep_alive);
+        return;
+    }
 #ifdef EI_GEMMA2
     const char *input_field = find_json_field(body, "input");
     if (input_field) {
@@ -823,18 +830,13 @@ static void handle_embed(ei_socket fd, ei_inference_service *service,
             embedding_http_error(fd, api, 400, "Bad Request", err, "input", keep_alive);
         }
         free(key); free(response);
+        free(model.s);
         return;
     }
 #endif
     string_list inputs = {0};
-    sv_string model = {0};
     int32_t dimensions;
     embedding_encoding encoding;
-    if (api == EMBEDDING_API_OPENAI &&
-        !parse_required_model(body, &model, err, sizeof err)) {
-        openai_http_error(fd, 400, "Bad Request", err, "model", keep_alive);
-        return;
-    }
     if (!parse_embed_request(body, &inputs, &dimensions, &encoding,
                              err, sizeof err)) {
         free_inputs(&inputs);

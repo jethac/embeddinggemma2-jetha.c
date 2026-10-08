@@ -23,10 +23,10 @@ FetchContent_MakeAvailable(llama)
 # as a small, adoptable patch against the pinned media dependency.
 find_package(Git REQUIRED)
 set(EI_MTMD_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch")
-execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --reverse --check "${EI_MTMD_PATCH}"
+execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --reverse --check --ignore-space-change "${EI_MTMD_PATCH}"
     RESULT_VARIABLE EI_PATCH_PRESENT OUTPUT_QUIET ERROR_QUIET)
 if(NOT EI_PATCH_PRESENT EQUAL 0)
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply "${EI_MTMD_PATCH}"
+    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --ignore-space-change "${EI_MTMD_PATCH}"
         RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
     if(NOT EI_PATCH_RESULT EQUAL 0)
         message(FATAL_ERROR "Cannot apply pinned mtmd patch: ${EI_PATCH_ERROR}")

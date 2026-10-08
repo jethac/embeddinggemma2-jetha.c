@@ -230,6 +230,16 @@ Tests and documentation support that outcome; they do not define completion.
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates
   the legacy 300M foundation only. Makefile and release adaptation is unfinished.
+- OpenAI model-field validation now precedes text/media routing. Its observed
+  media-form bypass has a regression that failed before the fix; missing,
+  empty, and numeric model fields now return HTTP 400 with parameter `model`.
+  All five valid OpenAI modality journeys were exercised at 128 dimensions.
+  Served docs and OpenAPI now expose media inputs and this port's model/default
+  port (42667). The legacy model retains its existing default port.
+- Local WSL exposes the RTX 5060 Ti and CUDA 13.0. A CUDA build is in progress;
+  GPU execution and performance have not yet been validated. The Windows CPU
+  development service remains available. Linux configuration of a patched
+  Windows dependency checkout now tolerates CRLF/LF context differences.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
 
