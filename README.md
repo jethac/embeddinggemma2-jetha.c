@@ -8,6 +8,8 @@ The scope covers text, images, audio, video, and mixed inputs, with CPU SIMD
 (including AVX2 and AVX-512), accelerator execution, batching, and caching.
 See [GOAL.md](GOAL.md) for the full scope, implementation direction,
 performance requirements, acceptance criteria, and relationship to upstream.
+The release process will follow upstream's conventions where applicable, with
+this project's own names and an extended platform matrix.
 
 **Current status:** the original EmbeddingGemma 300M server and native Windows
 CPU foundation are present. EmbeddingGemma 2 inference has not been implemented

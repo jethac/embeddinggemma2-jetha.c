@@ -17,7 +17,8 @@ project name or impose maintenance work on its maintainers.
   and reviewable so upstream can cherry-pick what helps.
 - Record reference provenance, correctness results, benchmark methodology, and
   rejected experiments so maintainers do not have to repeat the investigation.
-- Keep this project's experimental branding and release process distinct.
+- Keep this project's experimental branding, release ownership, and version
+  history distinct. Reuse upstream's release process wherever it fits.
 - Do not open upstream issues, submit pull requests, or contact maintainers
   without the user's instruction. Local implementation can proceed independently
   of the inherited contributing guide's upstream issue-first policy.
@@ -74,6 +75,31 @@ implementation choice to validate, not a completed port or a proven speedup.
 Retain upstream attribution and record dependency revisions and licenses.
 Prefer specialization and reuse of validated optimized kernels over a Python
 inference subprocess. Revise the approach when measurement justifies it.
+
+## Release process
+
+Follow upstream's [RELEASE.md](RELEASE.md) conventions where applicable, adapting
+the repository, project/asset names, model, dependencies, and platform matrix.
+Do not invent a separate distribution workflow without a concrete need.
+
+- Build the complete supported release matrix from the same clean commit.
+- Build and validate on native platforms and matching accelerator hardware;
+  qualify the final staged executables as well as development builds.
+- Publish raw executables with stable asset names and `SHA256SUMS`. Keep model
+  weights and intermediate files out of releases. Preserve checksum-verified
+  installation and appropriate backend detection/fallback.
+- Strip binaries, sign and verify Darwin artifacts, and retain portable OS/ABI
+  baselines. CPU release binaries must dispatch safely across supported ISAs;
+  host-specific build flags are for local experiments.
+- Carry over accelerator code-object/runtime checks and include native Windows
+  in the qualified release matrix. Include dependency provenance and licenses
+  if the new encoder/kernel dependencies require additional notices or files.
+- Use this repository's own versions, tags, release destination, asset prefix,
+  and cache/install identity. Adapt inherited release scripts before using them
+  for publication; they currently target the original project.
+- Obtain approval for an exact release version before changing release versions,
+  tagging, or publishing, as required by the inherited release runbook. Creating
+  this public development repository does not publish a binary release.
 
 ## Validation and acceptance
 

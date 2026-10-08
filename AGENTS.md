@@ -1,4 +1,14 @@
-# Agent guide for embeddinggemma.c
+# Agent guide for embeddinggemma2-jetha.c
+
+Read `GOAL.md` first for this experimental port's scope, performance requirements,
+upstream relationship, release policy, and current state. User instructions and
+that project direction supersede the inherited 300M-only scope below. Keep
+changes useful and reviewable for upstream adoption. Follow the upstream release
+workflow where applicable, using this repository's own identity and destinations.
+
+The remaining guide is inherited from QuixiAI/embeddinggemma.c. Its performance
+results and remote build hosts are upstream context, not validated results for
+EmbeddingGemma 2 or authorization to use those machines.
 
 A tiny, model-specialized EmbeddingGemma-300M server with hand-tuned inference
 kernels per accelerator (CPU, Metal, CUDA, ROCm, XPU/SYCL). Model-specialization
