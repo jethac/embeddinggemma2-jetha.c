@@ -12,8 +12,8 @@ The release process will follow upstream's conventions where applicable, with
 this project's own names and an extended platform matrix.
 
 **Current status:** the model-specific C backbone and native media encoders run
-text, image, audio, video, and mixed requests on a Windows CPU development
-service. This is experimental: full reference parity, accelerator measurements,
+text, image, audio, video, and mixed requests on Windows CPU and Linux CUDA
+development services. This is experimental: full reference parity, accelerator measurements,
 portable CPU dispatch, media resource limits, and release integration remain
 unfinished. There are no binary releases or verified GPU/NPU performance claims.
 
@@ -43,8 +43,11 @@ loads both. Requests for an unloaded modality are rejected before decoding.
 The present default x86 kernel build requires AVX2/FMA/F16C; it does not yet
 dispatch safely across older CPUs. `-DGGML_AVX512=ON` enables a local hardware
 experiment on compatible CPUs. This is not a portable release configuration.
-GGML accelerator build options can be selected through CMake, but none has yet
-been validated for this port. The Linux CPU service build and image regression
+CUDA is exercised on an RTX 5060 Ti through Ubuntu under WSL with CUDA 13.0.
+Build with `-DGGML_CUDA=ON` and start with `--backend cuda`; this requires the
+CUDA toolkit at build time and a compatible NVIDIA driver at runtime. Both
+media encoders use CUDA as well as the backbone. Other accelerator backends
+remain unverified. The Linux CPU service build and image regression
 pass in CI; macOS builds remain unverified for this implementation.
 
 ```sh

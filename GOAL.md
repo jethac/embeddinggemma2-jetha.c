@@ -213,7 +213,7 @@ Tests and documentation support that outcome; they do not define completion.
   An encoder batching experiment was rejected on this CPU: the cache-disabled
   two-frame video warm median rose from 4050.7 to 4280.9 ms despite identical
   output. Revisit batching on accelerators using actual measurements.
-- Accelerator execution and portable CPU ISA dispatch,
+- Portable CPU ISA dispatch,
   complete media resource handling, and multimodal queue/batching/singleflight are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
 - Decoded media input now has bounds checked before image/PCM allocation:
@@ -236,10 +236,24 @@ Tests and documentation support that outcome; they do not define completion.
   All five valid OpenAI modality journeys were exercised at 128 dimensions.
   Served docs and OpenAPI now expose media inputs and this port's model/default
   port (42667). The legacy model retains its existing default port.
-- Local WSL exposes the RTX 5060 Ti and CUDA 13.0. A CUDA build is in progress;
-  GPU execution and performance have not yet been validated. The Windows CPU
-  development service remains available. Linux configuration of a patched
+- Local WSL exposes the RTX 5060 Ti and CUDA 13.0. The Linux CUDA executable
+  builds and serves all five modality journeys on localhost:42669; both media
+  encoders select CUDA. With cache disabled, exploratory warm medians included
+  320.7 ms for the 260-token image and 1521.4 ms for the 248-token video.
+  These timings were taken on a busy host and do not establish a CPU speedup.
+  Matching CPU/CUDA samples yielded cosine 0.999789 (text), 0.999948 (image),
+  0.999679 (audio), 0.999794 (video), and 0.999820 (mixed). These single-sample
+  comparisons do not establish full reference parity. The Windows CPU
+  development service remains available on localhost:42667. Linux configuration of a patched
   Windows dependency checkout now tolerates CRLF/LF context differences.
+- Initial fixed-shape ONNX exports of the backbone, vision, and audio encoders
+  run on CPU ONNX Runtime. Their assembled 294-token text/image/audio sample
+  matches the FP32 reference at cosine 0.99999994 (maximum element error
+  1.31e-7). Export avoids the reference's untraceable mask construction and
+  audio KV-window unfold while preserving its exact boolean attention mask.
+  These are FP32 graphs, totaling about 2.98 GB; BF16 NPU compilation, operator
+  placement, and execution remain untested because Strix Halo access is unresolved.
+  Successful CPU execution is not evidence of NPU compatibility.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
 
