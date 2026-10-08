@@ -20,7 +20,8 @@ or validated yet. There are no EmbeddingGemma 2 benchmark claims or releases.
 Based on [QuixiAI/embeddinggemma.c](https://github.com/QuixiAI/embeddinggemma.c),
 with Windows host-layer changes from
 [jethac/embeddinggemma.c](https://github.com/jethac/embeddinggemma.c).
-The inherited source is MIT licensed; see [LICENSE](LICENSE).
+The project remains MIT licensed, including new work; see [LICENSE](LICENSE).
+The original QuixiAI copyright notice is preserved.
 
 [UPSTREAM_README.md](UPSTREAM_README.md) preserves the original documentation
 and benchmark claims for the original 300M model. They do not establish

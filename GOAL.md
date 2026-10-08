@@ -5,6 +5,12 @@ starting from QuixiAI's MIT-licensed embeddinggemma.c and the native Windows
 host-layer contribution. Public home: `jethac/embeddinggemma2-jetha.c`.
 The distinct name avoids taking the natural upstream successor name.
 
+## License
+
+The project remains MIT licensed, including new implementation work. Preserve
+the existing `LICENSE` and QuixiAI copyright notice. Retain required attribution
+and notices for dependencies; model weights remain governed by their own license.
+
 ## Relationship to upstream
 
 This project is an experimental port intended to get ahead of upstream's
