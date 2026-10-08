@@ -343,6 +343,7 @@ void ei_engine_free(ei_engine *e) {
 }
 
 bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmproj_path,
+                          bool load_vision, bool load_audio,
                           char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     (void)model_path;
@@ -352,8 +353,16 @@ bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmpr
     media_params.device = s->n_backends > 1 ? ggml_backend_get_device(s->backends[0]) : NULL;
     media_params.n_threads = s->threads;
     media_params.warmup = false;
+    media_params.load_vision = load_vision;
+    media_params.load_audio = load_audio;
     s->media = mtmd_init_from_file(mmproj_path, s->vocab_model, media_params);
     if (!s->media) return fail(err, err_len, "cannot initialize modality encoders");
+    if ((load_vision && !mtmd_support_vision(s->media)) ||
+        (load_audio && !mtmd_support_audio(s->media))) {
+        mtmd_free(s->media);
+        s->media = NULL;
+        return fail(err, err_len, "mmproj does not contain the requested encoders");
+    }
     fprintf(stderr, "media encoders: vision=%d audio=%d video=%d\n",
             mtmd_support_vision(s->media), mtmd_support_audio(s->media),
             mtmd_helper_support_video(s->media));
@@ -417,6 +426,13 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     engine2 *s = e->gemma2;
     if (!s->media) return fail(err, err_len, "media encoders are not loaded; start with --mmproj PATH");
     if (!n_parts || n_parts > 64) return fail(err, err_len, "content must contain 1..64 parts");
+    // Reject unavailable modalities before decoding or allocating media buffers.
+    for (size_t i = 0; i < n_parts; i++) {
+        if ((parts[i].type == EI_PART_IMAGE || parts[i].type == EI_PART_VIDEO) &&
+            !mtmd_support_vision(s->media)) return fail(err, err_len, "vision encoder is not loaded");
+        if (parts[i].type == EI_PART_AUDIO && !mtmd_support_audio(s->media))
+            return fail(err, err_len, "audio encoder is not loaded");
+    }
     mtmd_input_part *inputs = ei_xcalloc(n_parts, sizeof *inputs);
     const mtmd_input_part *input_refs[64];
     mtmd_input_text *texts = ei_xcalloc(n_parts, sizeof *texts);

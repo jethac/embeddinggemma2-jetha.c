@@ -14,6 +14,7 @@ typedef struct {
 } ei_media_part;
 
 bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmproj_path,
+                          bool load_vision, bool load_audio,
                           char *err, size_t err_len);
 bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
                            float out[EI_N_EMBD], size_t *tokens, double *encoder_ms,

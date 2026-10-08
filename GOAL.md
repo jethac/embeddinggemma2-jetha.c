@@ -205,7 +205,15 @@ Tests and documentation support that outcome; they do not define completion.
   Video uses a separate 140-token frame budget and excludes the generic helper's
   prose prefix. A two-frame sample produces 248 tokens. These checks establish
   input sizing; the output comparisons above cover individual samples only.
-- Accelerator execution, portable CPU ISA dispatch, selective encoder loading,
+- Selective encoder loading is implemented: `--media-encoders vision|audio|all`
+  skips unused weights and rejects unloaded modalities before decoding. On the
+  Windows Xeon CPU service with the same Q8 files, startup private memory was
+  1067.8 MiB (all), 582.7 MiB (vision), and 682.4 MiB (audio). Tested image,
+  video, and audio outputs were identical to all-encoder mode.
+  An encoder batching experiment was rejected on this CPU: the cache-disabled
+  two-frame video warm median rose from 4050.7 to 4280.9 ms despite identical
+  output. Revisit batching on accelerators using actual measurements.
+- Accelerator execution and portable CPU ISA dispatch,
   full media allocation bounds, and multimodal queue/batching/singleflight are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
 - README describes the current dev commands. A new Linux CPU CI job builds

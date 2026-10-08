@@ -19,7 +19,7 @@ FetchContent_Declare(llama
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b)
 FetchContent_MakeAvailable(llama)
-# Keep model-specific patch budgets and observed audio preprocessing fixes
+# Keep selective encoder loading, patch budgets, and audio preprocessing fixes
 # as a small, adoptable patch against the pinned media dependency.
 find_package(Git REQUIRED)
 set(EI_MTMD_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch")

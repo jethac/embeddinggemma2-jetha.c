@@ -35,7 +35,10 @@ build-cmake/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
 These commands require a C/C++ compiler and Git. The currently exercised build
 uses MinGW64 on Windows; choose that toolchain explicitly and put its `bin`
 directory on `PATH` for compilation and runtime DLLs. Video requires `ffmpeg`
-and `ffprobe` on `PATH`. Omit `--mmproj` for text-only execution.
+and `ffprobe` on `PATH`. Omit `--mmproj` for text-only execution. With `--mmproj`,
+use `--media-encoders vision` for image/video workloads or `--media-encoders audio`
+for audio workloads to skip the unused encoder's weights. The default `all`
+loads both. Requests for an unloaded modality are rejected before decoding.
 
 The present default x86 kernel build requires AVX2/FMA/F16C; it does not yet
 dispatch safely across older CPUs. `-DGGML_AVX512=ON` enables a local hardware

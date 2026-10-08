@@ -1,3 +1,38 @@
+diff --git a/tools/mtmd/clip.cpp b/tools/mtmd/clip.cpp
+index ca38d76..bf8f334 100644
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -4063,7 +4063,7 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
+             ctx_params.progress_callback_user_data);
+         bool skip_audio = false;
+ 
+-        if (loader.has_vision) {
++        if (loader.has_vision && ctx_params.load_vision) {
+             ctx_vision = new clip_ctx(ctx_params);
+             loader.load_hparams(ctx_vision->model, CLIP_MODALITY_VISION);
+             loader.load_tensors(*ctx_vision);
+@@ -4077,7 +4077,7 @@ struct clip_init_result clip_init(const char * fname, struct clip_context_params
+             skip_audio = ctx_vision->model.proj_type == PROJECTOR_TYPE_GEMMA3NV;
+         }
+ 
+-        if (loader.has_audio && !skip_audio) {
++        if (loader.has_audio && !skip_audio && ctx_params.load_audio) {
+             ctx_audio = new clip_ctx(ctx_params);
+             loader.load_hparams(ctx_audio->model, CLIP_MODALITY_AUDIO);
+             loader.load_tensors(*ctx_audio);
+diff --git a/tools/mtmd/clip.h b/tools/mtmd/clip.h
+index 9e12702..6c1299f 100644
+--- a/tools/mtmd/clip.h
++++ b/tools/mtmd/clip.h
+@@ -58,6 +58,8 @@ struct clip_context_params {
+     bool no_alloc;
+     mtmd_progress_callback progress_callback;
+     void * progress_callback_user_data;
++    bool load_vision = true;
++    bool load_audio = true;
+ };
+ 
+ struct clip_init_result {
 diff --git a/tools/mtmd/mtmd-audio.cpp b/tools/mtmd/mtmd-audio.cpp
 index 1b4ea60..50b2f92 100644
 --- a/tools/mtmd/mtmd-audio.cpp
@@ -78,7 +113,7 @@ index 2dff2b4..a5098a5 100644
   * implementation of LLaVA-UHD:
   *  - https://arxiv.org/pdf/2403.11703
 diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
-index b6e331b..b62573c 100644
+index b6e331b..86b9bd1 100644
 --- a/tools/mtmd/mtmd.cpp
 +++ b/tools/mtmd/mtmd.cpp
 @@ -153,6 +153,7 @@ struct mtmd_bitmap {
@@ -89,7 +124,25 @@ index b6e331b..b62573c 100644
  
      // lazy-loaded bitmap
      mtmd_bitmap_lazy_callback lazy_callback = nullptr;
-@@ -1402,7 +1403,9 @@ struct mtmd_tokenizer {
+@@ -472,6 +473,8 @@ mtmd_context_params mtmd_context_params_default() {
+         /* batch_max_tokens  */ 1024,
+         /* progress_callback */ nullptr,
+         /* progress_callback_user_data */ nullptr,
++        /* load_vision       */ true,
++        /* load_audio        */ true,
+     };
+     return params;
+ }
+@@ -577,6 +580,8 @@ struct mtmd_context {
+             /* no_alloc          */ no_alloc,
+             /* progress_callback */ ctx_params.progress_callback,
+             /* progress_callback_user_data */ ctx_params.progress_callback_user_data,
++            /* load_vision       */ ctx_params.load_vision,
++            /* load_audio        */ ctx_params.load_audio,
+         };
+ 
+         auto res = clip_init(mmproj_fname, ctx_clip_params);
+@@ -1402,7 +1407,9 @@ struct mtmd_tokenizer {
                  img_u8.cpy_buf(bmp->get_ro_buf());
  
                  // preprocess image
@@ -100,7 +153,7 @@ index b6e331b..b62573c 100644
  
                  // move entries and grid dimensions to the "global" preproc_out
                  for (auto & entry : tmp_preproc_out.entries) {
-@@ -2304,6 +2307,10 @@ void mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable) {
+@@ -2304,6 +2311,10 @@ void mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable) {
      bitmap->mergeable = mergeable;
  }
  
@@ -112,10 +165,19 @@ index b6e331b..b62573c 100644
                                      const char * id,
                                      void * user_data,
 diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
-index bcd76a9..7626bf0 100644
+index bcd76a9..600a1c1 100644
 --- a/tools/mtmd/mtmd.h
 +++ b/tools/mtmd/mtmd.h
-@@ -186,6 +186,8 @@ MTMD_API const char * mtmd_bitmap_get_id(const mtmd_bitmap * bitmap);
+@@ -122,6 +122,8 @@ struct mtmd_context_params {
+     // If it returns false, model loading is immediately aborted.
+     mtmd_progress_callback progress_callback;
+     void * progress_callback_user_data;
++    bool load_vision; // defaults to true; skip unused encoder weights
++    bool load_audio;  // defaults to true
+ };
+ 
+ MTMD_API const char * mtmd_default_marker(void);
+@@ -186,6 +188,8 @@ MTMD_API const char * mtmd_bitmap_get_id(const mtmd_bitmap * bitmap);
  MTMD_API void         mtmd_bitmap_set_id(mtmd_bitmap * bitmap, const char * id);
  // if true, this bitmap can be merged (temporal merge) with an adjacent mergeable bitmap by certain video input models
  MTMD_API void         mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable);

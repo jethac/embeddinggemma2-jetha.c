@@ -134,6 +134,7 @@ typedef struct {
     const char *persistent_cache_path;
 #ifdef EI_GEMMA2
     const char *mmproj_path;
+    const char *media_encoders;
     ei_engine *engine;
 #endif
 } server_opts;
@@ -1356,7 +1357,7 @@ static void usage(const char *argv0) {
         "usage: %s [--bind ADDR] [--port PORT] [--backend auto|cpu|metal|cuda|rocm|xpu]\n"
         "          [--model PATH] [--workers N] [--max-queue N]\n"
 #ifdef EI_GEMMA2
-        "          [--mmproj PATH]\n"
+        "          [--mmproj PATH] [--media-encoders all|vision|audio]\n"
 #endif
         "          [--cache-entries N] [--max-batch-tokens N]\n"
         "          [--max-batch-requests N]\n"
@@ -1408,6 +1409,7 @@ static bool parse_args(int argc, char **argv, server_opts *opts) {
     opts->persistent_cache_path = NULL;
 #ifdef EI_GEMMA2
     opts->mmproj_path = NULL;
+    opts->media_encoders = "all";
     opts->engine = NULL;
 #endif
     for (int i = 1; i < argc; i++) {
@@ -1430,6 +1432,11 @@ static bool parse_args(int argc, char **argv, server_opts *opts) {
 #ifdef EI_GEMMA2
         } else if (strcmp(argv[i], "--mmproj") == 0 && i + 1 < argc) {
             opts->mmproj_path = argv[++i];
+        } else if (strcmp(argv[i], "--media-encoders") == 0 && i + 1 < argc) {
+            opts->media_encoders = argv[++i];
+            if (strcmp(opts->media_encoders, "all") != 0 &&
+                strcmp(opts->media_encoders, "vision") != 0 &&
+                strcmp(opts->media_encoders, "audio") != 0) return false;
 #endif
         } else if (strcmp(argv[i], "--workers") == 0 && i + 1 < argc) {
             if (!parse_size_arg(argv[++i], 1, 256, &opts->workers)) return false;
@@ -1642,6 +1649,8 @@ int main(int argc, char **argv) {
     if (opts.mmproj_path) {
         char media_error[256];
         if (!ei_engine_load_media(&engine, model_path, opts.mmproj_path,
+                                  strcmp(opts.media_encoders, "audio") != 0,
+                                  strcmp(opts.media_encoders, "vision") != 0,
                                   media_error, sizeof media_error)) ei_die("%s", media_error);
     }
 #endif
