@@ -397,6 +397,7 @@ static bool embed_token_rows(const ei_engine *e, const int32_t *ids, size_t n, f
 typedef struct {
     mtmd_helper_video *ctx;
     size_t frames;
+    size_t *total_frames;
 } video_input2;
 
 static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, char **text) {
@@ -410,7 +411,7 @@ static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, cha
         if (*text) { free(*text); *text = NULL; }
     } while (!result && !*bitmap);
     if (!result && *bitmap) {
-        if (++video->frames > 32) {
+        if (++video->frames > 32 || ++*video->total_frames > 32) {
             mtmd_bitmap_free(*bitmap);
             *bitmap = NULL;
             return -2;
@@ -443,6 +444,10 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     bool ok = false;
     pthread_mutex_lock(&s->mutex);
     double start = now_ms();
+    size_t decoded_bytes = 0;
+    size_t video_frames = 0;
+    size_t decoded_video_frames = 0;
+    const size_t decoded_limit = 128u * 1024u * 1024u;
     for (size_t i = 0; i < n_parts; i++) {
         input_refs[i] = &inputs[i];
         if (parts[i].type == EI_PART_TEXT) {
@@ -450,6 +455,14 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
             inputs[i].text = &texts[i];
         } else {
             struct mtmd_helper_init_opt opt = mtmd_helper_init_opt_default();
+            if (decoded_bytes >= decoded_limit) {
+                fail(err, err_len, "media exceeds 128 MiB decoded input budget"); goto done;
+            }
+            opt.max_image_pixels = 16777216;
+            // Audio produces at least one token per 640 samples at 16 kHz.
+            opt.max_audio_samples = (size_t)EI_N_CTX * 640;
+            opt.max_decoded_bytes = decoded_limit - decoded_bytes;
+            opt.video_params.max_frame_bytes = opt.max_decoded_bytes;
             opt.video_params.fps_target = parts[i].fps > 0 ? parts[i].fps : 1.0f;
             opt.video_params.timestamp_interval_ms = 0;
             if (parts[i].type == EI_PART_VIDEO) {
@@ -457,19 +470,23 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
                 if (!media[i].video_ctx) { fail(err, err_len, "cannot decode video input"); goto done; }
                 struct mtmd_helper_video_info info = mtmd_helper_video_get_info(media[i].video_ctx);
                 if (!info.width || !info.height || (uint64_t)info.width * info.height > 16777216 ||
-                    info.n_frames <= 0 || info.n_frames > 32) {
-                    fail(err, err_len, "video must contain at most 32 sampled frames of at most 16 megapixels"); goto done;
+                    info.n_frames <= 0 || (size_t)info.n_frames > 32 - video_frames) {
+                    fail(err, err_len, "input must contain at most 32 video frames of at most 16 megapixels"); goto done;
                 }
+                video_frames += (size_t)info.n_frames;
+                decoded_bytes += (size_t)info.width * info.height * 3;
                 videos[i].ctx = media[i].video_ctx;
+                videos[i].total_frames = &decoded_video_frames;
                 media[i].bitmap = mtmd_bitmap_init_lazy(s->media, NULL, &videos[i], read_video_frame2);
             } else {
                 media[i] = mtmd_helper_bitmap_init_from_buf(s->media, parts[i].data, parts[i].size, false, opt);
             }
-            if (!media[i].bitmap) { fail(err, err_len, "cannot decode media input"); goto done; }
+            if (!media[i].bitmap) { fail(err, err_len, "cannot decode media input or decoded size limit exceeded"); goto done; }
             if (parts[i].type != EI_PART_VIDEO && (media[i].video_ctx ||
                 ((parts[i].type == EI_PART_AUDIO) != mtmd_bitmap_is_audio(media[i].bitmap)))) {
                 fail(err, err_len, "media bytes do not match content type"); goto done;
             }
+            if (parts[i].type != EI_PART_VIDEO) decoded_bytes += mtmd_bitmap_get_n_bytes(media[i].bitmap);
             if (parts[i].type == EI_PART_IMAGE) mtmd_bitmap_set_patch_budget(media[i].bitmap, 280);
             inputs[i].bitmap = media[i].bitmap;
         }

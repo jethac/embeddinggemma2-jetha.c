@@ -36,6 +36,7 @@ jobs:
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
           python tests/media_budget2.py
+          python tests/media_bounds2.py
           python examples/embed.py --text 'task: search result | query: what powers the cell'
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:

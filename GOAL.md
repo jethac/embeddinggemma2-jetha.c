@@ -214,8 +214,18 @@ Tests and documentation support that outcome; they do not define completion.
   two-frame video warm median rose from 4050.7 to 4280.9 ms despite identical
   output. Revisit batching on accelerators using actual measurements.
 - Accelerator execution and portable CPU ISA dispatch,
-  full media allocation bounds, and multimodal queue/batching/singleflight are
+  complete media resource handling, and multimodal queue/batching/singleflight are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
+- Decoded media input now has bounds checked before image/PCM allocation:
+  16 megapixels per image/frame, 5,242,880 audio samples, and 128 MiB of retained
+  decoded input/frame buffers across parts. Video frames are capped at 32 across
+  the input, including the actual lazy decoder callbacks. Decoder copies and
+  preprocessing/inference workspaces consume additional bounded memory.
+  A 4100-square compressed PNG was previously accepted and processed; its
+  regression failed on the old service and passes after the fix. Controlled
+  warm rejection takes about 24 ms. Excess audio and aggregate decoded input
+  are also rejected; tested valid image/audio/video outputs remain identical,
+  and the mixed text/image/audio journey still uses 294 tokens.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates

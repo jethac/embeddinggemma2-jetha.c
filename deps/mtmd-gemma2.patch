@@ -46,18 +46,148 @@ index 1b4ea60..50b2f92 100644
  
      // Split into 30-second chunks (model context limit, ~750 tokens each)
 diff --git a/tools/mtmd/mtmd-helper.cpp b/tools/mtmd/mtmd-helper.cpp
-index eba034f..2a6a439 100644
+index eba034f..246be46 100644
 --- a/tools/mtmd/mtmd-helper.cpp
 +++ b/tools/mtmd/mtmd-helper.cpp
-@@ -678,7 +678,8 @@ struct mtmd_helper_video {
+@@ -16,6 +16,7 @@
+ 
+ #include <algorithm>
+ #include <cinttypes>
++#include <climits>
+ #include <vector>
+ 
+ //#define MTMD_AUDIO_DEBUG
+@@ -317,7 +318,8 @@ static bool is_audio_file(const char * buf, size_t len) {
+ }
+ 
+ // returns true if the buffer is a valid audio file
+-static bool decode_audio_from_buf(const unsigned char * buf_in, size_t len, int target_sampler_rate, std::vector<float> & pcmf32_mono) {
++static bool decode_audio_from_buf(const unsigned char * buf_in, size_t len, int target_sampler_rate,
++                                  std::vector<float> & pcmf32_mono, const mtmd_helper_init_opt & opt) {
+     ma_result result;
+     const int channels = 1;
+     ma_decoder_config decoder_config = ma_decoder_config_init(ma_format_f32, channels, target_sampler_rate);
+@@ -336,6 +338,12 @@ static bool decode_audio_from_buf(const unsigned char * buf_in, size_t len, int
+         return false;
+     }
+ 
++    if (!frame_count || (opt.max_audio_samples && frame_count > opt.max_audio_samples) ||
++        (opt.max_decoded_bytes && frame_count > opt.max_decoded_bytes / sizeof(float))) {
++        LOG_ERR("decoded audio exceeds sample or byte limit\n");
++        ma_decoder_uninit(&decoder);
++        return false;
++    }
+     pcmf32_mono.resize(frame_count);
+     result = ma_decoder_read_pcm_frames(&decoder, pcmf32_mono.data(), frame_count, &frames_read);
+     if (result != MA_SUCCESS) {
+@@ -389,7 +397,7 @@ mtmd_helper_bitmap_wrapper mtmd_helper_bitmap_init_from_buf(const mtmd_context *
+             LOG_ERR("This model does not support audio input\n");
+             return {nullptr, nullptr};
+         }
+-        if (!audio_helpers::decode_audio_from_buf(buf, len, sample_rate, pcmf32)) {
++        if (!audio_helpers::decode_audio_from_buf(buf, len, sample_rate, pcmf32, opt)) {
+             LOG_ERR("Unable to read WAV audio file from buffer\n");
+             return {nullptr, nullptr};
+         }
+@@ -401,7 +409,16 @@ mtmd_helper_bitmap_wrapper mtmd_helper_bitmap_init_from_buf(const mtmd_context *
+     // otherwise, we assume it's an image
+     if (!result) {
+         int nx, ny, nc;
+-        auto * data = stbi_load_from_memory(buf, len, &nx, &ny, &nc, 3);
++        unsigned char * data = nullptr;
++        if (len <= INT_MAX && stbi_info_from_memory(buf, (int)len, &nx, &ny, &nc)) {
++            uint64_t pixels = (uint64_t)nx * ny;
++            if (nx <= 0 || ny <= 0 || (opt.max_image_pixels && pixels > opt.max_image_pixels) ||
++                (opt.max_decoded_bytes && pixels > opt.max_decoded_bytes / 3)) {
++                LOG_ERR("decoded image exceeds pixel or byte limit\n");
++                return {nullptr, nullptr};
++            }
++            data = stbi_load_from_memory(buf, (int)len, &nx, &ny, &nc, 3);
++        }
+         if (data) {
+             result = mtmd_bitmap_init(nx, ny, placeholder ? nullptr : data);
+             mtmd_bitmap_set_id(result, id.empty() ? nullptr : id.c_str());
+@@ -528,6 +545,7 @@ static char * mtmd_strdup(const std::string & s) {
+ 
+ struct mtmd_helper_video {
+     const mtmd_context * mctx;
++    size_t max_frame_bytes = 0;
+     std::string path;
+     std::vector<uint8_t> input_buf; // non-empty when initialized from buffer
+     std::string ffmpeg_bin;
+@@ -678,7 +696,9 @@ struct mtmd_helper_video {
  
          probe_sp.stop();
  
 -        if (width == 0 || height == 0 || orig_fps <= 0.0f) {
 +        if (width == 0 || height == 0 || orig_fps <= 0.0f ||
-+            (uint64_t)width * height > 16777216) {
++            (uint64_t)width * height > 16777216 ||
++            (max_frame_bytes && (uint64_t)width * height > max_frame_bytes / 3)) {
              return false;
          }
+ 
+@@ -869,12 +889,16 @@ mtmd_helper_video_init_params mtmd_helper_video_init_params_default() {
+         /* fps_target             */ 4.0f,
+         /* ffmpeg_bin_dir         */ nullptr,
+         /* timestamp_interval_ms  */ 5000,
++        /* max_frame_bytes        */ 0,
+     };
+ }
+ 
+ mtmd_helper_init_opt mtmd_helper_init_opt_default() {
+     return {
+         /* video_params */ mtmd_helper_video_init_params_default(),
++        /* max_image_pixels */ 0,
++        /* max_audio_samples */ 0,
++        /* max_decoded_bytes */ 0,
+     };
+ }
+ 
+@@ -907,6 +931,7 @@ static mtmd_bitmap * decode_webp_with_ffmpeg(const mtmd_context * mctx, const un
+                                              const mtmd_helper_video_init_params & params) {
+     mtmd_helper_video vctx;
+     vctx.mctx        = mctx;
++    vctx.max_frame_bytes = params.max_frame_bytes;
+     vctx.input_buf.assign(buf, buf + len);
+     vctx.ffmpeg_bin  = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     vctx.ffprobe_bin = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+@@ -937,6 +962,7 @@ mtmd_helper_video * mtmd_helper_video_init(
+     auto * ctx = new mtmd_helper_video();
+ 
+     ctx->mctx                 = mctx;
++    ctx->max_frame_bytes = params.max_frame_bytes;
+     ctx->path                 = path;
+     ctx->ffmpeg_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     ctx->ffprobe_bin          = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+@@ -972,6 +998,7 @@ mtmd_helper_video * mtmd_helper_video_init_from_buf(
+     auto * ctx = new mtmd_helper_video();
+ 
+     ctx->mctx                  = mctx;
++    ctx->max_frame_bytes = params.max_frame_bytes;
+     ctx->input_buf.assign(buf, buf + len);
+     ctx->ffmpeg_bin            = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     ctx->ffprobe_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+diff --git a/tools/mtmd/mtmd-helper.h b/tools/mtmd/mtmd-helper.h
+index 7436230..e45391d 100644
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -27,6 +27,7 @@ struct mtmd_helper_video_init_params {
+     float fps_target;            // desired output fps; <= 0 means use the video's native fps, defaulted to 4.0f
+     const char * ffmpeg_bin_dir; // directory containing ffmpeg/ffprobe binaries; NULL means search PATH
+     int64_t timestamp_interval_ms; // interval for adding timestamp as text chunk (example: "[10m50.5s]"); <= 0 means no timestamp, defaulted to 5000ms
++    size_t max_frame_bytes; // decoded RGB bytes; 0 means unlimited
+     // TODO @ngxson : allow "placeholder" bitmap output for counting tokens
+ };
+ 
+@@ -35,6 +36,9 @@ MTMD_API struct mtmd_helper_video_init_params mtmd_helper_video_init_params_defa
+ // opt for mtmd_helper_bitmap_init_from_*()
+ struct mtmd_helper_init_opt {
+     struct mtmd_helper_video_init_params video_params;
++    size_t max_image_pixels; // 0 means unlimited
++    size_t max_audio_samples; // mono samples at the model's sample rate; 0 means unlimited
++    size_t max_decoded_bytes; // decoded image/PCM bytes; 0 means unlimited
+ };
+ typedef struct mtmd_helper_init_opt mtmd_helper_init_opt;
  
 diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
 index 5ce0fa0..02d6bca 100644

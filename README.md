@@ -66,8 +66,12 @@ objects. Media bytes are base64 encoded; base64 data URLs are also accepted.
 ```
 
 Supported part types are `text`, `image`, `audio`, and `video`. A video part can
-set `fps` (default 1); the current implementation rejects more than 32 sampled
-frames and video frames over 16 megapixels. Complete inputs must fit 8192 tokens.
+set `fps` (default 1); the current implementation accepts at most 32 sampled
+video frames across an input. Images and video frames are limited to 16 megapixels.
+Audio is capped at 5,242,880 mono samples after resampling to 16 kHz (327.68 seconds).
+Decoded images, PCM and resident video frame buffers share a 128 MiB input budget;
+decoder copies, preprocessing and inference workspaces require additional memory.
+Complete inputs must fit 8192 tokens.
 Images use the reference's 280-token patch budget; video frames use 140. Returned
 vectors are normalized after truncation to 128, 256, 512, or 768 dimensions.
 `encoding_format` accepts `float` or `base64` (float32 bytes).
