@@ -10,8 +10,36 @@ permissions:
   contents: read
 
 jobs:
+  gemma2-linux:
+    name: EmbeddingGemma 2 service (Linux CPU)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build current model implementation
+        run: |
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
+          cmake --build build-cmake --target embeddinggemma2-jetha -j 2
+      - name: Download model and exercise deployed image journey
+        env:
+          EI_THREADS: '2'
+        run: |
+          python scripts/download-model2.py
+          build-cmake/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:42667/healthz; then ready=1; break; fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
+          python tests/media_budget2.py
+          python examples/embed.py --text 'task: search result | query: what powers the cell'
+  # Retained foundation checks cover the inherited 300M implementation only.
   portable:
-    name: CPU binary (${{ matrix.platform }})
+    name: Legacy 300M CPU (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:

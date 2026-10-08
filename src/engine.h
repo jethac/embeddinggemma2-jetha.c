@@ -13,6 +13,7 @@ typedef struct {
     void *cuda;
     void *rocm;
     void *xpu;
+    void *gemma2;
     const char *backend_name;
     ei_thread_pool *thread_pool;
     int32_t short_projection_threads;

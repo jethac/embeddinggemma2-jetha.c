@@ -15,8 +15,13 @@ typedef struct {
     int8_t qs[32];
 } ei_block_q8_0;
 
+#ifdef __cplusplus
+static_assert(sizeof(ei_block_q4_0) == 18, "q4_0 block must be 18 bytes");
+static_assert(sizeof(ei_block_q8_0) == 34, "q8_0 block must be 34 bytes");
+#else
 _Static_assert(sizeof(ei_block_q4_0) == 18, "q4_0 block must be 18 bytes");
 _Static_assert(sizeof(ei_block_q8_0) == 34, "q8_0 block must be 34 bytes");
+#endif
 
 ei_fp16 ei_fp32_to_fp16(float f);
 

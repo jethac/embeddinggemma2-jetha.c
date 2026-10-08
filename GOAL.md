@@ -97,6 +97,20 @@ names or theoretical throughput alone.
   extensions such as VNNI/BF16 need hardware that actually supports them.
 - Use efficient quantized kernels, persistent workspaces, fused operations
   where beneficial, and efficient matrix/attention execution on accelerators.
+- Use the user's tailnet GB10 ThinkStation PGX and Strix Halo NUC as native
+  optimization targets once access is available. Measure CUDA on GB10 and
+  CPU versus applicable GPU backends on Strix Halo with matching requests.
+- Investigate Strix Halo XDNA 2 NPU execution for the complete model, including
+  its vision and audio encoders. Start with a BF16 ONNX compiler probe, inspect
+  actual NPU/CPU operator placement, and compare embeddings and end-to-end
+  latency against the working implementation before adding quantization.
+  Test the backbone and encoders independently to locate compiler limitations;
+  partial acceleration is an intermediate experiment, not completion of the
+  full multimodal scope. Keep successful sessions resident, and consider
+  bounded sequence-length buckets if required by the compiler. Measure energy
+  per request where available as well as latency and throughput. Label mixed
+  CPU/NPU execution honestly; successful runtime fallback is not proof that
+  the model runs entirely on the NPU. NPU support is currently unimplemented.
 - Preserve and extend dynamic batching, bounded queues, duplicate singleflight,
   exact-result caching, and useful concurrency behavior to multimodal requests.
 - Measure the real request end to end. Add timings for tokenization, media
@@ -160,17 +174,37 @@ This goal is complete when a person can complete the full multimodal journeys on
 the deployed dev service, with correct useful results and measured performance.
 Tests and documentation support that outcome; they do not define completion.
 
-## Starting state (2026-10-09)
+## Current state (2026-10-09)
 
 - Upstream base: QuixiAI/embeddinggemma.c at
   `55964e25b199ddf7a9707814ec490324f749248f`.
 - Windows foundation: jethac/embeddinggemma.c at
   `2cba339e028dede34c3219dac895ef039c880b64`, incorporated locally.
-- EmbeddingGemma 2 reference architecture and the existing media encoder APIs
-  have been inspected. No EmbeddingGemma 2 inference implementation or
-  performance result has been validated yet.
-- The inherited README and other upstream documentation describe the original
-  300M model until rewritten; they are not claims of EmbeddingGemma 2 support.
+- A model-specific C GGML backbone, Gemma 4 media encoders, exact Gemma 4 BPE
+  tokenizer, CMake build, model downloader, and multimodal client are implemented.
+  Text, image, audio, video, and mixed journeys run on the Windows CPU dev service.
+  One text comparison against the same Q8 GGUF in llama.cpp yielded cosine
+  0.9999705; full reference parity is still being checked.
+  Against Hugging Face revision `914f7f89142e33e77833254d9c9b90c3cef7303b`
+  in FP32, single samples yielded cosine 0.999693 (text), 0.999892 (image),
+  and 0.980420 (audio). The audio gap is unresolved, not accepted as validated
+  correctness. BF16 encoders also yielded 0.980012 on the same audio sample,
+  ruling out Q8 encoder quantization as the primary cause. The reference's
+  additive log-mel floor is now applied, but a separate 440 Hz regression still
+  fails (cosine 0.979524 against FP32). That regression is intentionally unresolved
+  until the remaining encoder mismatch is located and fixed.
+- The observed image sizing bug has a service regression test: its square-image
+  input now uses 260 tokens, matching the reference processor, instead of 85.
+  Video uses a separate 140-token frame budget and excludes the generic helper's
+  prose prefix. A two-frame sample produces 248 tokens. These checks establish
+  input sizing, not full output parity across modalities.
+- Accelerator execution, portable CPU ISA dispatch, selective encoder loading,
+  full media allocation bounds, and multimodal queue/batching/singleflight are
+  unfinished. Remote hardware access remains unresolved; NPU support is absent.
+- README describes the current dev commands. A new Linux CPU CI job builds
+  the CMake implementation and runs the image regression on its service;
+  its first remote run remains pending. The inherited CI matrix validates
+  the legacy 300M foundation only. Makefile and release adaptation is unfinished.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
 

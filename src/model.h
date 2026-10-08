@@ -11,7 +11,11 @@
 #define EI_N_HEAD    3
 #define EI_N_HEAD_KV 1
 #define EI_HEAD_DIM  256
+#ifdef EI_GEMMA2
+#define EI_N_CTX     8192
+#else
 #define EI_N_CTX     2048
+#endif
 #define EI_VOCAB     262144
 
 typedef struct {
@@ -34,6 +38,7 @@ typedef struct {
 
 typedef struct {
     ei_gguf gguf;
+    char *source_path;
 
     /* hparams read from the file (validated against the EI_* constants) */
     float    rms_eps;

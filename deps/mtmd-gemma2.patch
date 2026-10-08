@@ -1,0 +1,126 @@
+diff --git a/tools/mtmd/mtmd-audio.cpp b/tools/mtmd/mtmd-audio.cpp
+index 1b4ea60..50b2f92 100644
+--- a/tools/mtmd/mtmd-audio.cpp
++++ b/tools/mtmd/mtmd-audio.cpp
+@@ -1179,6 +1179,7 @@ bool mtmd_audio_preprocessor_gemma4a::preprocess(const float *                 s
+     params.use_natural_log  = true;
+     params.use_magnitude    = true;
+     params.mel_floor        = 0.001f;
++    params.mel_floor_add    = true; // reference: log(mel + floor), not log(max(mel, floor))
+     params.norm_per_feature = false;
+ 
+     // Split into 30-second chunks (model context limit, ~750 tokens each)
+diff --git a/tools/mtmd/mtmd-helper.cpp b/tools/mtmd/mtmd-helper.cpp
+index eba034f..2a6a439 100644
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -678,7 +678,8 @@ struct mtmd_helper_video {
+ 
+         probe_sp.stop();
+ 
+-        if (width == 0 || height == 0 || orig_fps <= 0.0f) {
++        if (width == 0 || height == 0 || orig_fps <= 0.0f ||
++            (uint64_t)width * height > 16777216) {
+             return false;
+         }
+ 
+diff --git a/tools/mtmd/mtmd-image.cpp b/tools/mtmd/mtmd-image.cpp
+index 5ce0fa0..02d6bca 100644
+--- a/tools/mtmd/mtmd-image.cpp
++++ b/tools/mtmd/mtmd-image.cpp
+@@ -769,6 +769,34 @@ mtmd_image_preproc_out mtmd_image_preprocessor_fixed_size::preprocess(const clip
+ // mtmd_image_preprocessor_dyn_size
+ //
+ 
++// EmbeddingGemma 2 expands even small images to its prescribed patch budget.
++// Floor both sides, preserving aspect ratio and pooling-grid alignment.
++mtmd_image_preproc_out mtmd_image_preprocess_patch_budget(
++        const clip_hparams & hparams, const clip_image_u8 & img, int max_soft_tokens) {
++    const auto size = img.get_size();
++    const int side = hparams.patch_size * hparams.n_merge;
++    if (size.width <= 0 || size.height <= 0 || max_soft_tokens <= 0 || side <= 0) {
++        throw std::runtime_error("invalid patch-budget resize");
++    }
++    const double factor = std::sqrt(double(max_soft_tokens) * side * side /
++                                    (double(size.width) * size.height));
++    int width = int(std::floor(factor * size.width / side)) * side;
++    int height = int(std::floor(factor * size.height / side)) * side;
++    // Match the reference processor's extreme-aspect-ratio handling.
++    if (!height) {
++        height = side;
++        width = std::min(int(std::floor(double(size.width) / size.height)), max_soft_tokens) * side;
++    } else if (!width) {
++        width = side;
++        height = std::min(int(std::floor(double(size.height) / size.width)), max_soft_tokens) * side;
++    }
++    clip_image_u8 resized;
++    img_tool::resize(img, resized, {width, height}, RESIZE_ALGO_BICUBIC, PAD_NONE);
++    mtmd_image_preproc_out output;
++    output.append(hparams, resized, true);
++    return output;
++}
++
+ mtmd_image_preproc_out mtmd_image_preprocessor_dyn_size::preprocess(const clip_image_u8 & img) const {
+     GGML_ASSERT(hparams.image_min_pixels > 0 && hparams.image_max_pixels > 0);
+     clip_image_u8 resized_image;
+diff --git a/tools/mtmd/mtmd-image.h b/tools/mtmd/mtmd-image.h
+index 2dff2b4..a5098a5 100644
+--- a/tools/mtmd/mtmd-image.h
++++ b/tools/mtmd/mtmd-image.h
+@@ -36,6 +36,9 @@ struct mtmd_image_preprocessor {
+     virtual mtmd_image_preproc_out preprocess(const clip_image_u8 & img) const = 0;
+ };
+ 
++mtmd_image_preproc_out mtmd_image_preprocess_patch_budget(
++    const clip_hparams & hparams, const clip_image_u8 & img, int max_soft_tokens);
++
+ /**
+  * implementation of LLaVA-UHD:
+  *  - https://arxiv.org/pdf/2403.11703
+diff --git a/tools/mtmd/mtmd.cpp b/tools/mtmd/mtmd.cpp
+index b6e331b..b62573c 100644
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -153,6 +153,7 @@ struct mtmd_bitmap {
+     std::string id; // optional user-defined id, for ex: can be set to image hash, useful for KV cache tracking
+     bool is_audio = false; // true if the bitmap is audio
+     bool mergeable = false; // [QWEN_VIDEO] set only on frames of the same video
++    int patch_budget = 0;
+ 
+     // lazy-loaded bitmap
+     mtmd_bitmap_lazy_callback lazy_callback = nullptr;
+@@ -1402,7 +1403,9 @@ struct mtmd_tokenizer {
+                 img_u8.cpy_buf(bmp->get_ro_buf());
+ 
+                 // preprocess image
+-                mtmd_image_preproc_out tmp_preproc_out = ctx->image_preproc->preprocess(img_u8);
++                mtmd_image_preproc_out tmp_preproc_out = bmp->patch_budget > 0
++                    ? mtmd_image_preprocess_patch_budget(ctx->image_preproc->hparams, img_u8, bmp->patch_budget)
++                    : ctx->image_preproc->preprocess(img_u8);
+ 
+                 // move entries and grid dimensions to the "global" preproc_out
+                 for (auto & entry : tmp_preproc_out.entries) {
+@@ -2304,6 +2307,10 @@ void mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable) {
+     bitmap->mergeable = mergeable;
+ }
+ 
++void mtmd_bitmap_set_patch_budget(mtmd_bitmap * bitmap, int max_soft_tokens) {
++    bitmap->patch_budget = max_soft_tokens;
++}
++
+ mtmd_bitmap * mtmd_bitmap_init_lazy(const mtmd_context * ctx,
+                                     const char * id,
+                                     void * user_data,
+diff --git a/tools/mtmd/mtmd.h b/tools/mtmd/mtmd.h
+index bcd76a9..7626bf0 100644
+--- a/tools/mtmd/mtmd.h
++++ b/tools/mtmd/mtmd.h
+@@ -186,6 +186,8 @@ MTMD_API const char * mtmd_bitmap_get_id(const mtmd_bitmap * bitmap);
+ MTMD_API void         mtmd_bitmap_set_id(mtmd_bitmap * bitmap, const char * id);
+ // if true, this bitmap can be merged (temporal merge) with an adjacent mergeable bitmap by certain video input models
+ MTMD_API void         mtmd_bitmap_set_mergeable(mtmd_bitmap * bitmap, bool mergeable);
++// Explicit Gemma patch budget; zero preserves the default preprocessing policy.
++MTMD_API void         mtmd_bitmap_set_patch_budget(mtmd_bitmap * bitmap, int max_soft_tokens);
+ 
+ // mtmd_bitmap lazy
+ //

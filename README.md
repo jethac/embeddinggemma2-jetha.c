@@ -11,9 +11,67 @@ performance requirements, acceptance criteria, and relationship to upstream.
 The release process will follow upstream's conventions where applicable, with
 this project's own names and an extended platform matrix.
 
-**Current status:** the original EmbeddingGemma 300M server and native Windows
-CPU foundation are present. EmbeddingGemma 2 inference has not been implemented
-or validated yet. There are no EmbeddingGemma 2 benchmark claims or releases.
+**Current status:** the model-specific C backbone and native media encoders run
+text, image, audio, video, and mixed requests on a Windows CPU development
+service. This is experimental: full reference parity, accelerator measurements,
+portable CPU dispatch, media resource limits, and release integration remain
+unfinished. There are no binary releases or verified GPU/NPU performance claims.
+
+## Build and run the development server
+
+CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies
+the small media preprocessing fixes in `deps/`. Python is used for model
+download and the sample client; inference runs inside the native executable.
+
+```sh
+python scripts/download-model2.py
+cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release
+cmake --build build-cmake --target embeddinggemma2-jetha -j 6
+build-cmake/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
+  --model model/embeddinggemma-2-Q8_0.gguf \
+  --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+```
+
+These commands require a C/C++ compiler and Git. The currently exercised build
+uses MinGW64 on Windows; choose that toolchain explicitly and put its `bin`
+directory on `PATH` for compilation and runtime DLLs. Video requires `ffmpeg`
+and `ffprobe` on `PATH`. Omit `--mmproj` for text-only execution.
+
+The present default x86 kernel build requires AVX2/FMA/F16C; it does not yet
+dispatch safely across older CPUs. `-DGGML_AVX512=ON` enables a local hardware
+experiment on compatible CPUs. This is not a portable release configuration.
+GGML accelerator build options can be selected through CMake, but none has yet
+been validated for this port. Linux and macOS builds also remain unverified.
+
+```sh
+python examples/embed.py --text "task: search result | query: what powers the cell"
+python examples/embed.py --image picture.jpg --dimensions 256
+python examples/embed.py --audio recording.wav
+python examples/embed.py --video clip.mp4
+python examples/embed.py --text "A description of this scene" --image picture.jpg --audio recording.wav
+```
+
+## API
+
+Text uses the inherited `/api/embed` and `/v1/embeddings` contracts. Multimodal
+inputs use an object containing ordered `content` parts, or an array of these
+objects. Media bytes are base64 encoded; base64 data URLs are also accepted.
+
+```json
+{"input":{"content":[{"type":"text","text":"A red square"},{"type":"image","data":"BASE64_BYTES"}]},"dimensions":256}
+```
+
+Supported part types are `text`, `image`, `audio`, and `video`. A video part can
+set `fps` (default 1); the current implementation rejects more than 32 sampled
+frames and video frames over 16 megapixels. Complete inputs must fit 8192 tokens.
+Images use the reference's 280-token patch budget; video frames use 140. Returned
+vectors are normalized after truncation to 128, 256, 512, or 768 dimensions.
+`encoding_format` accepts `float` or `base64` (float32 bytes).
+
+Native media responses contain `embeddings` and token `usage`; the OpenAI-shaped
+route returns an embedding `data` list and `usage`. Media processing currently
+runs serially and needs further queue, batching, and decoded-allocation work.
+Treat this as a development service while those limits are being completed.
 
 ## Foundation and attribution
 
@@ -27,6 +85,8 @@ The original QuixiAI copyright notice is preserved.
 and benchmark claims for the original 300M model. They do not establish
 EmbeddingGemma 2 results for this project.
 
-The inherited build and test instructions in [CONTRIBUTING.md](CONTRIBUTING.md)
-currently describe the 300M implementation. Model weights, local reference
-checkouts, and generated artifacts are excluded from Git.
+The inherited Makefile, release scripts, and [CONTRIBUTING.md](CONTRIBUTING.md)
+still describe the 300M implementation. Use the CMake commands above for this
+port; adaptation of those workflows is unfinished. CI has a new Linux service
+job; the retained platform matrix still exercises the legacy model. Model weights, local
+reference checkouts, and generated artifacts are excluded from Git.

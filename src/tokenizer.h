@@ -20,6 +20,7 @@ typedef struct {
 
 typedef struct {
     const ei_model *model;
+    void *native_model;
     const ei_str   *pieces;
 
     ei_vocab_slot *vocab;
