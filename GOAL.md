@@ -11,6 +11,36 @@ The project remains MIT licensed, including new implementation work. Preserve
 the existing `LICENSE` and QuixiAI copyright notice. Retain required attribution
 and notices for dependencies; model weights remain governed by their own license.
 
+## How to spend effort
+
+These rules govern development and supersede process-heavy interpretations of
+the inherited guides.
+
+1. Done means a person can complete the journey on the deployed dev service.
+   Deploy and try the journey early, then after each meaningful change. Passing
+   tests, reports, and proofs do not substitute for a working journey.
+2. Measure before fixing. For slowness or flakiness, add timing or logging,
+   identify the biggest cost, fix it, and measure again. Run the system directly
+   when that answers the question; do not build machinery around the question.
+3. Verification must change a decision. Before adding a check, test, or report,
+   state what failure would make you do differently. If nothing, skip it.
+4. Tests protect safety invariants and bugs that actually happened. Add one
+   regression test per real bug and show it failing before the fix. Do not build
+   test matrices for unused code.
+5. No process artifacts for things that never shipped: evidence bundles,
+   qualification reports, input hash manifests, provenance layers, handoff
+   documents, or recovery tooling. Delete or bypass unfinished process machinery
+   that blocks a journey, while preserving safety invariants. Release checksums
+   and required license notices apply to actual distribution.
+6. Inspect what the system actually does: the real model input and prompt,
+   request on the wire, and log output. Documentation is not runtime evidence.
+7. Report a failure in one plain line and keep moving. Avoid long explanations
+   of why work is unfinished.
+8. Check in after each implementation round with the user-visible improvement
+   on the deployed service and measured numbers. If nothing a user would notice
+   improved, change course. Do not present documentation or test counts as
+   service improvements.
+
 ## Relationship to upstream
 
 This project is an experimental port intended to get ahead of upstream's
@@ -21,8 +51,8 @@ project name or impose maintenance work on its maintainers.
 - Preserve history, licenses, attribution, and a clear upstream remote.
 - Keep architecture, host portability, API, and optimization changes separable
   and reviewable so upstream can cherry-pick what helps.
-- Record reference provenance, correctness results, benchmark methodology, and
-  rejected experiments so maintainers do not have to repeat the investigation.
+- Leave concise code comments and reproduction commands when they help upstream
+  understand or adopt a change. Do not build separate evidence or handoff systems.
 - Keep this project's experimental branding, release ownership, and version
   history distinct. Reuse upstream's release process wherever it fits.
 - Do not open upstream issues, submit pull requests, or contact maintainers
@@ -64,21 +94,21 @@ names or theoretical throughput alone.
 - Benchmark AVX2 against AVX-512 on matching hardware, accounting for frequency
   changes, bandwidth limits, core count, thread count, and sequence length.
   The local Xeon W-2135 provides hardware for AVX-512 validation; newer
-  extensions such as VNNI/BF16 require separately qualified hardware.
+  extensions such as VNNI/BF16 need hardware that actually supports them.
 - Use efficient quantized kernels, persistent workspaces, fused operations
   where beneficial, and efficient matrix/attention execution on accelerators.
 - Preserve and extend dynamic batching, bounded queues, duplicate singleflight,
   exact-result caching, and useful concurrency behavior to multimodal requests.
-- Measure tokenization, media decoding/preprocessing, each encoder, the text
-  backbone, pooling/projection, batching, and HTTP serialization separately as
-  well as end to end. Record latency, throughput, memory use, and correctness.
+- Measure the real request end to end. Add timings for tokenization, media
+  preprocessing, encoders, the text backbone, batching, or serialization when
+  they can identify the bottleneck and change the next optimization decision.
 
 ## Implementation direction
 
 The current direction is a model-specific C graph using a pinned GGML kernel
 dependency and Gemma 4 media encoder support through libmtmd. This is an
 implementation choice to validate, not a completed port or a proven speedup.
-Retain upstream attribution and record dependency revisions and licenses.
+Retain upstream attribution and pin dependencies with required license notices.
 Prefer specialization and reuse of validated optimized kernels over a Python
 inference subprocess. Revise the approach when measurement justifies it.
 
@@ -89,17 +119,16 @@ the repository, project/asset names, model, dependencies, and platform matrix.
 Do not invent a separate distribution workflow without a concrete need.
 
 - Build the complete supported release matrix from the same clean commit.
-- Build and validate on native platforms and matching accelerator hardware;
-  qualify the final staged executables as well as development builds.
+- Build and run the real journey on native platforms and matching accelerator
+  hardware for the targets being released, using the final staged executables.
 - Publish raw executables with stable asset names and `SHA256SUMS`. Keep model
   weights and intermediate files out of releases. Preserve checksum-verified
   installation and appropriate backend detection/fallback.
 - Strip binaries, sign and verify Darwin artifacts, and retain portable OS/ABI
   baselines. CPU release binaries must dispatch safely across supported ISAs;
   host-specific build flags are for local experiments.
-- Carry over accelerator code-object/runtime checks and include native Windows
-  in the qualified release matrix. Include dependency provenance and licenses
-  if the new encoder/kernel dependencies require additional notices or files.
+- Carry over useful accelerator code-object/runtime checks and include native
+  Windows in the release matrix. Include required dependency license notices.
 - Use this repository's own versions, tags, release destination, asset prefix,
   and cache/install identity. Adapt inherited release scripts before using them
   for publication; they currently target the original project.
@@ -109,26 +138,27 @@ Do not invent a separate distribution workflow without a concrete need.
 
 ## Validation and acceptance
 
-- Pin model files and reference implementation revisions. Compare actual
-  outputs against the reference for every modality and meaningful mixtures.
-- Validate tokenizer IDs, prompt prefixes, input scaling, media preprocessing,
-  attention masks and positions, output projection, pooling, and normalization.
-- Include short and long contexts, local-attention boundaries, batch isolation,
-  dimension truncation, malformed inputs, non-finite outputs, and context limits.
-- Verify batch versus individual parity and cache identity for media content,
-  preprocessing settings, prompts, model revision, and output dimensions.
-- Test public HTTP behavior, health/readiness, lifecycle, queue limits, and
-  graceful errors. Bound media sizes and decoded allocation sizes.
-- Run checks on supported native platforms and applicable hardware. Mark
-  untested combinations explicitly; compilation alone is not numeric validation.
+- Try real text, image, audio, video, and mixed-input journeys on the deployed
+  dev service. Exercise model acquisition, startup, requests, and useful results,
+  not merely an internal inference call. Repeat after meaningful changes.
+- Compare real outputs against a pinned reference to decide whether an inference
+  path is usable or needs correction. Inspect intermediate model inputs and
+  values only where a discrepancy or optimization question calls for it.
+- Protect safety invariants: CPU/OS instruction support, batch isolation, cache
+  identity, finite normalized outputs, context limits, bounded queues and media
+  allocations, and graceful malformed-input handling. Keep checks focused.
+- Add regression tests for observed bugs, failing before the fix. Avoid speculative
+  combinations and unused-backend matrices. State untested targets plainly.
 - Compare performance with the same model/quantization, exact inputs and token
-  counts, dimensions, cache settings, warmup, concurrency, and hardware. Retain
-  raw measurements and commands. Make no speed claim without evidence.
-- Provide reproducible build/run instructions, model acquisition, API examples
-  for every modality, and verified executable artifacts when ready.
+  counts, dimensions, cache settings, warmup, concurrency, and hardware when the
+  comparison can change implementation choices. Report measured latency and
+  throughput improvements; make no unsupported speed claims.
+- Provide concise build/run instructions and API examples that reproduce the
+  working journeys. Follow the release process when distributing executables.
 
-This goal is complete only when full multimodal serving works, correctness is
-verified, and the supported performance paths have reproducible evidence.
+This goal is complete when a person can complete the full multimodal journeys on
+the deployed dev service, with correct useful results and measured performance.
+Tests and documentation support that outcome; they do not define completion.
 
 ## Starting state (2026-10-09)
 

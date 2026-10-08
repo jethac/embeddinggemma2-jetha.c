@@ -6,6 +6,13 @@ that project direction supersede the inherited 300M-only scope below. Keep
 changes useful and reviewable for upstream adoption. Follow the upstream release
 workflow where applicable, using this repository's own identity and destinations.
 
+Follow `GOAL.md`'s "How to spend effort" rules: deploy and run real journeys,
+measure before fixing, verify only to inform decisions or protect invariants,
+and test observed bugs. Do not create process artifacts for unshipped work.
+After each implementation round report the deployed user-visible improvement
+with numbers; if there is none, change course. These rules supersede conflicting
+process expectations in the inherited documentation.
+
 The remaining guide is inherited from QuixiAI/embeddinggemma.c. Its performance
 results and remote build hosts are upstream context, not validated results for
 EmbeddingGemma 2 or authorization to use those machines.
