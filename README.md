@@ -41,7 +41,8 @@ The present default x86 kernel build requires AVX2/FMA/F16C; it does not yet
 dispatch safely across older CPUs. `-DGGML_AVX512=ON` enables a local hardware
 experiment on compatible CPUs. This is not a portable release configuration.
 GGML accelerator build options can be selected through CMake, but none has yet
-been validated for this port. Linux and macOS builds also remain unverified.
+been validated for this port. The Linux CPU service build and image regression
+pass in CI; macOS builds remain unverified for this implementation.
 
 ```sh
 python examples/embed.py --text "task: search result | query: what powers the cell"

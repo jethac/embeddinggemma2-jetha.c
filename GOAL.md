@@ -111,6 +111,13 @@ names or theoretical throughput alone.
   per request where available as well as latency and throughput. Label mixed
   CPU/NPU execution honestly; successful runtime fallback is not proof that
   the model runs entirely on the NPU. NPU support is currently unimplemented.
+  The 740M parameters imply about 1.48 GB of BF16 weights before activations and
+  runtime overhead; do not confuse system-memory fit with on-chip SRAM residency.
+  Ryzen AI 1.8 lists Strix Halo, BF16 NLP, and the original EmbeddingGemma 300M,
+  but not EmbeddingGemma 2. Use its ONNX/Vitis AI path as the initial experiment,
+  inspecting placement because unsupported subgraphs automatically run on CPU.
+  See AMD's [release notes](https://ryzenai.docs.amd.com/en/latest/relnotes.html)
+  and [deployment documentation](https://ryzenai.docs.amd.com/en/latest/modelrun.html).
 - Preserve and extend dynamic batching, bounded queues, duplicate singleflight,
   exact-result caching, and useful concurrency behavior to multimodal requests.
 - Measure the real request end to end. Add timings for tokenization, media
@@ -184,26 +191,26 @@ Tests and documentation support that outcome; they do not define completion.
   tokenizer, CMake build, model downloader, and multimodal client are implemented.
   Text, image, audio, video, and mixed journeys run on the Windows CPU dev service.
   One text comparison against the same Q8 GGUF in llama.cpp yielded cosine
-  0.9999705; full reference parity is still being checked.
+  0.9999705; broader reference coverage remains unfinished.
   Against Hugging Face revision `914f7f89142e33e77833254d9c9b90c3cef7303b`
   in FP32, single samples yielded cosine 0.999693 (text), 0.999892 (image),
-  and 0.980420 (audio). The audio gap is unresolved, not accepted as validated
-  correctness. BF16 encoders also yielded 0.980012 on the same audio sample,
-  ruling out Q8 encoder quantization as the primary cause. The reference's
-  additive log-mel floor is now applied, but a separate 440 Hz regression still
-  fails (cosine 0.979524 against FP32). That regression is intentionally unresolved
-  until the remaining encoder mismatch is located and fixed.
+  0.999564 (audio), 0.999649 (video), and 0.999809 (text/image/audio mixed).
+  The earlier audio discrepancy came from forcing eager attention in the HF
+  reference: its additive mask was interpreted as boolean by the audio encoder,
+  reversing attention eligibility. Correct SDPA mode uses a boolean mask; the
+  440 Hz regression now passes at cosine 0.999310 and guards the mask type.
+  The reference's additive log-mel floor is applied in native preprocessing.
 - The observed image sizing bug has a service regression test: its square-image
   input now uses 260 tokens, matching the reference processor, instead of 85.
   Video uses a separate 140-token frame budget and excludes the generic helper's
   prose prefix. A two-frame sample produces 248 tokens. These checks establish
-  input sizing, not full output parity across modalities.
+  input sizing; the output comparisons above cover individual samples only.
 - Accelerator execution, portable CPU ISA dispatch, selective encoder loading,
   full media allocation bounds, and multimodal queue/batching/singleflight are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
-  its first remote run remains pending. The inherited CI matrix validates
+  its first remote run passed. The inherited CI matrix validates
   the legacy 300M foundation only. Makefile and release adaptation is unfinished.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.

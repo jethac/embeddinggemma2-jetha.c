@@ -31,7 +31,14 @@ if __name__ == "__main__":
         wav.writeframes(pcm.tobytes())
     processor = AutoProcessor.from_pretrained("google/embeddinggemma-2", revision=REVISION)
     model = AutoModel.from_pretrained("google/embeddinggemma-2", revision=REVISION,
-                                      dtype=torch.float32, attn_implementation="eager").eval()
+                                      dtype=torch.float32, attn_implementation="sdpa").eval()
+    # The pinned audio encoder consumes a boolean mask. Forcing eager creates
+    # an additive mask and silently reverses its meaning in logical_not().
+    def require_boolean_mask(module, positional, keywords):
+        mask = keywords.get("attention_mask")
+        assert mask is not None and mask.dtype == torch.bool, "reference audio mask must be boolean"
+
+    model.audio_tower.layers[0].self_attn.register_forward_pre_hook(require_boolean_mask, with_kwargs=True)
     inputs = processor(audio=pcm.astype(np.float32) / 32768, sampling_rate=16000, return_tensors="pt")
     with torch.inference_mode():
         hidden = model(**inputs).last_hidden_state
