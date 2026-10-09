@@ -43,7 +43,7 @@ FetchContent_MakeAvailable(llama)
 # Keep media fixes and CPU/OS dispatch guards as separate, adoptable patches
 # against the pinned dependency.
 find_package(Git REQUIRED)
-foreach(EI_PATCH_NAME mtmd-gemma2 ggml-cpu-dispatch)
+foreach(EI_PATCH_NAME mtmd-gemma2 ggml-cpu-dispatch mtmd-video-container)
     set(EI_DEP_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/deps/${EI_PATCH_NAME}.patch")
     execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --reverse --check --ignore-space-change "${EI_DEP_PATCH}"
         RESULT_VARIABLE EI_PATCH_PRESENT OUTPUT_QUIET ERROR_QUIET)

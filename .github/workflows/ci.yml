@@ -29,7 +29,7 @@ jobs:
       - name: Exercise disabled AVX on an emulated older CPU
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y qemu-user
+          sudo apt-get install -y qemu-user ffmpeg
           qemu-x86_64 -cpu qemu64 build-cmake/bin/cpu-dispatch-avx512-check2 --expect-disabled
       - name: Download model and exercise deployed image journey
         env:
@@ -51,6 +51,7 @@ jobs:
           python tests/media_budget2.py
           python tests/media_bounds2.py
           python tests/openai_media_model2.py
+          python tests/video_container2.py
           python tests/media_singleflight2.py --log build-cmake/dev.stderr.log
           python tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
           python examples/embed.py --text 'task: search result | query: what powers the cell'

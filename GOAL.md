@@ -260,6 +260,22 @@ Tests and documentation support that outcome; they do not define completion.
   warm rejection takes about 24 ms. Excess audio and aggregate decoded input
   are also rejected; tested valid image/audio/video outputs remain identical,
   and the mixed text/image/audio journey still uses 294 tokens.
+- Valid WebM/Matroska inputs were rejected because their duration is often stored
+  on the container rather than the video stream. The regression failed with
+  HTTP 400 before the fix. Probing now falls back to container duration while
+  retaining known stream duration; tested two-frame outputs match MP4 at cosine
+  0.9999999, with 248 tokens. A second observed probe failure on a larger MP4
+  with metadata at EOF is fixed by using the decoder's seekable buffered-input
+  wrapper for ffprobe as well. A two-second video with 37-second audio remains
+  a two-frame visual input, while a 33-frame WebM is rejected before encoding.
+  Native Windows and Linux CUDA checks pass, and both default dev endpoints
+  serve the new build. On the deployed services, the formerly rejected WebM
+  and Matroska journeys complete with 248 tokens; cache-disabled first requests
+  took 7.22/7.75 s on the busy Windows CPU and 443/498 ms on CUDA. Existing
+  modality samples and a lossless WebP/PPM pair remain bit-identical. The previous
+  persistent-cache CI run passed; the new container regression is added to CI.
+  Decoder deadlines, broader resource handling and unknown-duration inputs
+  remain unfinished.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates

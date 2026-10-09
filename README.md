@@ -76,6 +76,9 @@ objects. Media bytes are base64 encoded; base64 data URLs are also accepted.
 Supported part types are `text`, `image`, `audio`, and `video`. A video part can
 set `fps` (default 1); the current implementation accepts at most 32 sampled
 video frames across an input. Images and video frames are limited to 16 megapixels.
+Video probing uses stream duration when available, with container duration as a
+fallback for formats such as WebM/Matroska. Buffered MP4 inputs with metadata at
+the end are probed through a seekable cache wrapper.
 Audio is capped at 5,242,880 mono samples after resampling to 16 kHz (327.68 seconds).
 Decoded images, PCM and resident video frame buffers share a 128 MiB input budget;
 decoder copies, preprocessing and inference workspaces require additional memory.

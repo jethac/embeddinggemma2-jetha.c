@@ -1,0 +1,100 @@
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -11,6 +11,7 @@
+ #include "mtmd-helper.h"
+ #include "mtmd-helper-common.h"
+ #include "llama.h"
++#include <cmath>
+ 
+ #include "hash/hash.h"
+ 
+@@ -635,23 +636,27 @@
+     }
+ 
+     bool probe(float fps_target_arg) {
+-        const char * input_arg = is_buf_input() ? "pipe:0" : path.c_str();
+-        const char * cmd[] = {
+-            ffprobe_bin.c_str(),
+-            "-v", "quiet",
+-            "-show_entries", "stream=width,height,r_frame_rate,nb_frames,duration",
++        const char * input_arg = is_buf_input() ? "cache:pipe:0" : path.c_str();
++        std::vector<const char *> cmd = {ffprobe_bin.c_str(), "-v", "quiet"};
++        if (is_buf_input()) {
++            // Container metadata at EOF may require seeking back farther than
++            // pipe buffering permits. Match the decoder's seekable wrapper.
++            cmd.push_back("-read_ahead_limit"); cmd.push_back("-1");
++        }
++        cmd.insert(cmd.end(), {
++            "-show_entries", "stream=width,height,r_frame_rate,nb_frames,duration:format=duration",
+             "-select_streams", "v:0",
+-            "-of", "default=noprint_wrappers=1",
++            "-of", "default",
+             input_arg,
+             nullptr,
+-        };
++        });
+ 
+         LOG_DBG("%s: launching:", __func__);
+         for (size_t i = 0; cmd[i]; i++) { LOG_DBG(" %s", cmd[i]); }
+         LOG_DBG("\n");
+ 
+         subprocess_handle probe_sp;
+-        if (subprocess_create(cmd,
++        if (subprocess_create(cmd.data(),
+                 subprocess_option_search_user_path | subprocess_option_inherit_environment,
+                 &probe_sp.proc) != 0) {
+             LOG_ERR("%s: failed to launch ffprobe\n", __func__);
+@@ -668,11 +673,15 @@
+         uint32_t height = 0;
+         float orig_fps = 0.0f;
+         float duration = -1.0f;
++        float format_duration = -1.0f;
++        bool format_section = false;
+         int32_t n_frames_orig = -1;
+         char line[256];
+         FILE * fp = probe_sp.stdout_pipe();
+ 
+         while (fgets(line, sizeof(line), fp)) {
++            if (strncmp(line, "[FORMAT]", 8) == 0) { format_section = true; continue; }
++            if (strncmp(line, "[STREAM]", 8) == 0) { format_section = false; continue; }
+             char * eq = strchr(line, '=');
+             if (!eq) continue;
+             *eq = '\0';
+@@ -690,7 +699,9 @@
+             } else if (strcmp(key, "nb_frames") == 0 && strcmp(val, "N/A") != 0) {
+                 n_frames_orig = atoi(val);
+             } else if (strcmp(key, "duration") == 0 && strcmp(val, "N/A") != 0) {
+-                duration = (float)atof(val);
++                float value = (float)atof(val);
++                if (format_section) format_duration = value;
++                else duration = value;
+             }
+         }
+ 
+@@ -702,17 +713,24 @@
+             return false;
+         }
+ 
+-        if (duration < 0.0f && n_frames_orig > 0) {
++        if (!(duration > 0.0f) && n_frames_orig > 0) {
+             duration = (float)n_frames_orig / orig_fps;
+         }
++        // WebM/Matroska commonly expose duration only on the container. Do not
++        // replace a known video-stream duration with longer audio/container time.
++        if (!(duration > 0.0f)) duration = format_duration;
+ 
+         fps_target = fps_target_arg > 0.0f ? fps_target_arg : orig_fps;
++        double sampled_frames = (double)duration * fps_target + 0.5;
++        if (!std::isfinite(orig_fps) || !std::isfinite(fps_target) ||
++            !std::isfinite(sampled_frames) || sampled_frames >= INT32_MAX)
++            return false;
+         info.width    = width;
+         info.height   = height;
+         info.fps      = fps_target;
++        info.n_frames = duration > 0.0f ? (int32_t)sampled_frames : -1;
+         LOG_DBG("%s: %ux%u fps=%.2f duration=%.2fs n_frames=%d\n",
+                 __func__, width, height, fps_target, duration, info.n_frames);
+-        info.n_frames = duration > 0.0f ? (int32_t)(duration * fps_target + 0.5f) : -1;
+         frame_buf.resize((size_t)width * height * 3);
+         return true;
+     }
