@@ -246,6 +246,22 @@ actual 2049-token/three-sequence batches with changed boundaries, five-image
 inputs and long mixed inputs stayed bit-identical. The flag defaults off,
 applies only to CUDA and has a separate persistent-cache identity.
 
+## Text responsiveness during media encoding
+
+The media encoder and backbone now use separate locks during encoding, so short
+text can finish while an image/audio encoder is busy. On the shared Windows
+Xeon W-2135 host with six CPU threads, a fresh short text submitted 500 ms into
+a four-image request waited 26.7 seconds before the change. The installed final
+service took 0.87 seconds for text while that media request took 23.5 seconds;
+concurrent and standalone embeddings were identical. This is a responsiveness
+observation on a busy host, not a quiet throughput comparison against llama.cpp.
+The media queue still admits only one decoded request at a time, and backbone
+execution remains serialized. Reproduce on a CPU service with caches disabled:
+
+```sh
+python tests/media_text_progress2.py --url http://127.0.0.1:42667
+```
+
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies

@@ -762,11 +762,11 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     mtmd_input_chunks *chunks = mtmd_input_chunks_init();
     float *raw = NULL;
     bool ok = false;
-    bool engine_locked = false;
     /* Keep one media request's decoded/preprocessed buffers resident at a time.
-     * Decoders and CPU preprocessing do not use the backbone graph; text can
-     * progress during an external probe or frame read. Lock order is media,
-     * then backbone, and text takes only the backbone lock. */
+     * The media encoder has its own backend/scheduler. Its graph and immutable
+     * token-table reads do not use the backbone's scratch buffers; text can
+     * progress during decoding and encoding. Lock order is media, then backbone,
+     * and text takes only the backbone lock. */
     pthread_mutex_lock(&s->media_mutex);
     double start = now_ms();
     size_t decoded_bytes = 0;
@@ -823,8 +823,6 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     }
     size_t count = mtmd_helper_get_n_tokens(chunks);
     if (!count || count > EI_N_CTX) { fail(err, err_len, "multimodal input exceeds 8192-token context"); goto done; }
-    pthread_mutex_lock(&s->mutex);
-    engine_locked = true;
     raw = ei_xmalloc(count * HIDDEN * sizeof *raw);
     size_t cursor = 0;
     for (size_t i = 0; i < mtmd_input_chunks_size(chunks); i++) {
@@ -847,7 +845,9 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     *encoder_ms = now_ms() - start;
     start = now_ms();
     size_t offsets[] = {0, count};
+    pthread_mutex_lock(&s->mutex);
     ok = compute(e, raw, true, offsets, 1, out, err, err_len);
+    pthread_mutex_unlock(&s->mutex);
     *backbone_ms = now_ms() - start;
     *tokens = count;
 done:
@@ -858,7 +858,6 @@ done:
         if (media[i].video_ctx) mtmd_helper_video_free(media[i].video_ctx);
     }
     free(media); free(texts); free(inputs);
-    if (engine_locked) pthread_mutex_unlock(&s->mutex);
     pthread_mutex_unlock(&s->media_mutex);
     return ok;
 }

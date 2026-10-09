@@ -905,3 +905,31 @@ Keep this file current as implementation decisions and verified evidence change.
   modalities and existing media/API safety checks from the extracted package.
   The job is added for real package coverage; its first run is pending and does
   not establish new hardware support or a service performance improvement.
+
+- 2026-10-10: Short CPU text was blocked behind the media encoder's unrelated
+  graph: a four-image request took 32.880 seconds and contended text 32.491
+  seconds; the focused regression then failed at 26.692 / 27.094 seconds.
+  The backbone mutex now covers only backbone compute, leaving the encoder's
+  separate backend/scheduler under the existing media mutex. Immutable token
+  table reads and media cleanup also run outside the backbone lock. Admission
+  still allows only one decoded media request, with the existing byte/context
+  limits. No new numeric path or cache domain is introduced.
+  The installed final Windows primary passed at 0.872 seconds for contended text
+  during a 23.536-second four-image request, with concurrent and standalone
+  text/media vectors identical. Busy-host media totals establish no throughput
+  improvement. The regression is in native Linux and Windows service CI.
+- CUDA concurrent text and 16 images (4158 tokens in that sample) exactly matched
+  the accepted original CUDA primary; text completed before the media response.
+  All five sequential modalities also matched exactly. Both development primaries
+  now run the narrowed-lock implementation, keeping their cache settings and
+  CUDA numeric flags. Fresh final requests for all five modalities passed on
+  both primaries, with CUDA versus CPU cosine at least 0.99978864. The current
+  installed Linux package also passed. Native Metal/ROCm/XPU concurrency is
+  unverified.
+- The fresh portable Linux CPU rebuild and runtime package are now complete.
+  Its actual locally downloaded installer passed checksum-failure preservation,
+  and the final installed payload ran all five modalities with finite normalized
+  768-dimensional outputs. Loaded model libraries stayed within its own prefix.
+  Packaging commit 791546a passed all six CI jobs (37947457519). The first native
+  Windows Gemma 2 job for 3595152 passed build/staging, PowerShell 5 installation
+  and all five packaged modalities; all seven CI jobs passed (37947821308).
