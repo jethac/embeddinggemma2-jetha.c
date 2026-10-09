@@ -69,6 +69,7 @@ jobs:
             sleep 1
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
+          python tests/dependency_logs2.py --log build-cmake/dev.stderr.log
           python tests/media_budget2.py
           python tests/media_bounds2.py
           python tests/openai_media_model2.py
@@ -135,6 +136,7 @@ jobs:
             sleep 1
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
+          python3 tests/dependency_logs2.py --log build-cmake/dev.stderr.log
           python3 examples/journey2.py
           if grep -q 'ggml_metal_library_init' build-cmake/dev.stderr.log; then
             echo 'explicit CPU service initialized Metal shaders' >&2

@@ -55,6 +55,7 @@ typedef struct {
     bool cuda_local_attn;
     bool cuda_local_range;
     bool reuse_inputs;
+    bool fused_geglu;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -84,6 +85,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
+        s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -270,14 +272,18 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         a = ggml_mul_mat(ctx, layer_weight(s, il, "attn_output"), a);
         x = ggml_add(ctx, x, norm(ctx, a, layer_weight(s, il, "post_attention_norm"), e->model.rms_eps));
         a = norm(ctx, x, layer_weight(s, il, "ffn_norm"), e->model.rms_eps);
-        struct ggml_tensor *gate = ggml_gelu(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "ffn_gate"), a));
+        struct ggml_tensor *gate = ggml_mul_mat(ctx, layer_weight(s, il, "ffn_gate"), a);
+        if (!s->fused_geglu) gate = ggml_gelu(ctx, gate);
         struct ggml_tensor *up = ggml_mul_mat(ctx, layer_weight(s, il, "ffn_up"), a);
-        a = ggml_mul_mat(ctx, layer_weight(s, il, "ffn_down"), ggml_mul(ctx, gate, up));
+        struct ggml_tensor *ffn = s->fused_geglu ? ggml_geglu_split(ctx, gate, up) : ggml_mul(ctx, gate, up);
+        a = ggml_mul_mat(ctx, layer_weight(s, il, "ffn_down"), ffn);
         x = ggml_add(ctx, x, norm(ctx, a, layer_weight(s, il, "post_ffw_norm"), e->model.rms_eps));
-        a = ggml_gelu(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "inp_gate"), x));
+        a = ggml_mul_mat(ctx, layer_weight(s, il, "inp_gate"), x);
+        if (!s->fused_geglu) a = ggml_gelu(ctx, a);
         struct ggml_tensor *p = ggml_view_2d(ctx, ple, HIDDEN, (int64_t)tokens,
                                            ple->nb[2], (size_t)il * ple->nb[1]);
-        a = ggml_mul_mat(ctx, layer_weight(s, il, "proj"), ggml_mul(ctx, a, p));
+        struct ggml_tensor *layer_input = s->fused_geglu ? ggml_geglu_split(ctx, a, p) : ggml_mul(ctx, a, p);
+        a = ggml_mul_mat(ctx, layer_weight(s, il, "proj"), layer_input);
         x = ggml_add(ctx, x, norm(ctx, a, layer_weight(s, il, "post_norm"), e->model.rms_eps));
         x = ggml_mul(ctx, x, layer_weight(s, il, "layer_output_scale"));
     }
@@ -581,6 +587,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *reuse_inputs = getenv("EI_REUSE_INPUTS2");
     s->reuse_inputs = reuse_inputs && strcmp(reuse_inputs, "1") == 0;
     if (s->reuse_inputs) fprintf(stderr, "Backbone static input reuse: dedicated FP16 masks, matching sequence boundaries\n");
+    const char *geglu = getenv("EI_GEGLU2");
+    s->fused_geglu = geglu && strcmp(geglu, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->fused_geglu) fprintf(stderr, "Fused GeGLU: FFN and layer-input GELU/multiply\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 

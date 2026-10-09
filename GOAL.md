@@ -797,4 +797,39 @@ Tests and documentation support that outcome; they do not define completion.
   controlled startup observation is not a guaranteed service startup time.
   No inference throughput claim or numeric cache identity change follows.
 
+- CUDA GeGLU (`EI_GEGLU2=1`, default off) fuses the two GELU/multiply pairs per
+  backbone layer using GGML's existing split operation, including the strided
+  per-layer-input view. Both enabled and disabled CUDA paths were bit-identical
+  against the deployed unfused build in all 18 cases: all five modalities,
+  8191/8192-token text, actual changed-boundary 2049-token batches, five images
+  and long mixed inputs. Reusable-input graph rebuild/eviction safety checks
+  and the 2049-token persistent-cache isolation check pass. The cache domain
+  distinguishes this mode even though observed outputs remain identical.
+  Paired warm 8191-token HTTP medians fell from 195.396 to 182.241 ms and from
+  200.125 to 188.415 ms in reverse order (20 measured requests after six warmups,
+  six threads, QKV off, global/local attention, lower mask range, input reuse
+  and graph caching on, result caches/profiling off, RTX 5060 Ti). This is
+  approximately 6-7% lower latency, not a matched llama.cpp throughput claim.
+  A complete 12-forward capture retained all 240 local and 48 global attention
+  calls. Kernel count fell from 12,804 to 12,228, total kernel time from
+  2209.150 to 2130.040 ms (3.6%). Its 576 fused calls cost 165.713 ms; local/global
+  attention times stayed near 199/661 ms. The short-request trial showed no
+  regression in either order but too much host variation for a speedup claim.
+  CPU outputs also remained identical in the 1024-token timing trial, but
+  changing host load reversed the measured outcome: unfused/fused medians
+  2777/3640 ms in one order, 5033/3564 ms in reverse. No CPU benefit is
+  established, so the retained flag applies only to CUDA. With the flag set,
+  all five Windows CPU modality samples stayed bit-identical and the fused
+  startup marker was absent. The deployed CUDA service on port 42669 now
+  enables GeGLU alongside global/local attention, lower mask range, input reuse
+  and graph caching, QKV off and profiling unset. All five deployed modality
+  journeys passed against Windows CPU (minimum cosine 0.999715). Deployed
+  8191-token text and five images (1292 tokens) returned finite normalized
+  embeddings; its warm median was 284.023 ms for 20 unique requests after six
+  warmups under increased contention. This is not comparable to the preceding
+  deployment's 221.990 ms observation and is not a deployed throughput win.
+  CI run 37935509482 passed all six jobs for the preceding logging change;
+  the existing Linux/macOS full-encoder jobs now also invoke its focused log
+  regression. These results do not yet validate this GeGLU commit.
+
 Keep this file current as implementation decisions and verified evidence change.

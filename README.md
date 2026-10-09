@@ -187,6 +187,17 @@ the fallback limit also passed. Persistent caches distinguish this numeric
 mode and implementation version. The flag defaults off pending broader
 hardware and quiet-host validation.
 
+`EI_GEGLU2=1` fuses the backbone's FFN and per-layer-input GELU/multiply pairs.
+On the RTX 5060 Ti, paired warm 8191-token HTTP medians improved from 195.4 to
+182.2 ms and from 200.1 to 188.4 ms in reverse order (20 measured requests after
+six warmups, six threads, QKV off, global/local attention, lower mask range,
+input reuse and graph caching on, result caches/profiling off). These are
+native latency measurements, not a matched llama.cpp throughput claim.
+All five modality samples, 8191/8192-token text, changed 2049-token batches,
+five-image and long mixed inputs remained bit-identical on CUDA. In complete
+12-forward GPU traces, kernel count fell from 12,804 to 12,228 and total kernel
+time from 2209 to 2130 ms. The flag defaults off and applies only to CUDA.
+
 Dependency debug logs are suppressed by default; normal diagnostics, warnings
 and startup timings remain visible. Set `EI_DEBUG_LOG2=1` to include dependency
 debug output. Large tensor inventories can delay startup when logs are written
