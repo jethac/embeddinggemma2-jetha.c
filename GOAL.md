@@ -387,11 +387,29 @@ Tests and documentation support that outcome; they do not define completion.
   outputs, measures both orders for at least eight seconds and retains losses.
   CPU baseline configuration explicitly excludes GPU devices and operation/KV
   offload: zero GPU weight layers alone did not establish a CPU-only comparison.
-  Shared-host preliminary runs varied widely; the README uses the final full
-  matched runs and shows per-order ranges. Short concurrent CUDA text is a real
-  deficit (0.79x in the final run). Measure its graph rebuilding, scheduling and
+  Shared-host runs varied widely; the README shows the last full matched run
+  and per-order ranges. These results are provisional: the original quiet-host
+  guard observed only the WSL guest, missing Windows host CPU contention.
+  The guard now samples Windows GetSystemTimes as well and requires a working
+  Windows Python on PATH under WSL. Its observed-bug regression failed before
+  the fix and passes on Windows/Linux. Rerun the cells with the corrected guard.
+  Short concurrent CUDA text measured a
+  deficit (0.79x in that run). Measure its graph rebuilding, scheduling and
   compute costs before choosing the next optimization. Media, other hardware,
   larger concurrency and wider token ranges still need comparisons.
+- `EI_PROFILE_BACKBONE2=1` logs graph construction, input preparation,
+  synchronized execution and output processing for each native forward. In a
+  busy-host short-concurrent trace, shapes alternated between 32 tokens / one
+  request and 96 tokens / three requests. Input preparation was about 0.01–0.03
+  ms; most time was inside execution, including CUDA graph capture and GGML
+  debug logging. Those absolute times and a debug-log filtering trial are not
+  performance evidence: Windows host CPU was 1200% while the WSL guard passed.
+  No logging-filter optimization shipped. Measure batch collection and graph
+  reuse on a quiet host before adding graph-cache or kernel machinery.
+  The CUDA development service was redeployed with profiling disabled; all five
+  fresh-input modality journeys returned finite normalized 768-dimensional
+  vectors, and the five persisted results matched their pre-restart vectors.
+  This round establishes no user-visible inference speedup.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
 

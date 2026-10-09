@@ -29,8 +29,11 @@ for these text measurements. Exact-result, response and prompt caches are off.
 
 Each cell starts fresh servers, checks concurrent embedding quality, warms both
 engines and measures both orders for at least eight seconds per engine/order.
-Before each pass, the five-sample mean non-benchmark CPU load must be below
-150% (100% represents one logical core). The host remains shared: the order
+Before each recorded pass, the five-sample mean non-benchmark WSL CPU load was
+below 150% (100% represents one logical core). **These results are provisional:**
+that guard did not observe Windows host CPU contention. The harness now also
+checks Windows CPU time under WSL; these cells need rerunning with that guard.
+The host remains shared: the order
 ranges below expose substantial variability in some cells and limit general
 performance claims. Throughput is the mean of the two passes; the range spans
 the two order-paired ratios. Every completed cell is retained, including losses.
@@ -85,6 +88,10 @@ CPU comparisons explicitly disable llama.cpp GPU devices, host-operation
 offload and KV offload; zero GPU weight layers alone still permits host-operation
 offload in this pinned version.
 It uses ports 42674/42675 by default and rejects occupied ports.
+Under WSL, Windows `python.exe` must be on PATH for host CPU sampling. An idle
+guest cannot qualify a saturated Windows host. Set `EI_PROFILE_BACKBONE2=1` on
+the native server to log graph construction, input preparation, synchronized
+execution and output processing times; leave it unset for throughput measurements.
 
 ## Build and run the development server
 

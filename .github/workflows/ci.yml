@@ -20,6 +20,7 @@ jobs:
         run: |
           python tests/dependency_patches2.py
           python tests/model_download2.py
+          python tests/benchmark_host2.py
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha -j 2
           cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 media-admission-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 2

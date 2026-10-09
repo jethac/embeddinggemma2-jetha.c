@@ -10,8 +10,11 @@ import json
 import math
 import os
 from pathlib import Path
+import platform
+import shutil
 import socket
 import statistics
+import subprocess
 import tempfile
 import threading
 import time
@@ -21,12 +24,52 @@ from compare_llamacpp import (Endpoint, ManagedServer, cosine_similarity,
                              percentile, post_json, run_requests, sample_host, send)
 
 
+def windows_host_cpu():
+    """WSL's process list omits host contention; sample actual Windows CPU time.
+
+    Return aggregate percent in the same units as ps (100 = one logical core).
+    Require a working Windows Python rather than silently qualifying an idle VM.
+    """
+    if 'microsoft' not in platform.release().lower():
+        return None
+    python = shutil.which('python.exe')
+    if not python:
+        raise RuntimeError('WSL comparison requires Windows python.exe on PATH for host CPU sampling')
+    code = '''import ctypes, os, time
+from ctypes import wintypes
+get_times = ctypes.WinDLL('kernel32', use_last_error=True).GetSystemTimes
+get_times.argtypes = [ctypes.POINTER(wintypes.FILETIME)] * 3
+get_times.restype = wintypes.BOOL
+def sample():
+    times = [wintypes.FILETIME() for _ in range(3)]
+    if not get_times(*(ctypes.byref(t) for t in times)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return [t.dwLowDateTime | (t.dwHighDateTime << 32) for t in times]
+before = sample()
+time.sleep(1)
+idle, kernel, user = [b - a for a, b in zip(before, sample())]
+total = kernel + user
+if total <= 0:
+    raise RuntimeError('Windows CPU sample interval is empty')
+print(100 * (1 - idle / total) * os.cpu_count())
+'''
+    result = subprocess.run([python, '-c', code], check=True, capture_output=True,
+                            text=True, timeout=15)
+    load = float(result.stdout.strip())
+    if not math.isfinite(load) or load < 0:
+        raise RuntimeError('invalid Windows host CPU sample')
+    return load
+
+
 def wait_quiet(ignored, threshold):
     deadline = time.monotonic() + 300
     next_notice = time.monotonic() + 30
     samples = []
     while time.monotonic() < deadline:
         _, load, _ = sample_host(ignored, float('inf'), float('inf'))
+        host_load = windows_host_cpu()
+        if host_load is not None:
+            load = max(load, host_load)
         samples = (samples + [load])[-5:]
         if len(samples) == 5 and statistics.mean(samples) < threshold:
             return statistics.mean(samples)

@@ -32,6 +32,7 @@ typedef struct {
     size_t graph_tokens, graph_batch;
     bool graph_raw;
     int threads;
+    bool profile;
     pthread_mutex_t mutex;
     struct llama_model *vocab_model;
     mtmd_context *media;
@@ -165,7 +166,10 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
                     size_t batch, float *out, char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     size_t n = offsets[batch];
+    double started = s->profile ? now_ms() : 0;
+    bool rebuilt = !s->graph || s->graph_tokens != n || s->graph_batch != batch || s->graph_raw != raw;
     if (!build_graph(e, n, batch, raw, err, err_len)) return false;
+    double built = s->profile ? now_ms() : 0;
     size_t padded = (n + 31) / 32 * 32;
     int32_t *pos = ei_xmalloc(n * sizeof *pos);
     int32_t *seq = ei_xmalloc(n * sizeof *seq);
@@ -190,8 +194,10 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
             if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) mask[q * n + k] = -INFINITY;
     ggml_backend_tensor_set(s->local_mask, mask, 0, n * padded * sizeof *mask);
     free(pos); free(seq); free(mask); free(pool);
+    double prepared = s->profile ? now_ms() : 0;
     if (ggml_backend_sched_graph_compute(s->sched, s->graph) != GGML_STATUS_SUCCESS)
         return fail(err, err_len, "inference failed");
+    double computed = s->profile ? now_ms() : 0;
     ggml_backend_tensor_get(s->output, out, 0, batch * EI_N_EMBD * sizeof *out);
     for (size_t b = 0; b < batch; b++) {
         float *row = out + b * EI_N_EMBD;
@@ -203,6 +209,10 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
         if (energy <= 0) return fail(err, err_len, "model produced a zero embedding");
         ei_l2_normalize(row, EI_N_EMBD);
     }
+    if (s->profile)
+        fprintf(stderr, "backbone: tokens=%zu batch=%zu raw=%d rebuilt=%d build=%.3f prep=%.3f compute=%.3f output=%.3f ms\n",
+                n, batch, raw, rebuilt, built - started, prepared - built,
+                computed - prepared, now_ms() - computed);
     return true;
 }
 
@@ -212,6 +222,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     ggml_backend_load_all();
     ei_tokenizer_init(&e->tokenizer, &e->model);
     engine2 *s = e->gemma2 = ei_xcalloc(1, sizeof *s);
+    s->profile = getenv("EI_PROFILE_BACKBONE2") != NULL;
     pthread_mutex_init(&s->mutex, NULL);
     s->threads = 6;
     const char *threads = getenv("EI_THREADS");
