@@ -20,6 +20,13 @@
 #define LAYERS 24
 #define GRAPH_NODES 4096
 
+static void dependency_log(enum ggml_log_level level, const char *text, void *debug) {
+    // Tensor inventories and graph-reuse messages can make synchronous log
+    // sinks dominate startup/inference. Keep normal diagnostics by default.
+    if (level == GGML_LOG_LEVEL_DEBUG && !debug) return;
+    if (text) fputs(text, stderr);
+}
+
 typedef struct {
     ggml_backend_sched_t sched;
     struct ggml_context *graph_ctx;
@@ -418,6 +425,11 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
 }
 
 void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend) {
+    const char *debug_logs = getenv("EI_DEBUG_LOG2");
+    void *log_debug = debug_logs && strcmp(debug_logs, "1") == 0 ? (void *)"1" : NULL;
+    ggml_log_set(dependency_log, log_debug);
+    llama_log_set(dependency_log, log_debug);
+    mtmd_log_set(dependency_log, log_debug);
     memset(e, 0, sizeof *e);
     ei_model_load(&e->model, path);
     ggml_backend_load_all();

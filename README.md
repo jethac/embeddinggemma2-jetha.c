@@ -187,6 +187,11 @@ the fallback limit also passed. Persistent caches distinguish this numeric
 mode and implementation version. The flag defaults off pending broader
 hardware and quiet-host validation.
 
+Dependency debug logs are suppressed by default; normal diagnostics, warnings
+and startup timings remain visible. Set `EI_DEBUG_LOG2=1` to include dependency
+debug output. Large tensor inventories can delay startup when logs are written
+through a slow filesystem mount.
+
 `EI_REUSE_INPUTS2=1` keeps positions, attention masks and pooling weights in
 dedicated backend buffers while a graph and its sequence boundaries remain
 unchanged. Token IDs and media rows are uploaded on every forward; this does

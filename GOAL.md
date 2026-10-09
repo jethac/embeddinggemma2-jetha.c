@@ -774,4 +774,27 @@ Tests and documentation support that outcome; they do not define completion.
   deployed service retains the original 64-column global tile alongside the
   validated lower-mask-range path; its working binary is unchanged.
 
+- Dependency debug logging caused an actual full-model startup timeout with a
+  Windows-mounted log sink (180-second readiness deadline). Changing only the
+  sink to a Linux file let the original binary start in 7.667 seconds, writing
+  195,551 bytes before the first request. Default logging now filters dependency
+  DEBUG messages, preserving normal diagnostics, warnings and startup timings;
+  `EI_DEBUG_LOG2=1` restores full diagnostics. The same Windows-log journey
+  completed startup and all 18 requests in 9.3 seconds after the fix, with
+  backbone/media loading totaling 1.944 seconds and every response bit-identical
+  against the previous deployed CUDA service. Its log was 17,909 bytes after
+  those requests. Coverage includes all five modalities, 8191/8192-token text,
+  actual 2049-token batches with changed boundaries, five images and long mixed
+  inputs. The focused log regression fails against the original captured log
+  and passes against the fixed log; it also checks that warnings remain visible.
+  Windows CPU and CUDA builds pass. All five Windows CPU modality responses
+  remain bit-identical. The deployed CUDA service on port 42669 retains global
+  attention, local padding/range, input reuse and graph caching, QKV off and
+  profiling unset. Its five modality journeys passed against Windows CPU
+  (minimum cosine 0.999715); 8191-token text and five images returned finite
+  normalized embeddings. Increasing host contention made its subsequent
+  startup slower (35.458 seconds for backbone/media loading), so the early
+  controlled startup observation is not a guaranteed service startup time.
+  No inference throughput claim or numeric cache identity change follows.
+
 Keep this file current as implementation decisions and verified evidence change.
