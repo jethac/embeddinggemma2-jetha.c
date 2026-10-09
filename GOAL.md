@@ -741,6 +741,9 @@ Tests and documentation support that outcome; they do not define completion.
   8191-token text plus five images (1292 tokens) returned normalized outputs.
   Its warm 8191-token median was 221.990 ms for 20 unique HTTP requests after
   six warmups, text cache off. The response cache remains available to users.
+  CI run 37927324328 passed all six jobs. The matched CUDA comparison against
+  llama.cpp reached its five-minute quiet-host deadline without measuring a
+  cell; no new llama.cpp speed claim is supported.
   The existing complete trace also identifies a global-attention resource
   constraint: 252 registers/thread, 256 threads/block and 84,224 bytes of shared
   memory/block on the RTX 5060 Ti (65,536 registers and 102,400 shared bytes/SM).
@@ -748,5 +751,27 @@ Tests and documentation support that outcome; they do not define completion.
   smaller query tiles are the next measured candidate, rather than adding GQA
   grouping already present. Local attention uses 255 registers/thread,
   128 threads/block and 35,328 shared bytes/block, with two blocks/SM.
+
+- The 32-column global-attention tile trial was rejected. Both modes built;
+  the disabled CUDA journey and all five Windows CPU modalities were
+  bit-identical. Enabled CUDA outputs passed cosine 0.999913 or better, but
+  paired 8191-token medians worsened from 224.808 to 241.772 ms and from
+  240.561 to 270.355 ms in reverse order. A complete 12-forward trace retained
+  all 240 local and 48 global calls: global flash time increased from 658.797
+  to 962.025 ms, total kernel time from 2209.150 to 2512.615 ms. The actual
+  32-column kernel still uses 256 threads, 196 registers/thread and 67,584
+  shared bytes/block, allowing one block/SM. Its combine buffer keeps shared
+  memory above the two-block limit.
+  The subsequent 8-column trial was also rejected. Its enabled journey passed
+  cosine 0.999913 or better, and its disabled journey stayed bit-identical, but
+  paired 8191-token medians worsened from 226.778 to 319.615 ms and from
+  203.144 to 305.322 ms in reverse order. A complete 12-forward trace retained
+  all expected calls: global flash time rose to 1690.279 ms, total kernel time
+  to 3231.480 ms, while local flash stayed near 197 ms. This variant actually
+  allowed two blocks/SM (128 threads, 230 registers/thread, 41,376 shared
+  bytes/block), so more resident blocks alone did not improve this workload.
+  Both unshipped overrides and their cache/test plumbing are removed. The
+  deployed service retains the original 64-column global tile alongside the
+  validated lower-mask-range path; its working binary is unchanged.
 
 Keep this file current as implementation decisions and verified evidence change.
