@@ -161,6 +161,7 @@ guest cannot qualify a saturated Windows host. Set `EI_PROFILE_BACKBONE2=1` on
 the native server to log graph construction, input preparation, synchronized
 execution and output processing times; leave it unset for throughput measurements.
 `EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
+for video it also separates lazy frame-read waits from remaining preprocessing.
 leave it unset for normal serving.
 
 `EI_IMAGE_THREADS2=2` through `16` opts into parallel horizontal image resizing;

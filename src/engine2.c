@@ -778,11 +778,14 @@ typedef struct {
     mtmd_helper_video *ctx;
     size_t frames;
     size_t *total_frames;
+    bool profile;
+    double read_ms;
 } video_input2;
 
 static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, char **text) {
     (void)index;
     video_input2 *video = user;
+    double started = video->profile ? now_ms() : 0;
     int result;
     // The generic helper adds "Video:". This model's visual-only input has
     // adjacent image-boundary blocks and no prose or timestamp prefix.
@@ -790,6 +793,7 @@ static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, cha
         result = mtmd_helper_video_read_next(video->ctx, bitmap, text);
         if (*text) { free(*text); *text = NULL; }
     } while (!result && !*bitmap);
+    if (video->profile) video->read_ms += now_ms() - started;
     if (!result && *bitmap) {
         if (++video->frames > 32 || ++*video->total_frames > 32) {
             mtmd_bitmap_free(*bitmap);
@@ -869,6 +873,7 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
                 video_frames += (size_t)info.n_frames;
                 decoded_bytes += (size_t)info.width * info.height * 3;
                 videos[i].ctx = media[i].video_ctx;
+                videos[i].profile = phase_profile;
                 videos[i].total_frames = &decoded_video_frames;
                 media[i].bitmap = mtmd_bitmap_init_lazy(s->media, NULL, &videos[i], read_video_frame2);
             } else {
@@ -925,6 +930,14 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
     if (phase_profile) fprintf(stderr, "media phases: decode %.2f ms, preprocess %.2f ms, encode/assemble %.2f ms\n",
                               decode_end - start, preprocess_end - decode_end,
                               *encoder_ms - (preprocess_end - start));
+    if (phase_profile && decoded_video_frames) {
+        double read_ms = 0;
+        for (size_t i = 0; i < n_parts; i++) read_ms += videos[i].read_ms;
+        // Lazy video reads happen inside preprocessing. Separate pipe/decode
+        // waits from image preprocessing before choosing the next optimization.
+        fprintf(stderr, "video phases: %zu frames, frame reads %.2f ms, remaining preprocess %.2f ms\n",
+                decoded_video_frames, read_ms, preprocess_end - decode_end - read_ms);
+    }
     *tokens = count;
     *prepared = raw;
     raw = NULL;
