@@ -121,7 +121,12 @@ def main():
         p.error('unset profiling flags before timing')
     for path in (a.model, a.mmproj, a.embeddinggemma_bin, a.llama_server):
         if not path.is_file(): p.error(f'not found: {path}')
-    for port in (a.port, a.port + 1):
+    vnni_probe = os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1'
+    if vnni_probe:
+        cpuinfo = Path('/proc/cpuinfo')
+        if a.backend != 'cpu' or not cpuinfo.is_file() or 'avx512_vnni' not in cpuinfo.read_text().split():
+            p.error('VNNI experiment requires a Linux AVX-512 VNNI CPU')
+    for port in ((a.port, a.port + 1, a.port + 2) if vnni_probe else (a.port, a.port + 1)):
         with socket.socket() as check: check.bind(('127.0.0.1', port))
     os.environ['EI_THREADS'] = str(a.threads)
     ours = Endpoint('127.0.0.1', a.port, '/v1/embeddings', 'embeddinggemma')
@@ -162,12 +167,30 @@ def main():
                 print(json.dumps({'llama_command': matched_llama_cmd}), flush=True)
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
-                                   env={k: v for k, v in os.environ.items() if k != 'EI_CPU_Q8_PAIR2'}) as lp:
+                                   env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as lp:
+                    if vnni_probe:
+                        startup = op.log_path.read_text(errors='replace')
+                        if not any('libggml-cpu-' + name + '.so' in startup for name in
+                                   ('cascadelake', 'cooperlake', 'icelake', 'sapphirerapids', 'zen4')):
+                            raise RuntimeError('VNNI experiment did not load a VNNI CPU plugin')
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
                             quality.append(list(pool.map(lambda pair: validate(endpoint, pair[engine]),
                                                          inputs[:concurrency])))
+                    if vnni_probe:
+                        off = Endpoint(ours.host, ours.port + 2, ours.path, ours.api)
+                        command = ours_cmd.copy()
+                        command[command.index('--port') + 1] = str(off.port)
+                        with ManagedServer(command, off, '/healthz', root / 'native-off.log',
+                                env={k: v for k, v in os.environ.items()
+                                     if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}):
+                            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                                unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
+                                                          inputs[:concurrency]))
+                        if unchanged != quality[0]:
+                            raise RuntimeError(f'{kind}: VNNI paired rows changed native outputs')
+                        print('VNNI paired rows: exact native on/off outputs', flush=True)
                     tokens = [v[1] for v in quality[0]]
                     if tokens != [v[1] for v in quality[1]]:
                         raise RuntimeError(f'{kind} token counts differ: {tokens} vs {[v[1] for v in quality[1]]}')

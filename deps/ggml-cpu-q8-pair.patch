@@ -8,19 +8,22 @@
  #include <type_traits>
  
  #ifdef _MSC_VER
-@@ -1611,8 +1612,67 @@
+@@ -1611,8 +1612,78 @@
  
  #if defined(__AVX2__) && defined(__F16C__)
  // Templated functions for gemm of dimensions 4xN
-+#if defined(__AVX512BW__) && defined(__AVX512DQ__) && !defined(__AVX512VNNI__) && !defined(__AVXVNNI__)
++#if defined(__AVX512BW__) && defined(__AVX512DQ__) && (!defined(__AVXVNNI__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__)))
 +    // Pair output rows while preserving each row's eight-lane accumulation.
-+    // VNNI variants retain their existing dot-product kernel.
++    // VNNI preserves its non-saturating dot product; the older path keeps
++    // the original two-stage saturating multiplication.
 +    template <int RN>
 +    NOINLINE void gemm4xN512(int64_t m0, int64_t m, int64_t n0, int64_t n) {
 +        const int64_t xtiles = (n - n0) / RN;
 +        const int64_t tiles = xtiles * ((m - m0) / 4);
 +        const int64_t duty = (tiles + nth - 1) / nth;
++#if !(defined(__AVX512VNNI__) && defined(__AVX512VL__))
 +        const __m512i ones = _mm512_set1_epi16(1);
++#endif
 +        for (int64_t job = duty * ith; job < MIN(duty * (ith + 1), tiles); ++job) {
 +            const int64_t ii = m0 + job / xtiles * 4;
 +            const int64_t jj = n0 + job % xtiles * RN;
@@ -47,7 +50,11 @@
 +                    const __m512i bv = _mm512_broadcast_i64x4(load(B + ldb * (jj + j) + l));
 +                    for (int pair = 0; pair < 2; ++pair) {
 +                        const __m512i signed_b = _mm512_mask_sub_epi8(bv, negative[pair], _mm512_setzero_si512(), bv);
++#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
++                        const __m512i dot = _mm512_dpbusd_epi32(_mm512_setzero_si512(), magnitude[pair], signed_b);
++#else
 +                        const __m512i dot = _mm512_madd_epi16(ones, _mm512_maddubs_epi16(magnitude[pair], signed_b));
++#endif
 +                        acc[j][pair] = _mm512_fmadd_ps(scales[pair], _mm512_cvtepi32_ps(dot), acc[j][pair]);
 +                    }
 +                }
@@ -64,10 +71,14 @@
 +
      template <int RN>
      NOINLINE void gemm4xN(int64_t m0, int64_t m, int64_t n0, int64_t n) {
-+#if defined(__AVX512BW__) && defined(__AVX512DQ__) && !defined(__AVX512VNNI__) && !defined(__AVXVNNI__)
++#if defined(__AVX512BW__) && defined(__AVX512DQ__) && (!defined(__AVXVNNI__) || (defined(__AVX512VNNI__) && defined(__AVX512VL__)))
 +        if constexpr (std::is_same<TA, block_q8_0>::value && std::is_same<TB, block_q8_0>::value) {
 +            static const bool pair_rows = [] {
++#if defined(__AVX512VNNI__) && defined(__AVX512VL__)
++                const char * value = std::getenv("EI_CPU_Q8_PAIR_VNNI2");
++#else
 +                const char * value = std::getenv("EI_CPU_Q8_PAIR2");
++#endif
 +                return value && value[0] == '1' && value[1] == '\0';
 +            }();
 +            if (pair_rows && n - n0 >= 16) { gemm4xN512<RN>(m0, m, n0, n); return; }

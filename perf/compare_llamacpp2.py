@@ -183,6 +183,7 @@ def main():
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
                       'packed_qkv': os.getenv('EI_QKV2') == '1',
                       'cpu_q8_pair': os.getenv('EI_CPU_Q8_PAIR2') == '1',
+                      'cpu_q8_pair_vnni': os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1',
                       'cuda_global_attn': os.getenv('EI_CUDA_GLOBAL_ATTN2') == '1',
                       'cuda_local_attn': os.getenv('EI_CUDA_LOCAL_ATTN2') == '1',
                       'cuda_local_range': os.getenv('EI_CUDA_LOCAL_RANGE2') == '1',
@@ -197,7 +198,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix='embeddinggemma2-comparison-') as tmp:
         root = Path(tmp)
         with ManagedServer(llama_cmd, llama, '/health', root / 'fixtures.log',
-                           env={k: v for k, v in os.environ.items() if k != 'EI_CPU_Q8_PAIR2'}):
+                           env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}):
             prompts = generate_exact_prompts(llama, a.token_counts, max(a.concurrency))
         for tokens in a.token_counts:
             for concurrency in a.concurrency:
@@ -205,7 +206,7 @@ def main():
                 # Each cell starts clean: no accumulated state from earlier shapes.
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                         ManagedServer(llama_cmd, llama, '/health', root / 'llama.log',
-                                   env={k: v for k, v in os.environ.items() if k != 'EI_CPU_Q8_PAIR2'}) as lp:
+                                   env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as lp:
                     packed_qkv = 'packed QKV:' in op.log_path.read_text(errors='replace')
                     if packed_qkv != (os.getenv('EI_QKV2') == '1'):
                         raise RuntimeError('native server did not select the requested QKV mode')

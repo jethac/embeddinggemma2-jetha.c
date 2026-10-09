@@ -204,7 +204,13 @@ Leave it unset for normal serving.
 on non-VNNI AVX-512 BW/DQ CPU variants. It defaults off; matrices with fewer
 than 16 remaining input columns and other ISAs retain their existing kernels.
 Each row retains the original eight-lane integer and FP32 reduction order.
-VNNI variants keep their existing dot-product implementation. Both comparison
+VNNI variants keep their existing dot-product implementation by default.
+`EI_CPU_Q8_PAIR_VNNI2=1` separately enables an experimental paired VNNI path;
+it has no qualified performance claim yet. The optional CI `cpu_pair_vnni`
+input requires actual VNNI hardware and checks exact native on/off media
+outputs before timing. Run it with
+`gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_media=true -f media_modalities=audio -f cpu_pair_vnni=true`.
+Both comparison
 harnesses clear this flag in llama.cpp's environment, even when sharing the
 same GGML library; set it only to measure the native optimization.
 
