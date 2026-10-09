@@ -1,0 +1,61 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -151,6 +151,9 @@
+     ggml_context_ptr ctx_data;
+ 
+     std::vector<uint8_t> buf_compute_meta;
++    ggml_context_ptr audio_graph_ctx;
++    ggml_cgraph * audio_graph = nullptr;
++    int audio_graph_nx = 0, audio_graph_ny = 0;
+ 
+     std::vector<ggml_backend_t> backend_ptrs;
+     std::vector<ggml_backend_buffer_type_t> backend_buft;
+@@ -4554,13 +4557,36 @@
+     const bool phase_profile = std::getenv("EI_PROFILE_MEDIA2") != nullptr;
+     const int64_t graph_start = phase_profile ? ggml_time_us() : 0;
+ 
+-    // build the inference graph
+-    ggml_backend_sched_reset(ctx->sched.get());
+-    ggml_cgraph * gf = clip_get_graph_builder(ctx, imgs, params)->build();
++    // Keep one Gemma 4 audio graph. Every input, mask and position tensor is
++    // still populated below; changing shape discards the retained workspace.
++    const char * cache_flag = std::getenv("EI_AUDIO_GRAPH_CACHE2");
++    const bool cache_audio = cache_flag && strcmp(cache_flag, "1") == 0 &&
++        ctx->proj_type() == PROJECTOR_TYPE_GEMMA4A && imgs.entries.size() == 1 &&
++        ctx->backend && strncmp(ggml_backend_name(ctx->backend), "CUDA", 4) == 0;
++    const bool reuse_audio = cache_audio && ctx->audio_graph &&
++        ctx->audio_graph_nx == imgs.entries[0].nx() && ctx->audio_graph_ny == imgs.entries[0].ny();
++    ggml_cgraph * gf = ctx->audio_graph;
++    if (!reuse_audio) {
++        ggml_backend_sched_reset(ctx->sched.get());
++        ctx->audio_graph = nullptr;
++        ctx->audio_graph_ctx.reset();
++        if (cache_audio) {
++            auto builder = clip_get_graph_builder(ctx, imgs, params);
++            gf = builder->build();
++            ctx->audio_graph_ctx.reset(builder->ctx0_ptr.release());
++        } else {
++            gf = clip_get_graph_builder(ctx, imgs, params)->build();
++        }
++    }
+     const int64_t graph_built = phase_profile ? ggml_time_us() : 0;
+-    if (!ggml_backend_sched_alloc_graph(ctx->sched.get(), gf)) {
++    if (!reuse_audio && !ggml_backend_sched_alloc_graph(ctx->sched.get(), gf)) {
+         LOG_ERR("%s: failed to allocate compute graph\n", __func__);
+         return false;
++    }
++    if (cache_audio) {
++        ctx->audio_graph = gf;
++        ctx->audio_graph_nx = imgs.entries[0].nx();
++        ctx->audio_graph_ny = imgs.entries[0].ny();
+     }
+ 
+     const int64_t graph_allocated = phase_profile ? ggml_time_us() : 0;
+@@ -5884,6 +5910,7 @@
+     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
+     const int64_t compute_done = phase_profile ? ggml_time_us() : 0;
+     if (status != GGML_STATUS_SUCCESS) {
++        ctx->audio_graph = nullptr;
+         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
+         return false;
+     }
