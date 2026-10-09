@@ -615,6 +615,13 @@ The macOS ARM CPU build also runs all five modality journeys in CI. A Metal-enab
 service passed all five on the runner's Apple Paravirtual GPU, with minimum
 cosine 0.99950580 against CPU. GGML can fall back to CPU for unsupported operations;
 this does not establish physical Apple Silicon performance or an all-GPU path.
+The optional matched comparison runs with
+`gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_metal_media=true -f media_modalities=text,image,audio,video,mixed`.
+It uses the installed GGML kernels, matching Q8_0 weights, three CPU threads,
+caches off, one/four clients and both engine orders. Startup logs must show
+Metal backends and llama.cpp layer offload; llama.cpp info logging stays on
+to inspect placement. The runner prints its actual device, including any
+virtual device. No Metal speedup is established yet.
 To try Metal on macOS, configure with `-DGGML_METAL=ON` and start with
 `--backend metal`. Unsupported BF16 accelerator weights are widened exactly to
 FP32 at load time. Broader hardware and reference quality remain unverified.

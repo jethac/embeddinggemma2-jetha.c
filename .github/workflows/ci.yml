@@ -14,6 +14,10 @@ on:
         description: Compare uncached image, audio, video and mixed CPU requests with pinned llama.cpp
         type: boolean
         default: false
+      benchmark_metal_media:
+        description: Compare the five-modality Metal service with pinned llama.cpp on macOS
+        type: boolean
+        default: false
       cpu_pair_vnni:
         description: Enable experimental VNNI paired rows in the multimodal comparison
         type: boolean
@@ -222,7 +226,7 @@ jobs:
   gemma2-macos:
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: ${{ inputs.benchmark_metal_media && 90 || 30 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Inspect the actual Metal device
@@ -318,6 +322,29 @@ jobs:
           grep 'EmbeddingGemma 2: MTL' build-cmake/metal.stderr.log
           grep 'CLIP using MTL' build-cmake/metal.stderr.log
           python3 examples/journey2.py --url http://127.0.0.1:42668 --compare-url http://127.0.0.1:42667
+      - name: Build the pinned comparison server with the installed Metal kernels
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_metal_media
+        run: |
+          if [ '${{ steps.metal.outputs.available }}' != ON ]; then
+            echo 'Metal comparison requires a real Metal device' >&2
+            exit 1
+          fi
+          cmake -S build-cmake/_deps/llama-src -B build-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_USE_SYSTEM_GGML=ON -DCMAKE_PREFIX_PATH="$PWD/build-installed" -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DGGML_NATIVE=OFF
+          cmake --build build-llama --target llama-server -j 3
+          otool -L build-llama/bin/llama-server
+      - name: Measure matched Metal media journeys in both engine orders
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_metal_media
+        env:
+          MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
+          MEDIA_VALIDATE_ONLY: ${{ inputs.media_validate_only && '1' || '0' }}
+          MEDIA_PROFILE_PHASES: ${{ inputs.media_profile_phases && '1' || '0' }}
+        run: |
+          system_profiler SPHardwareDataType SPDisplaysDataType
+          clang --version
+          args=()
+          if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
+          if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
+          python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
     name: Legacy 300M CPU (${{ matrix.platform }})

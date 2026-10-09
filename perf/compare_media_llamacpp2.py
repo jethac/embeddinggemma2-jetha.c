@@ -22,7 +22,7 @@ from compare_llamacpp2 import measure, wait_quiet
 
 
 def fixtures(directory, count):
-    cases = {kind: [] for kind in ('image', 'audio', 'video', 'mixed')}
+    cases = {kind: [] for kind in ('text', 'image', 'audio', 'video', 'mixed')}
     for i in range(count):
         color = ((220 + 37 * i) % 256, (30 + 67 * i) % 256, (30 + 109 * i) % 256)
         image = b'P6\n96 96\n255\n' + bytes(color) * (96 * 96)
@@ -49,6 +49,12 @@ def fixtures(directory, count):
             parts[kind] = (ours, llama)
         text = {'type': 'text', 'text': f'q{i} A colored square and a tone.'}
         for kind in cases:
+            if kind == 'text':
+                body = {'model': 'embeddinggemma-2',
+                        'input': 'task: search result | query: ' + text['text'],
+                        'dimensions': 768, 'encoding_format': 'float'}
+                cases[kind].append((body, body))
+                continue
             contents = ([parts[kind]] if kind != 'mixed' else
                         [(text, text), parts['image'], parts['audio']])
             if kind == 'video':
@@ -114,7 +120,7 @@ def measure_native_pair(on, off, bodies, ignored, options):
             'other_cpu_percent': loads}
 
 
-def phase_costs(path, offset):
+def phase_costs(path, offset, require_encoder=True):
     with path.open('rb') as log:
         log.seek(offset)
         lines = log.read().decode(errors='replace').splitlines()
@@ -127,7 +133,7 @@ def phase_costs(path, offset):
         if samples:
             result[name] = {'samples': len(samples),
                             'median_ms': dict(zip(fields, map(statistics.median, zip(*samples))))}
-    if 'encoder' not in result:
+    if require_encoder and 'encoder' not in result:
         raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
     return result
 
@@ -138,7 +144,7 @@ def main():
     p.add_argument('--mmproj', type=Path, required=True)
     p.add_argument('--embeddinggemma-bin', type=Path, required=True)
     p.add_argument('--llama-server', type=Path, required=True)
-    p.add_argument('--backend', choices=['cpu', 'cuda'], required=True)
+    p.add_argument('--backend', choices=['cpu', 'cuda', 'metal'], required=True)
     p.add_argument('--threads', type=int, default=2)
     p.add_argument('--profile-phases', action='store_true',
                    help='Diagnose encoder/backbone costs from actual server logs')
@@ -152,8 +158,8 @@ def main():
     p.add_argument('--validate-only', action='store_true', help='Check journeys and quality without timing')
     a = p.parse_args()
     modalities = a.modalities.split(',')
-    if not modalities or any(k not in ('image', 'audio', 'video', 'mixed') for k in modalities):
-        p.error('modalities must be image,audio,video,mixed or a subset')
+    if not modalities or any(k not in ('text', 'image', 'audio', 'video', 'mixed') for k in modalities):
+        p.error('modalities must be text,image,audio,video,mixed or a subset')
     if (a.threads < 1 or min(a.concurrency) < 1 or max(a.concurrency) > 32 or
             a.rounds < 3 or a.target_seconds <= 0 or a.cooldown < 0 or a.quiet_total_cpu_percent <= 0):
         p.error('invalid threads, concurrency, rounds or measurement duration')
@@ -186,7 +192,7 @@ def main():
                  '--no-cache-idle-slots', '--no-webui', '--log-disable']
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
-    if a.profile_phases:
+    if a.profile_phases or a.backend == 'metal':
         llama_cmd.remove('--log-disable')
         llama_cmd += ['--log-verbosity', '4']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
@@ -215,6 +221,15 @@ def main():
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as lp:
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
+                    if a.backend == 'metal':
+                        native_log = op.log_path.read_text(errors='replace')
+                        llama_log = lp.log_path.read_text(errors='replace')
+                        if 'EmbeddingGemma 2: MTL' not in native_log or 'CLIP using MTL' not in native_log:
+                            raise RuntimeError('native Metal comparison fell back to CPU')
+                        if not re.search(r'offloaded [1-9][0-9]*/[0-9]+ layers to GPU', llama_log):
+                            raise RuntimeError('llama.cpp Metal comparison did not offload model layers')
+                        if 'CLIP using MTL' not in llama_log:
+                            raise RuntimeError('llama.cpp Metal comparison did not select Metal encoders')
                     if vnni_probe:
                         startup = op.log_path.read_text(errors='replace')
                         if not any('libggml-cpu-' + name + '.so' in startup for name in
@@ -256,7 +271,7 @@ def main():
                     row = {'modality': kind, 'concurrency': concurrency, 'tokens': tokens,
                            'minimum_cosine': minimum}
                     if a.profile_phases:
-                        row['phase_costs'] = {name: phase_costs(process.log_path, offset)
+                        row['phase_costs'] = {name: phase_costs(process.log_path, offset, kind != 'text')
                             for name, process, offset in zip(('ours', 'llama'), (op, lp), log_offsets)}
                     if native_pair is not None:
                         row['native_pair_on_off'] = native_pair
@@ -280,7 +295,7 @@ def main():
                     row.update(ours_emb_s=rates['ours'], llama_emb_s=rates['llama'],
                                speedup=rates['ours']/rates['llama'], passes=rows, other_cpu_percent=loads)
                     if a.profile_phases:
-                        row['phase_costs'] = {name: phase_costs(process.log_path, offset)
+                        row['phase_costs'] = {name: phase_costs(process.log_path, offset, kind != 'text')
                             for name, process, offset in zip(('ours', 'llama'), (op, lp), log_offsets)}
                     results.append(row); print(json.dumps(row), flush=True)
     if results:
