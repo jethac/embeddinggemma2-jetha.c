@@ -1645,6 +1645,13 @@ int main(int argc, char **argv) {
     fprintf(stderr, "loading model: %s\n", model_path);
     double startup_stage = startup_time_ms();
     ei_engine engine;
+#if defined(EI_GEMMA2) && defined(__APPLE__)
+    // GGML registers Metal devices (and compiles shaders) before selecting
+    // the CPU backend. This process serves one engine; an explicit CPU
+    // request should not depend on Metal initialization at all.
+    if (strcmp(opts.backend, "cpu") == 0 && setenv("GGML_METAL_DEVICES", "0", 1) != 0)
+        ei_die("cannot disable Metal device initialization for CPU service");
+#endif
     ei_engine_load_backend(&engine, model_path, opts.backend);
     startup_timing("backbone load", &startup_stage);
 #ifdef EI_GEMMA2

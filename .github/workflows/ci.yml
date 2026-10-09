@@ -135,6 +135,10 @@ jobs:
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
           python3 examples/journey2.py
+          if grep -q 'ggml_metal_library_init' build-cmake/dev.stderr.log; then
+            echo 'explicit CPU service initialized Metal shaders' >&2
+            exit 1
+          fi
           python3 - <<'PY'
           import json, math, subprocess, urllib.request
           text = 'task: search result | query: what powers the cell'
@@ -179,6 +183,10 @@ jobs:
             if [ "$ready" != 1 ]; then cat build-cmake/metal.stderr.log build-cmake/cpu.stderr.log; exit 1; fi
             echo "Service on port $port ready after $((SECONDS - startup_started)) seconds"
           done
+          if grep -q 'ggml_metal_library_init' build-cmake/cpu.stderr.log; then
+            echo 'explicit CPU service initialized Metal shaders' >&2
+            exit 1
+          fi
           grep 'EmbeddingGemma 2: MTL' build-cmake/metal.stderr.log
           grep 'CLIP using MTL' build-cmake/metal.stderr.log
           python3 examples/journey2.py --url http://127.0.0.1:42668 --compare-url http://127.0.0.1:42667

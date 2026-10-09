@@ -632,5 +632,12 @@ Tests and documentation support that outcome; they do not define completion.
   The following run 37904005129 completed all six jobs; Metal startup took
   32 seconds and all five CPU/Metal comparisons passed (minimum 0.999506).
   This does not establish physical Apple GPU throughput or a faster startup.
+  Run 37906879977 then reached the 300-second deadline because its explicit CPU
+  service stalled inside Metal library initialization; the separate Metal
+  service reached readiness. GGML's registry eagerly creates Metal devices even
+  for CPU selection. The server now disables Metal device enumeration before
+  initializing an explicitly selected CPU engine on macOS. The native journey
+  checks reject any Metal shader initialization in that CPU process. Native
+  macOS verification of this fix is pending.
 
 Keep this file current as implementation decisions and verified evidence change.
