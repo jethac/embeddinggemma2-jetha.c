@@ -20,11 +20,22 @@ jobs:
         run: |
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha -j 2
+          cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 -j 2
+          build-cmake/bin/cpu-dispatch-scalar-check2
+          build-cmake/bin/cpu-dispatch-avx-check2
+          build-cmake/bin/cpu-dispatch-avx512-check2
+      - name: Exercise disabled AVX on an emulated older CPU
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y qemu-user
+          qemu-x86_64 -cpu qemu64 build-cmake/bin/cpu-dispatch-avx512-check2 --expect-disabled
       - name: Download model and exercise deployed image journey
         env:
           EI_THREADS: '2'
         run: |
           python scripts/download-model2.py
+          python tests/cpu_fallback2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
+          python tests/cpu_fallback2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --emulator /usr/bin/qemu-x86_64
           build-cmake/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
           service_pid=$!
           trap 'kill "$service_pid" 2>/dev/null || true' EXIT

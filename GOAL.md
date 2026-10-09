@@ -213,8 +213,7 @@ Tests and documentation support that outcome; they do not define completion.
   An encoder batching experiment was rejected on this CPU: the cache-disabled
   two-frame video warm median rose from 4050.7 to 4280.9 ms despite identical
   output. Revisit batching on accelerators using actual measurements.
-- Portable CPU ISA dispatch,
-  complete media resource handling, and multimodal queue/batching/singleflight are
+- Complete media resource handling and multimodal queue/batching/singleflight are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
 - Decoded media input now has bounds checked before image/PCM allocation:
   16 megapixels per image/frame, 5,242,880 audio samples, and 128 MiB of retained
@@ -246,6 +245,22 @@ Tests and documentation support that outcome; they do not define completion.
   comparisons do not establish full reference parity. The Windows CPU
   development service remains available on localhost:42667. Linux configuration of a patched
   Windows dependency checkout now tolerates CRLF/LF context differences.
+- x86-64 CMake builds now use runtime CPU plugins by default, covering baseline,
+  AVX, AVX2, AVX-512, and newer variants. A separate dependency patch checks
+  XSAVE/OSXSAVE and XCR0 before admitting vector kernels; CPUID alone is
+  insufficient. Native selector checks cover missing OS register state, and
+  the actual AVX-512 selector rejects QEMU's CPU without AVX. A baseline-only
+  Windows service returned a finite normalized 768-dimensional embedding.
+  The default Windows service on localhost:42667 now selects Skylake-X; all five
+  matching modality samples were bit-identical to the previous static build.
+  A mixed latency outlier did not reproduce: subsequent alternating calls were
+  5.20/5.21 s (dispatch) versus 5.03/5.09 s (static) on the busy host. This is
+  not a quiet-host performance comparison. Linux dispatch build and the full
+  emulated older-CPU service journey remain in progress; ARM dispatch, physical
+  older/newer CPU coverage, AVX2-versus-AVX-512 benchmarking, and release packaging
+  remain unfinished. The dev build requires its shared libraries and plugins;
+  adapting the inherited executable installation/release flow to acquire these
+  matching dependencies remains unfinished.
 - Initial fixed-shape ONNX exports of the backbone, vision, and audio encoders
   run on CPU ONNX Runtime. Their assembled 294-token text/image/audio sample
   matches the FP32 reference at cosine 0.99999994 (maximum element error

@@ -221,7 +221,6 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         if (*end || value < 1 || value > 256) ei_die("EI_THREADS must be 1..256");
         s->threads = (int)value;
     }
-    ggml_backend_load_all();
     ggml_backend_t cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, NULL);
     if (!cpu) ei_die("no compatible CPU backend");
     const char *requested = backend ? backend : "auto";
@@ -244,7 +243,11 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         else if (strcmp(requested, "auto")) ei_die("requested backend %s is unavailable", requested);
     }
     s->backends[s->n_backends++] = cpu;
-    ggml_backend_cpu_set_n_threads(cpu, s->threads);
+    ggml_backend_reg_t cpu_reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(cpu));
+    ggml_backend_set_n_threads_t set_threads = (ggml_backend_set_n_threads_t)
+        ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_set_n_threads");
+    if (!set_threads) ei_die("CPU backend cannot configure threads");
+    set_threads(cpu, s->threads);
     e->backend_name = ggml_backend_name(s->backends[0]);
     struct ggml_init_params params = {
         .mem_size = ggml_tensor_overhead() * (size_t)e->model.gguf.n_tensors,

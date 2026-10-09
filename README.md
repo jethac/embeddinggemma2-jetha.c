@@ -14,7 +14,7 @@ this project's own names and an extended platform matrix.
 **Current status:** the model-specific C backbone and native media encoders run
 text, image, audio, video, and mixed requests on Windows CPU and Linux CUDA
 development services. This is experimental: full reference parity, accelerator measurements,
-portable CPU dispatch, media resource limits, and release integration remain
+broader CPU/platform coverage, media resource handling, and release integration remain
 unfinished. There are no binary releases or verified GPU/NPU performance claims.
 
 ## Build and run the development server
@@ -40,9 +40,14 @@ use `--media-encoders vision` for image/video workloads or `--media-encoders aud
 for audio workloads to skip the unused encoder's weights. The default `all`
 loads both. Requests for an unloaded modality are rejected before decoding.
 
-The present default x86 kernel build requires AVX2/FMA/F16C; it does not yet
-dispatch safely across older CPUs. `-DGGML_AVX512=ON` enables a local hardware
-experiment on compatible CPUs. This is not a portable release configuration.
+On x86-64, the default build selects a CPU kernel plugin at runtime, checking
+both CPU features and OS register-state support. It includes a baseline fallback,
+AVX, AVX2, and AVX-512 variants. The Windows Xeon service selects Skylake-X;
+all five tested modality outputs are bit-identical to the previous static build.
+Keep the generated `bin` directory intact when running or copying this dev build:
+its shared libraries and CPU plugins are required. Release packaging remains
+unfinished. For a local static experiment, use `-DEI_CPU_DISPATCH=OFF` and
+`-DGGML_AVX512=ON` on compatible hardware; that build has no runtime ISA fallback.
 CUDA is exercised on an RTX 5060 Ti through Ubuntu under WSL with CUDA 13.0.
 Build with `-DGGML_CUDA=ON` and start with `--backend cuda`; this requires the
 CUDA toolkit at build time and a compatible NVIDIA driver at runtime. Both

@@ -1,0 +1,53 @@
+diff --git a/ggml/src/ggml-cpu/arch/x86/cpu-feats.cpp b/ggml/src/ggml-cpu/arch/x86/cpu-feats.cpp
+index d775a03..e1f0d18 100644
+--- a/ggml/src/ggml-cpu/arch/x86/cpu-feats.cpp
++++ b/ggml/src/ggml-cpu/arch/x86/cpu-feats.cpp
+@@ -260,11 +260,21 @@ void test_x86_is() {
+ }
+ #endif
+ 
+-static int ggml_backend_cpu_x86_score() {
+-    // FIXME: this does not check for OS support
+-
++static int ggml_backend_cpu_x86_score_features(cpuid_x86 & is, uint64_t xcr0) {
+     int score = 1;
+-    cpuid_x86 is;
++
++    // CPUID alone does not make AVX usable: the OS must save XMM/YMM state.
++#if defined(GGML_AVX) || defined(GGML_AVX2) || defined(GGML_FMA) || defined(GGML_F16C) || defined(GGML_AVX_VNNI) || defined(GGML_AVX512)
++    if (!is.XSAVE() || !is.OSXSAVE() || (xcr0 & 0x6) != 0x6) { return 0; }
++#endif
++#ifdef GGML_AVX512
++    // AVX-512 additionally requires opmask and both ZMM state components.
++    if ((xcr0 & 0xe6) != 0xe6) { return 0; }
++#endif
++#ifdef GGML_AMX_INT8
++    if ((xcr0 & 0x60000) != 0x60000) { return 0; }
++#endif
++    (void) xcr0;
+ 
+ #ifdef GGML_FMA
+     if (!is.FMA()) { return 0; }
+@@ -322,6 +332,22 @@ static int ggml_backend_cpu_x86_score() {
+     return score;
+ }
+ 
++static int ggml_backend_cpu_x86_score() {
++    cpuid_x86 is;
++    uint64_t xcr0 = 0;
++    // Never issue XGETBV on a CPU/OS that has not enabled XSAVE.
++    if (is.XSAVE() && is.OSXSAVE()) {
++#ifdef _MSC_VER
++        xcr0 = _xgetbv(0);
++#else
++        uint32_t lo, hi;
++        __asm__ __volatile__("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
++        xcr0 = (uint64_t(hi) << 32) | lo;
++#endif
++    }
++    return ggml_backend_cpu_x86_score_features(is, xcr0);
++}
++
+ GGML_BACKEND_DL_SCORE_IMPL(ggml_backend_cpu_x86_score)
+ 
+ #endif // defined(__x86_64__) || (defined(_MSC_VER) && defined(_M_AMD64))
