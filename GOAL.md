@@ -1029,3 +1029,24 @@ Keep this file current as implementation decisions and verified evidence change.
   Linux CPU and CUDA builds passed. Windows primary still runs its accepted
   installed binary; the lookup implementation needs its own CI run. Hardware,
   cross-request batching and complete release-matrix gaps remain unfinished.
+
+- 2026-10-10: Decoder commit 303392f passed all seven CI jobs (37959862276).
+  Its portable Windows executable/runtime pair was staged and installed through
+  the actual PowerShell 5 installer with local download fixtures. Installation
+  with spaces and checksum-failure preservation passed. The installed candidate
+  and final Windows primary completed all five uncached modalities with vectors
+  exactly matching their accepted comparison services. Model/compiler runtime
+  DLLs load from the installed prefix, selecting ggml-cpu-skylakex; its MIT
+  license matches the source. Both development primaries now include the lookup.
+  Windows retains six threads, batching off and its existing persistent cache.
+- The first valid 12,960,131-byte Windows image-upload order was effectively flat
+  at 33784.817 -> 33898.775 ms. Encoder and backbone time dominated. Host CPU was
+  78% busy in a later snapshot; the native CPU library code sections were
+  unchanged despite different package hashes. The remaining timing pass was
+  intentionally stopped because it could not qualify a CPU speedup. No such
+  claim is made. The candidate was stopped after final deployed journeys; no
+  binary release, tag or version change was created. Hardware, cross-request
+  batching, quiet comparisons and the full release matrix remain unfinished.
+- CPU source inspection found the backbone leaves its threadpool unset; the
+  actual GGML path creates and frees a disposable pool per forward. Measure
+  that cost and steady requests before deciding whether to keep a resident pool.

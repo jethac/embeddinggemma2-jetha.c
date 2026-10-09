@@ -437,6 +437,10 @@ not general inference throughput. All five modalities remained byte-identical
 to the accepted service, including malformed-base64 rejection behavior.
 The deployed CUDA primary completed the same fresh upload at a 454 ms median
 in a later pass; that separate pass does not establish an additional speedup.
+The installed Windows CPU primary also includes this decoder update. Its first
+shared-host large-upload pass was effectively flat (33.785 -> 33.899 seconds),
+with encoder and backbone work dominating; no Windows inference speedup is
+established. All five Windows modality vectors remained identical after updating.
 
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
