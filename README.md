@@ -137,10 +137,15 @@ still requires external `ffmpeg` and `ffprobe`.
 CUDA is exercised on an RTX 5060 Ti through Ubuntu under WSL with CUDA 13.0.
 Build with `-DGGML_CUDA=ON` and start with `--backend cuda`; this requires the
 CUDA toolkit at build time and a compatible NVIDIA driver at runtime. Both
-media encoders use CUDA as well as the backbone. Other accelerator backends
-remain unverified. The Linux CPU service build and image regression pass in CI.
-The macOS ARM CPU build also runs all five modality journeys in CI; Metal
-execution and broader reference quality remain unverified.
+media encoders use CUDA as well as the backbone. ROCm and XPU remain unverified.
+The Linux CPU service build and image regression pass in CI.
+The macOS ARM CPU build also runs all five modality journeys in CI. A Metal-enabled
+service passed all five on the runner's Apple Paravirtual GPU, with minimum
+cosine 0.99950580 against CPU. GGML can fall back to CPU for unsupported operations;
+this does not establish physical Apple Silicon performance or an all-GPU path.
+To try Metal on macOS, configure with `-DGGML_METAL=ON` and start with
+`--backend metal`. Unsupported BF16 accelerator weights are widened exactly to
+FP32 at load time. Broader hardware and reference quality remain unverified.
 
 For the exercised macOS CPU build, configure with:
 

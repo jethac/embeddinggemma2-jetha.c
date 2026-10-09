@@ -477,6 +477,16 @@ Tests and documentation support that outcome; they do not define completion.
   to 24 MiB on the affected device; the temporary FP32 upload buffer is freed
   after loading. The Metal journey reproduced the abort before this change and
   must pass after it before qualification.
+  The rerun (`0356838`, CI 37890404735) passed all six jobs. The installed Metal
+  service completed all five uncached journeys on the Apple Paravirtual device:
+  text/image/audio/video/mixed cosine versus CPU was
+  0.99976394/0.99995557/0.99950580/0.99987662/0.99986856, above the 0.999 gate.
+  Logs select `MTL0` for the backbone and both encoders. This changes Metal from
+  aborting on the first request to five working input types. GGML's CPU fallback
+  remains available; this virtual device does not qualify an all-GPU path or
+  physical Apple Silicon throughput. The rebuilt Linux CUDA service was
+  redeployed on 42669, and all five fresh outputs exactly matched its pre-change
+  vectors; CUDA retained BF16 weights. No inference speedup is established.
 - The relocated Linux source install also completed the uncached text journey
   under `qemu-x86_64 -cpu qemu64` with AVX unavailable and all CPU plugins present.
   The baseline plugin was selected, and the response contained 768 finite
