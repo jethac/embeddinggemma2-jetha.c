@@ -249,6 +249,23 @@ encoder costs for both engines and native backbone costs from actual logs.
 Profiling enables additional logging; use it to choose an optimization,
 then measure that change with profiling disabled.
 
+The [profiled audio run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38003813340)
+at `70a062c` landed on AMD EPYC 9V45 (four logical CPUs, two inference threads),
+with matching Q8_0 weights, 29-token audio inputs, caches off and both orders.
+Other CPU activity was 1.4–1.6%. Native flag-on/off outputs were exact.
+
+| Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+|---|---:|---:|---:|---:|
+| 1 | 9.44 | 8.57 | 1.103× | 0.999773 |
+| 4 | 9.29 | 8.56 | 1.085× | 0.999362 |
+
+Separate native on/off throughput improved by 18.9% and 17.3% with paired
+VNNI rows. Encoder compute medians were 64.2/66.6 ms for ours versus
+72.9/76.9 ms for llama.cpp; native backbone compute was 36.3/37.6 ms.
+Encoder build/allocation totaled about 0.35 ms. Profiling and llama.cpp info
+logging were enabled, so these are diagnostic serving measurements. This
+different CPU does not resolve or replace the Intel and earlier EPYC losses.
+
 On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
 requests (four different tones, caches off, two CPU threads under WSL) measured
 386.5 -> 307.6 ms and 625.0 -> 517.2 ms median; a repeat measured
