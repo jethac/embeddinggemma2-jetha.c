@@ -1193,3 +1193,24 @@ Keep this file current as implementation decisions and verified evidence change.
   no numeric cache identity. This resize implementation needs its own CI run;
   hardware, cross-request batching, quiet llama.cpp comparisons and the full
   native release matrix remain open.
+
+- 2026-10-10: An AVX2 base64 prototype reduced the isolated 13 MB decode from
+  9.5/13.4 to 7.2/7.6 ms and matched scalar acceptance/bytes in 160,416 cases,
+  including protected-page bounds under sanitizers. Native builds passed, but
+  actual same-build scalar/AVX2 uploads were 198.584/202.272 and
+  207.236/213.351 ms in reverse order, with identical embeddings. The prototype
+  was removed and both native build outputs restored to the committed source.
+  No AVX2 base64 option or service improvement shipped from this experiment.
+- Changed course to actual encoded images. On the six-thread CUDA profiling
+  candidate, warm 1800-square patterned PNG uploads had a 115 ms median and
+  JPEG uploads 214 ms. JPEG decoding took 90–121 ms versus 25–30 ms preprocessing
+  and about 47 ms encoder work; PNG decoding took 28–32 ms. Existing x86-64 stb
+  already enables SSE2, so this is not a missing SIMD build flag.
+- A native libjpeg prototype, using the host library, decoded the same JPEG at
+  86.5/113.1 ms versus stb's 184.7/278.9 ms in reverse order under heavier host
+  contention. Pixel mean absolute difference was 0.0843 and maximum 3. The
+  private stb-decoded PPM exactly matched the actual service's JPEG embedding;
+  libjpeg-decoded PPM had cosine 0.999528 against it. This supports investigating
+  an accelerated JPEG path, but does not qualify a shipped decoder or an HTTP
+  speedup. Broader image/format validation, bounded error handling, portable
+  dependency distribution and any required numeric cache identity remain to do.
