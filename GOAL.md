@@ -469,6 +469,14 @@ Tests and documentation support that outcome; they do not define completion.
   `MTL0`, but its first text request aborts the process. The CI failure trap now
   prints the actual service stderr so the next run can identify the assertion
   or unsupported operation; startup alone does not qualify Metal execution.
+  The captured abort identifies `per_layer_model_proj.weight`: it is BF16 even
+  in the Q8 model, and this virtual Metal device reports no BF16 support. The
+  loader now widens unsupported BF16 accelerator weights to FP32 with an exact
+  conversion before allocating/uploading them. CPU and BF16-capable accelerators
+  retain their original weight representation. This projection grows from 12
+  to 24 MiB on the affected device; the temporary FP32 upload buffer is freed
+  after loading. The Metal journey reproduced the abort before this change and
+  must pass after it before qualification.
 - The relocated Linux source install also completed the uncached text journey
   under `qemu-x86_64 -cpu qemu64` with AVX unavailable and all CPU plugins present.
   The baseline plugin was selected, and the response contained 768 finite

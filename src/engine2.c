@@ -273,6 +273,16 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         int64_t ne[4];
         for (int j = 0; j < 4; j++) ne[j] = (int64_t)t->ne[j];
         struct ggml_tensor *w = ggml_new_tensor(s->weights, (enum ggml_type)t->type, (int)t->n_dims, ne);
+        if (s->n_backends > 1 && w->type == GGML_TYPE_BF16 &&
+            !ggml_backend_supports_op(s->backends[0], w)) {
+            // Some Metal devices cannot even host a BF16 leaf in their scheduler.
+            // Widen its values exactly rather than placing an unsupported tensor
+            // in accelerator memory. Contiguous BF16 strides double for FP32.
+            w->type = GGML_TYPE_F32;
+            for (int j = 0; j < 4; j++) w->nb[j] *= 2;
+            fprintf(stderr, "accelerator weight: widening %.*s from BF16 to FP32\n",
+                    (int)t->name.len, t->name.str);
+        }
         char name[128];
         if (t->name.len >= sizeof name) ei_die("tensor name too long");
         memcpy(name, t->name.str, (size_t)t->name.len); name[t->name.len] = 0;
@@ -287,8 +297,18 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     } else {
         s->weight_buffer = ggml_backend_alloc_ctx_tensors(s->weights, s->backends[0]);
         if (!s->weight_buffer) ei_die("cannot allocate accelerator weights");
-        for (struct ggml_tensor *w = ggml_get_first_tensor(s->weights); w; w = ggml_get_next_tensor(s->weights, w))
-            ggml_backend_tensor_set(w, ei_gguf_tensor(&e->model.gguf, w->name, true)->data, 0, ggml_nbytes(w));
+        for (struct ggml_tensor *w = ggml_get_first_tensor(s->weights); w; w = ggml_get_next_tensor(s->weights, w)) {
+            const ei_tensor *source = ei_gguf_tensor(&e->model.gguf, w->name, true);
+            if (source->type == GGML_TYPE_BF16 && w->type == GGML_TYPE_F32) {
+                float *expanded = ei_xmalloc(ggml_nbytes(w));
+                ggml_bf16_to_fp32_row((const ggml_bf16_t *)source->data,
+                                     expanded, ggml_nelements(w));
+                ggml_backend_tensor_set(w, expanded, 0, ggml_nbytes(w));
+                free(expanded);
+            } else {
+                ggml_backend_tensor_set(w, source->data, 0, ggml_nbytes(w));
+            }
+        }
     }
     ggml_backend_buffer_set_usage(s->weight_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     s->sched = ggml_backend_sched_new(s->backends, NULL, s->n_backends, GRAPH_NODES, false, true);
