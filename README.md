@@ -285,6 +285,31 @@ exact outputs and usage. A persisted response restored without inference.
 This overlaps stages across requests; cross-request backbone batching remains
 unfinished.
 
+`EI_AUDIO_GRAPH_CACHE2=1` retains one CUDA Gemma 4 audio encoder graph and
+its allocated workspace. It defaults off and is enabled on the CUDA dev
+service. Matching shapes reuse the graph; changing length or feature shape
+rebuilds it. Every call refills samples, attention masks and positions.
+Other encoders and backends retain their existing path.
+
+At `7871c42`, alternating fresh-key one-second audio requests against the
+same build with this flag off measured on the RTX 5060 Ti dev service:
+
+| Clients | Encoder cache off, wave median | Deployed cache on | Paired wins |
+|---|---:|---:|---:|
+| 1 | 10.47 ms | 10.01 ms | 21/26 |
+| 4 | 29.02 ms | 26.91 ms | 24/26 |
+| 8 | 58.68 ms | 52.05 ms | 24/26 |
+
+Both retained the stage pipeline and six CPU threads. Fresh keys avoided
+the primary's response cache; the comparison instance had caches disabled.
+Two candidate repeats improved these waves by about 8–12%. Encoder phase
+sampling reduced graph build/allocation from 0.91 ms to 0.002 ms; compute
+remained about 3.7 ms. All five modalities, changed samples and lengths,
+11-/31-second audio, concurrent arrays and error recovery kept exact outputs
+and usage. A persisted response survived deployment without inference.
+These shared-host observations establish an audio serving improvement,
+not a new llama.cpp comparison or a speedup for every audio length.
+
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
 timings remain visible. The video helper previously bypassed this filter and
