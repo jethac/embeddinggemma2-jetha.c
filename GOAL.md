@@ -1050,3 +1050,27 @@ Keep this file current as implementation decisions and verified evidence change.
 - CPU source inspection found the backbone leaves its threadpool unset; the
   actual GGML path creates and frees a disposable pool per forward. Measure
   that cost and steady requests before deciding whether to keep a resident pool.
+
+- 2026-10-10: Actual installed six-thread pool creation/free measured 0.473 ms
+  median (50 warm samples); deployed fresh short text took 62–129 ms. No resident
+  pool change was made: this cost offers little improvement on that workload.
+  Changed course to decoder copies and per-byte work. The retained decoder now
+  borrows the parsed string/data-URL suffix and writes full quartets directly,
+  leaving the final quartet's padding handling intact. An isolated comparison
+  exercised 100,000 valid/malformed boundary samples with identical acceptance
+  and decoded bytes; component timings were variable, so no component speedup
+  is claimed. Actual malformed HTTP requests still return 400.
+- The same fresh 12,960,131-byte PPM upload measured 595.498 -> 548.148 ms and
+  436.080 -> 415.943 ms in reverse order (six measured warm calls per pass),
+  with matching 64 MiB caches, unique request keys, native Linux clients and
+  JSON construction outside the timer. All vectors were identical. The CUDA
+  primary is deployed with its existing flags/persistence; all five fresh
+  modalities exactly matched the candidate, and a later upload pass measured
+  363.593 ms, not a further paired speedup. Native Windows and CUDA builds passed.
+  The Windows package was staged into a new disposable prefix, installed using
+  PowerShell 5 local download fixtures and deployed with its existing settings.
+  All five fresh modality vectors matched the accepted candidate exactly;
+  selected runtime DLLs load from its installed prefix. No Windows inference
+  speedup is claimed. OpenAI model validation passed on both primaries.
+  This implementation still needs its own CI run; hardware, cross-request
+  batching, quiet llama.cpp comparisons and the full release matrix remain open.

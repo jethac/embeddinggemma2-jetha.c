@@ -7,15 +7,16 @@ extern "C" {
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using json = nlohmann::json;
 
-static std::vector<unsigned char> decode_base64(std::string text) {
+static std::vector<unsigned char> decode_base64(std::string_view text) {
     if (text.rfind("data:", 0) == 0) {
         size_t split = text.find(";base64,");
         if (split == std::string::npos) throw std::runtime_error("media data URL must be base64 encoded");
-        text.erase(0, split + 8);
+        text.remove_prefix(split + 8);
     }
     if (text.empty() || text.size() % 4) throw std::runtime_error("invalid base64 media");
     static const auto lookup = [] {
@@ -28,7 +29,22 @@ static std::vector<unsigned char> decode_base64(std::string text) {
     }();
     std::vector<unsigned char> bytes;
     bytes.reserve(text.size() / 4 * 3);
-    for (size_t i = 0; i < text.size(); i += 4) {
+    // Only the final quartet can contain padding. Decode the bulk directly
+    // into its bounded output, leaving the existing padding rules below.
+    size_t bulk = text.size() - 4;
+    bytes.resize(bulk / 4 * 3);
+    for (size_t i = 0, out = 0; i < bulk; i += 4, out += 3) {
+        int a = lookup[static_cast<unsigned char>(text[i])];
+        int b = lookup[static_cast<unsigned char>(text[i + 1])];
+        int c = lookup[static_cast<unsigned char>(text[i + 2])];
+        int d = lookup[static_cast<unsigned char>(text[i + 3])];
+        if ((a | b | c | d) < 0) throw std::runtime_error("invalid base64 media");
+        unsigned value = (unsigned)a << 18 | (unsigned)b << 12 | (unsigned)c << 6 | (unsigned)d;
+        bytes[out] = (unsigned char)(value >> 16);
+        bytes[out + 1] = (unsigned char)(value >> 8);
+        bytes[out + 2] = (unsigned char)value;
+    }
+    for (size_t i = bulk; i < text.size(); i += 4) {
         unsigned value = 0;
         int padding = 0;
         for (size_t j = 0; j < 4; j++) {
@@ -111,7 +127,7 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                     else if (type == "audio") kind = EI_PART_AUDIO;
                     else if (type == "video") kind = EI_PART_VIDEO;
                     else throw std::runtime_error("content type must be text, image, audio, or video");
-                    buffers[i] = decode_base64(part.at("data").get<std::string>());
+                    buffers[i] = decode_base64(part.at("data").get_ref<const std::string &>());
                     float fps = part.value("fps", 1.0f);
                     if (!std::isfinite(fps) || fps <= 0 || fps > 30) throw std::runtime_error("fps must be >0 and <=30");
                     parts[i] = {kind, buffers[i].data(), buffers[i].size(), fps};

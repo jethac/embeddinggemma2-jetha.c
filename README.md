@@ -442,6 +442,14 @@ shared-host large-upload pass was effectively flat (33.785 -> 33.899 seconds),
 with encoder and backbone work dominating; no Windows inference speedup is
 established. All five Windows modality vectors remained identical after updating.
 
+A subsequent decoder change borrows the parsed base64 string and decodes full
+quartets directly, retaining padding checks on the final quartet. The same
+uncached upload measured 595 -> 548 ms and 436 -> 416 ms in reverse order,
+about 5–8% lower HTTP latency, with identical vectors and matching cache settings.
+The CUDA primary completed a later pass at 364 ms; this separate pass is not an
+additional speedup comparison. Both development primaries include the change;
+these observations establish no Windows CPU inference speedup.
+
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
 is saved to `cache.bin.responses` on graceful shutdown, alongside the text embedding
