@@ -314,6 +314,22 @@ Tests and documentation support that outcome; they do not define completion.
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates
   the legacy 300M foundation only. Makefile and release adaptation is unfinished.
+- A native macOS ARM CPU job now builds the complete EmbeddingGemma 2 service
+  with AppleClang 17 and Metal/OpenMP disabled. Its running service completes
+  text, image, audio, video and mixed synthetic journeys with finite normalized
+  768-dimensional outputs. First-request timings on the three-core hosted runner
+  were 0.80/7.12/0.46/3.96/5.98 s, respectively; these are not performance
+  comparisons against another backend. Image/audio/video/mixed token counts
+  were 260/29/248/294. Container handling, decoded input bounds, decoder deadline
+  classification, admission/cache safety and persistent restart journeys also
+  passed. The observed image restart requests went from 5.75/5.38 s to
+  0.88/0.68 ms with zero media inference calls. A follow-up actual text request
+  matches the pinned native Q8 reference at cosine 0.99986903. Its first-request
+  modality timings were 1.31/10.13/2.11/8.66/8.48 s on a separate runner; this
+  variability reinforces that these are observations, not a performance claim.
+  Full multimodal reference coverage and Metal
+  execution on Apple GPU hardware remain unverified. `examples/journey2.py`
+  reproduces the actual five requests without requiring a user's sample files.
 - OpenAI model-field validation now precedes text/media routing. Its observed
   media-form bypass has a regression that failed before the fix; missing,
   empty, and numeric model fields now return HTTP 400 with parameter `model`.

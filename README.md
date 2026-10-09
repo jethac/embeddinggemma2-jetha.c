@@ -53,8 +53,20 @@ CUDA is exercised on an RTX 5060 Ti through Ubuntu under WSL with CUDA 13.0.
 Build with `-DGGML_CUDA=ON` and start with `--backend cuda`; this requires the
 CUDA toolkit at build time and a compatible NVIDIA driver at runtime. Both
 media encoders use CUDA as well as the backbone. Other accelerator backends
-remain unverified. The Linux CPU service build and image regression
-pass in CI; macOS builds remain unverified for this implementation.
+remain unverified. The Linux CPU service build and image regression pass in CI.
+The macOS ARM CPU build also runs all five modality journeys in CI; Metal
+execution and broader reference quality remain unverified.
+
+For the exercised macOS CPU build, configure with:
+
+```sh
+cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
+```
+
+Then use the build/run commands above, adding `--backend cpu` when starting the
+server. With FFmpeg on `PATH`, `python examples/journey2.py` sends synthetic
+text, image, audio, video and mixed requests and prints their latency and size.
 
 On WSL, put weights on the Linux filesystem rather than a Windows-mounted
 drive. For example, download with `--directory ~/embeddinggemma2-models` and
