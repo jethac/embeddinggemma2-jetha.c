@@ -863,6 +863,8 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
             opt.video_params.fps_target = parts[i].fps > 0 ? parts[i].fps : 1.0f;
             opt.video_params.timestamp_interval_ms = 0;
             if (parts[i].type == EI_PART_VIDEO) {
+                const char *probe = getenv("EI_VIDEO_PROBE2");
+                if (probe && *probe) opt.video_params.probe_bin = probe;
                 media[i].video_ctx = mtmd_helper_video_init_from_buf(s->media, parts[i].data, parts[i].size, opt.video_params);
                 if (!media[i].video_ctx) { fail(err, err_len, "cannot decode video input"); goto done; }
                 struct mtmd_helper_video_info info = mtmd_helper_video_get_info(media[i].video_ctx);

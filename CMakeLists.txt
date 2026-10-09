@@ -54,6 +54,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-mask-range.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-media-id.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-resize-rows.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-probe.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
@@ -66,6 +67,14 @@ if(NOT TARGET mtmd)
     add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd")
 endif()
 find_package(Threads REQUIRED)
+option(EI_VIDEO_PROBE "Build the optional small libavformat video metadata probe" OFF)
+if(EI_VIDEO_PROBE)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(EI_AVFORMAT REQUIRED IMPORTED_TARGET libavformat>=59 libavutil>=57)
+    add_executable(embeddinggemma2-video-probe src/video_probe2.c)
+    target_link_libraries(embeddinggemma2-video-probe PRIVATE PkgConfig::EI_AVFORMAT)
+    install(TARGETS embeddinggemma2-video-probe RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
 include(ExternalProject)
 FetchContent_Declare(jpeg2
     URL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz

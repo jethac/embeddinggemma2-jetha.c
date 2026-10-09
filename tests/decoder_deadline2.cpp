@@ -16,9 +16,10 @@ static void check(bool ok, const char *name) {
     if (!ok) { std::fprintf(stderr, "decoder deadline: %s\n", name); failures++; }
 }
 int main(int argc, char **argv) {
-    if (argc != 2) return 2;
+    if (argc != 2 && argc != 3) return 2;
     auto params = mtmd_helper_video_init_params_default();
     params.ffmpeg_bin_dir = argv[1];
+    if (argc == 3) params.probe_bin = argv[2];
     params.timestamp_interval_ms = 0;
     params.probe_timeout_ms = 1000;
     params.decode_timeout_ms = 500;

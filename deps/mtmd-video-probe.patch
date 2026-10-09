@@ -1,0 +1,47 @@
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -30,6 +30,7 @@
+     size_t max_frame_bytes; // decoded RGB bytes; 0 means unlimited
+     uint32_t probe_timeout_ms;  // 0 means no subprocess deadline
+     uint32_t decode_timeout_ms; // starts at first frame read; 0 means no deadline
++    const char * probe_bin; // optional metadata probe executable; NULL uses ffprobe
+     // TODO @ngxson : allow "placeholder" bitmap output for counting tokens
+ };
+ 
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -958,6 +958,7 @@
+         /* max_frame_bytes        */ 0,
+         /* probe_timeout_ms       */ 0,
+         /* decode_timeout_ms      */ 0,
++        /* probe_bin              */ nullptr,
+     };
+ }
+ 
+@@ -1005,7 +1006,7 @@
+     vctx.decode_timeout_ms = params.decode_timeout_ms;
+     vctx.input_buf.assign(buf, buf + len);
+     vctx.ffmpeg_bin  = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+-    vctx.ffprobe_bin = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
++    vctx.ffprobe_bin = params.probe_bin ? params.probe_bin : video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+     if (!vctx.probe(0.0f)) {
+         return nullptr;
+     }
+@@ -1038,7 +1039,7 @@
+     ctx->decode_timeout_ms = params.decode_timeout_ms;
+     ctx->path                 = path;
+     ctx->ffmpeg_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+-    ctx->ffprobe_bin          = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
++    ctx->ffprobe_bin          = params.probe_bin ? params.probe_bin : video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+     ctx->timestamp_interval_ms = params.timestamp_interval_ms;
+ 
+     if (!ctx->probe(params.fps_target)) {
+@@ -1076,7 +1077,7 @@
+     ctx->decode_timeout_ms = params.decode_timeout_ms;
+     ctx->input_buf.assign(buf, buf + len);
+     ctx->ffmpeg_bin            = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+-    ctx->ffprobe_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
++    ctx->ffprobe_bin           = params.probe_bin ? params.probe_bin : video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+     ctx->timestamp_interval_ms = params.timestamp_interval_ms;
+ 
+     if (!ctx->probe(params.fps_target)) {

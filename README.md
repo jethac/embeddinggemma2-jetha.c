@@ -127,8 +127,21 @@ this comparison does not change the native visual-only video default.
 Run the isolated CPU comparison with
 `gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_media=true`.
 The job prints its hardware, exact commands, per-pass latencies, rates and
-quality gates. Local `--validate-only` checks completed all four singleton
-journeys (minimum cosine 0.999769); multimodal throughput results are pending.
+quality gates. A [partial isolated run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37984333628/job/114002416831)
+at source `6e14b24` on an AMD EPYC 7763, Ubuntu 24.04, GCC 13.3 and two CPU
+threads completed these cells (rates average both engine orders):
+
+| Modality | Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Image | 1 | 0.113128 | 0.113167 | 1.000x | 0.999971 |
+| Image | 4 | 0.112762 | 0.112719 | 1.000x | 0.999963 |
+| Audio | 1 | 4.479 | 4.587 | 0.976x | 0.999777 |
+
+Images were effectively tied and singleton audio lost by about 2.4%.
+Four-client audio failed the unchanged 0.999 quality gate at 0.998898;
+its throughput is excluded. Video and mixed timings remain pending.
+Local `--validate-only` checks completed all four singleton journeys
+(minimum cosine 0.999769), but do not replace the isolated run's failure.
 Use `--backend cuda` with matching native CUDA builds for GPU measurements.
 The same Windows host-load check applies under WSL.
 
@@ -163,6 +176,26 @@ execution and output processing times; leave it unset for throughput measurement
 `EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
 for video it also separates lazy frame-read waits from remaining preprocessing.
 leave it unset for normal serving.
+
+An optional metadata probe avoids loading ffprobe's unrelated device/filter
+libraries for each video. Build with `-DEI_VIDEO_PROBE=ON` and system libavformat
+and libavutil development packages (FFmpeg 5 or newer), then set
+`EI_VIDEO_PROBE2=/absolute/path/to/embeddinggemma2-video-probe` on the server.
+The default still uses ffprobe. The companion uses the same first video stream,
+stream/container duration rules and 10-second subprocess deadline; ffmpeg still
+decodes and samples the frames. Match its FFmpeg libraries to the decoder.
+It is currently qualified on Linux CUDA only and dynamically links system
+FFmpeg libraries, which have their own license and runtime requirements; those
+libraries are not bundled by this option.
+Use the companion from the build or CMake installation; the release staging
+script currently packages only the main server and its runtime libraries.
+The CUDA dev service uses it. Alternating fresh-key requests against an otherwise
+identical ffprobe-based instance gave HTTP medians of 240.6 to 232.0 ms (96x96
+MP4), 356.5 to 350.2 ms (1080p MP4) and 224.3 to 212.7 ms (320x240 Matroska).
+These are small shared-host gains, not quiet-host throughput claims; earlier
+blocked-order measurements were inconsistent. All three videos and fresh text,
+image, audio, video and mixed journeys remained bit-identical. WebM/Matroska
+duration handling, the 32-frame bound and custom-probe deadline cleanup passed.
 
 `EI_IMAGE_THREADS2=2` through `16` opts into parallel horizontal image resizing;
 the default is one thread. It applies only when the source has at least 128 rows

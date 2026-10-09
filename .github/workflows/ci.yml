@@ -51,6 +51,9 @@ jobs:
           cp build-cmake/bin/decoder-stall2 build-cmake/decoder-stubs/ffprobe
           cp build-cmake/bin/decoder-stall2 build-cmake/decoder-stubs/ffmpeg
           build-cmake/bin/decoder-deadline-check2 "$PWD/build-cmake/decoder-stubs"
+          mkdir -p build-cmake/decoder-only
+          cp build-cmake/bin/decoder-stall2 build-cmake/decoder-only/ffmpeg
+          build-cmake/bin/decoder-deadline-check2 "$PWD/build-cmake/decoder-only" "$PWD/build-cmake/decoder-stubs/ffprobe"
       - name: Exercise disabled AVX on an emulated older CPU
         run: |
           sudo apt-get update -qq
