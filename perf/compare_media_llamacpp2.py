@@ -94,6 +94,25 @@ def diagnose_quality(kind, inputs, endpoints, concurrent):
               flush=True)
 
 
+def measure_native_pair(on, off, bodies, ignored, options):
+    passes = {'on': [], 'off': []}
+    loads = []
+    for endpoint in (on, off):
+        run_requests(endpoint, bodies, 2, 0)
+    for order in ((('on', on), ('off', off)), (('off', off), ('on', on))):
+        for name, endpoint in order:
+            time.sleep(options.cooldown)
+            loads.append(wait_quiet(ignored, options.quiet_total_cpu_percent))
+            measured = measure(endpoint, bodies, options.rounds, options.target_seconds, 0)
+            measured.pop('tokens_per_s')
+            passes[name].append(measured)
+    rates = {name: statistics.mean(run['embeddings_per_s'] for run in runs)
+             for name, runs in passes.items()}
+    return {'on_emb_s': rates['on'], 'off_emb_s': rates['off'],
+            'speedup': rates['on'] / rates['off'], 'passes': passes,
+            'other_cpu_percent': loads}
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', type=Path, required=True)
@@ -178,19 +197,6 @@ def main():
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
                             quality.append(list(pool.map(lambda pair: validate(endpoint, pair[engine]),
                                                          inputs[:concurrency])))
-                    if vnni_probe:
-                        off = Endpoint(ours.host, ours.port + 2, ours.path, ours.api)
-                        command = ours_cmd.copy()
-                        command[command.index('--port') + 1] = str(off.port)
-                        with ManagedServer(command, off, '/healthz', root / 'native-off.log',
-                                env={k: v for k, v in os.environ.items()
-                                     if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}):
-                            with ThreadPoolExecutor(max_workers=concurrency) as pool:
-                                unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
-                                                          inputs[:concurrency]))
-                        if unchanged != quality[0]:
-                            raise RuntimeError(f'{kind}: VNNI paired rows changed native outputs')
-                        print('VNNI paired rows: exact native on/off outputs', flush=True)
                     tokens = [v[1] for v in quality[0]]
                     if tokens != [v[1] for v in quality[1]]:
                         raise RuntimeError(f'{kind} token counts differ: {tokens} vs {[v[1] for v in quality[1]]}')
@@ -198,8 +204,31 @@ def main():
                     if minimum < .999:
                         diagnose_quality(kind, inputs[:concurrency], (ours, llama), quality)
                         raise RuntimeError(f'{kind} output mismatch: cosine {minimum:.8f}')
+                    native_pair = None
+                    if vnni_probe:
+                        off = Endpoint(ours.host, ours.port + 2, ours.path, ours.api)
+                        command = ours_cmd.copy()
+                        command[command.index('--port') + 1] = str(off.port)
+                        with ManagedServer(command, off, '/healthz', root / 'native-off.log',
+                                env={k: v for k, v in os.environ.items()
+                                     if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as off_process:
+                            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                                unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
+                                                          inputs[:concurrency]))
+                            if unchanged != quality[0]:
+                                raise RuntimeError(f'{kind}: VNNI paired rows changed native outputs')
+                            print('VNNI paired rows: exact native on/off outputs', flush=True)
+                            if not a.validate_only:
+                                native_bodies = [json.dumps(pair[0], separators=(',', ':')).encode()
+                                                 for pair in inputs[:concurrency]]
+                                native_pair = measure_native_pair(ours, off, native_bodies,
+                                    {os.getpid(), op.process.pid, lp.process.pid, off_process.process.pid}, a)
+                                print(json.dumps({'modality': kind, 'concurrency': concurrency,
+                                                  'native_pair_on_off': native_pair}), flush=True)
                     row = {'modality': kind, 'concurrency': concurrency, 'tokens': tokens,
                            'minimum_cosine': minimum}
+                    if native_pair is not None:
+                        row['native_pair_on_off'] = native_pair
                     print(json.dumps(row), flush=True)
                     if a.validate_only: continue
                     bodies = [[json.dumps(pair[engine], separators=(',', ':')).encode()
