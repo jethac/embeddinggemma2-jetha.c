@@ -222,6 +222,10 @@ Tests and documentation support that outcome; they do not define completion.
   With caches disabled, the observed four-request CPU duplication regression
   ran four inferences before the fix (slowest caller 21.8 s), versus one after
   the fix (all callers 5.66 s; a later busy-host round took 8.24 s).
+  The deployed default endpoint completed the same wave in 7.91 s. Warm CUDA
+  callers improved from a slowest 1087 ms with four inferences to 460 ms with
+  one; the first cold CUDA wave took 21.45 s including encoder warmup. All five
+  matching Windows and CUDA modality outputs were bit-identical before/after.
   Admission limits, error propagation and API isolation pass on Windows/Linux.
 - Decoded media input now has bounds checked before image/PCM allocation:
   16 megapixels per image/frame, 5,242,880 audio samples, and 128 MiB of retained
