@@ -522,6 +522,12 @@ Tests and documentation support that outcome; they do not define completion.
   cache-off service; all five fresh modality outputs also matched exactly.
   The graph topology and numerical kernels are unchanged. Quiet-host matched
   throughput is still required before a speed claim or default promotion.
+  A follow-up Nsight capture with the cache enabled needed explicit graph-node
+  tracing; the default capture had no kernel timings and was discarded. The
+  successful trace attributes about 62.6% of kernel time to quantized matmuls,
+  including 26.1% to stream-k fixup, versus 7.0% to attention. This still favors
+  a focused matmul scheduling experiment before an attention rewrite. Captured
+  kernel totals include profiling overhead and do not establish service speed.
 
 - The inherited installer actually requested QuixiAI's 300M release checksums.
   It now targets this repository, its own asset/executable prefix, and
