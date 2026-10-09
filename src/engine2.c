@@ -25,6 +25,10 @@ typedef struct {
     struct ggml_context *graph_ctx;
     struct ggml_cgraph *graph;
     struct ggml_tensor *input, *positions, *full_mask, *local_mask, *pool, *output;
+    struct ggml_context *static_ctx;
+    ggml_backend_buffer_t static_buffer;
+    size_t *input_offsets;
+    bool layout_valid;
     size_t graph_tokens, graph_batch;
     bool graph_raw;
     uint64_t last_used;
@@ -41,6 +45,7 @@ typedef struct {
     graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
     bool graph_cache;
     bool cuda_global_attn;
+    bool reuse_inputs;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -113,6 +118,16 @@ static graph2 *select_graph(engine2 *s, size_t tokens, size_t batch, bool raw) {
     return chosen;
 }
 
+static void free_static_inputs(graph2 *state) {
+    if (state->static_buffer) ggml_backend_buffer_free(state->static_buffer);
+    if (state->static_ctx) ggml_free(state->static_ctx);
+    free(state->input_offsets);
+    state->static_buffer = NULL;
+    state->static_ctx = NULL;
+    state->input_offsets = NULL;
+    state->layout_valid = false;
+}
+
 static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch, bool raw,
                         char *err, size_t err_len) {
     engine2 *s = e->gemma2;
@@ -126,6 +141,7 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     ggml_backend_sched_reset(state->sched);
     if (state->graph_ctx) ggml_free(state->graph_ctx);
     state->graph = NULL;
+    free_static_inputs(state);
     struct ggml_init_params params = {
         .mem_size = ggml_tensor_overhead() * GRAPH_NODES + ggml_graph_overhead_custom(GRAPH_NODES, false),
         .no_alloc = true,
@@ -143,21 +159,37 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     }
     ggml_set_name(state->input, "input");
     ggml_set_input(state->input);
-    state->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
+    struct ggml_context *inputs_ctx = ctx;
+    if (s->reuse_inputs) {
+        struct ggml_init_params inputs_params = {
+            .mem_size = 4 * ggml_tensor_overhead(), .no_alloc = true,
+        };
+        inputs_ctx = state->static_ctx = ggml_init(inputs_params);
+        if (!inputs_ctx) return fail(err, err_len, "cannot allocate static input metadata");
+    }
+    state->positions = ggml_new_tensor_1d(inputs_ctx, GGML_TYPE_I32, (int64_t)tokens);
     ggml_set_input(state->positions);
     int64_t padded = ((int64_t)tokens + 31) / 32 * 32;
     // The pinned CUDA 512-wide flash kernel requires a 256-key stride. Pad
     // only above the explicit-attention memory limit; the shorter path is faster.
     int64_t full_keys = s->cuda_global_attn && tokens > 2048 ?
         ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
-    state->full_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, full_keys, padded);
-    state->local_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
+    enum ggml_type mask_type = s->reuse_inputs ? GGML_TYPE_F16 : GGML_TYPE_F32;
+    state->full_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, full_keys, padded);
+    state->local_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, (int64_t)tokens, padded);
     ggml_set_input(state->full_mask);
     ggml_set_input(state->local_mask);
-    struct ggml_tensor *full = ggml_cast(ctx, state->full_mask, GGML_TYPE_F16);
-    struct ggml_tensor *local = ggml_cast(ctx, state->local_mask, GGML_TYPE_F16);
-    state->pool = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, (int64_t)batch);
+    struct ggml_tensor *full = s->reuse_inputs ? state->full_mask : ggml_cast(ctx, state->full_mask, GGML_TYPE_F16);
+    struct ggml_tensor *local = s->reuse_inputs ? state->local_mask : ggml_cast(ctx, state->local_mask, GGML_TYPE_F16);
+    state->pool = ggml_new_tensor_2d(inputs_ctx, GGML_TYPE_F32, (int64_t)tokens, (int64_t)batch);
     ggml_set_input(state->pool);
+    if (s->reuse_inputs) {
+        // Scheduler-managed input storage may be recycled after its last use.
+        // Own these buffers so their contents survive between forwards, and
+        // place them on the primary backend to avoid repeated GPU uploads.
+        state->static_buffer = ggml_backend_alloc_ctx_tensors(inputs_ctx, s->backends[0]);
+        if (!state->static_buffer) return fail(err, err_len, "cannot allocate static input buffers");
+    }
 
     struct ggml_tensor *ple = ggml_scale(ctx,
         ggml_mul_mat(ctx, weight(s, "per_layer_model_proj.weight"), x), 1.0f / sqrtf(HIDDEN));
@@ -259,6 +291,73 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     return true;
 }
 
+static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, size_t batch) {
+    engine2 *s = e->gemma2;
+    size_t n = offsets[batch];
+    size_t padded = (n + 31) / 32 * 32;
+    size_t full_keys = (size_t)state->full_mask->ne[0];
+    int32_t *pos = ei_xmalloc(n * sizeof *pos);
+    int32_t *seq = ei_xmalloc(n * sizeof *seq);
+    void *mask = ei_xmalloc(full_keys * padded * (s->reuse_inputs ? sizeof(uint16_t) : sizeof(float)));
+    float *pool = ei_xcalloc(n * batch, sizeof *pool);
+    for (size_t b = 0; b < batch; b++) {
+        for (size_t t = offsets[b]; t < offsets[b + 1]; t++) {
+            pos[t] = (int32_t)(t - offsets[b]);
+            seq[t] = (int32_t)b;
+            pool[b * n + t] = 1.0f / (float)(offsets[b + 1] - offsets[b]);
+        }
+    }
+    ggml_backend_tensor_set(state->positions, pos, 0, n * sizeof *pos);
+    ggml_backend_tensor_set(state->pool, pool, 0, n * batch * sizeof *pool);
+    if (s->reuse_inputs) {
+        // These masks only contain zero and negative infinity. Their IEEE
+        // half representations are exact; no per-element conversion is needed.
+        uint16_t *half = mask;
+        for (size_t q = 0; q < padded; q++) {
+            for (size_t k = 0; k < n; k++)
+                half[q * full_keys + k] = q < n && seq[q] == seq[k] ? 0 : 0xfc00;
+            for (size_t k = n; k < full_keys; k++) half[q * full_keys + k] = 0xfc00;
+        }
+        ggml_backend_tensor_set(state->full_mask, half, 0, full_keys * padded * sizeof *half);
+        if (full_keys == n) {
+            for (size_t q = 0; q < n; q++)
+                for (size_t k = 0; k < n; k++)
+                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) half[q * n + k] = 0xfc00;
+        } else {
+            for (size_t q = 0; q < padded; q++)
+                for (size_t k = 0; k < n; k++)
+                    half[q * n + k] = q < n && seq[q] == seq[k] &&
+                        abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0 : 0xfc00;
+        }
+        ggml_backend_tensor_set(state->local_mask, half, 0, n * padded * sizeof *half);
+    } else {
+        float *full_mask = mask;
+        for (size_t q = 0; q < padded; q++) {
+            for (size_t k = 0; k < n; k++)
+                full_mask[q * full_keys + k] = q < n && seq[q] == seq[k] ? 0.0f : -INFINITY;
+            for (size_t k = n; k < full_keys; k++) full_mask[q * full_keys + k] = -INFINITY;
+        }
+        ggml_backend_tensor_set(state->full_mask, full_mask, 0, full_keys * padded * sizeof *full_mask);
+        if (full_keys == n) {
+            for (size_t q = 0; q < n; q++)
+                for (size_t k = 0; k < n; k++)
+                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) full_mask[q * n + k] = -INFINITY;
+        } else {
+            for (size_t q = 0; q < padded; q++)
+                for (size_t k = 0; k < n; k++)
+                    full_mask[q * n + k] = q < n && seq[q] == seq[k] &&
+                        abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0.0f : -INFINITY;
+        }
+        ggml_backend_tensor_set(state->local_mask, full_mask, 0, n * padded * sizeof *full_mask);
+    }
+    free(pos); free(seq); free(mask); free(pool);
+    if (s->reuse_inputs) {
+        if (!state->input_offsets) state->input_offsets = ei_xmalloc((batch + 1) * sizeof *offsets);
+        memcpy(state->input_offsets, offsets, (batch + 1) * sizeof *offsets);
+        state->layout_valid = true;
+    }
+}
+
 static bool compute(ei_engine *e, const void *input, bool raw, const size_t *offsets,
                     size_t batch, float *out, char *err, size_t err_len) {
     engine2 *s = e->gemma2;
@@ -268,43 +367,20 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     bool rebuilt = !state->graph || state->graph_tokens != n || state->graph_batch != batch || state->graph_raw != raw;
     if (!build_graph(e, state, n, batch, raw, err, err_len)) return false;
     double built = s->profile ? now_ms() : 0;
-    size_t padded = (n + 31) / 32 * 32;
-    size_t full_keys = (size_t)state->full_mask->ne[0];
-    int32_t *pos = ei_xmalloc(n * sizeof *pos);
-    int32_t *seq = ei_xmalloc(n * sizeof *seq);
-    float *mask = ei_xmalloc(full_keys * padded * sizeof *mask);
-    float *pool = ei_xcalloc(n * batch, sizeof *pool);
-    for (size_t b = 0; b < batch; b++) {
-        for (size_t t = offsets[b]; t < offsets[b + 1]; t++) {
-            pos[t] = (int32_t)(t - offsets[b]);
-            seq[t] = (int32_t)b;
-            pool[b * n + t] = 1.0f / (float)(offsets[b + 1] - offsets[b]);
-        }
-    }
+    bool reused = s->reuse_inputs && state->layout_valid &&
+        memcmp(state->input_offsets, offsets, (batch + 1) * sizeof *offsets) == 0;
     ggml_backend_tensor_set(state->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
-    ggml_backend_tensor_set(state->positions, pos, 0, n * sizeof *pos);
-    ggml_backend_tensor_set(state->pool, pool, 0, n * batch * sizeof *pool);
-    for (size_t q = 0; q < padded; q++) {
-        for (size_t k = 0; k < n; k++)
-            mask[q * full_keys + k] = q < n && seq[q] == seq[k] ? 0.0f : -INFINITY;
-        for (size_t k = n; k < full_keys; k++) mask[q * full_keys + k] = -INFINITY;
-    }
-    ggml_backend_tensor_set(state->full_mask, mask, 0, full_keys * padded * sizeof *mask);
-    if (full_keys == n) {
-        for (size_t q = 0; q < n; q++)
-            for (size_t k = 0; k < n; k++)
-                if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) mask[q * n + k] = -INFINITY;
-    } else {
-        for (size_t q = 0; q < padded; q++)
-            for (size_t k = 0; k < n; k++)
-                mask[q * n + k] = q < n && seq[q] == seq[k] &&
-                    abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0.0f : -INFINITY;
-    }
-    ggml_backend_tensor_set(state->local_mask, mask, 0, n * padded * sizeof *mask);
-    free(pos); free(seq); free(mask); free(pool);
+    if (s->profile && rebuilt)
+        fprintf(stderr, "backbone auxiliary inputs: positions=%s full_mask=%s local_mask=%s pool=%s, %.2f MiB dedicated\n",
+                ggml_backend_buffer_name(state->positions->buffer), ggml_backend_buffer_name(state->full_mask->buffer),
+                ggml_backend_buffer_name(state->local_mask->buffer), ggml_backend_buffer_name(state->pool->buffer),
+                state->static_buffer ? (double)ggml_backend_buffer_get_size(state->static_buffer) / (1024 * 1024) : 0);
+    if (!reused) prepare_layout(e, state, offsets, batch);
     double prepared = s->profile ? now_ms() : 0;
-    if (ggml_backend_sched_graph_compute(state->sched, state->graph) != GGML_STATUS_SUCCESS)
+    if (ggml_backend_sched_graph_compute(state->sched, state->graph) != GGML_STATUS_SUCCESS) {
+        state->layout_valid = false;
         return fail(err, err_len, "inference failed");
+    }
     double computed = s->profile ? now_ms() : 0;
     ggml_backend_tensor_get(state->output, out, 0, batch * EI_N_EMBD * sizeof *out);
     for (size_t b = 0; b < batch; b++) {
@@ -318,8 +394,8 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
         ei_l2_normalize(row, EI_N_EMBD);
     }
     if (s->profile)
-        fprintf(stderr, "backbone: tokens=%zu batch=%zu raw=%d rebuilt=%d build=%.3f prep=%.3f compute=%.3f output=%.3f ms\n",
-                n, batch, raw, rebuilt, built - started, prepared - built,
+        fprintf(stderr, "backbone: tokens=%zu batch=%zu raw=%d rebuilt=%d layout_reused=%d build=%.3f prep=%.3f compute=%.3f output=%.3f ms\n",
+                n, batch, raw, rebuilt, reused, built - started, prepared - built,
                 computed - prepared, now_ms() - computed);
     return true;
 }
@@ -465,6 +541,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->cuda_global_attn) fprintf(stderr, "CUDA global attention fallback: explicit scores through 2048 aggregate tokens; padded flash above\n");
+    const char *reuse_inputs = getenv("EI_REUSE_INPUTS2");
+    s->reuse_inputs = reuse_inputs && strcmp(reuse_inputs, "1") == 0;
+    if (s->reuse_inputs) fprintf(stderr, "Backbone static input reuse: dedicated FP16 masks, matching sequence boundaries\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 
@@ -520,6 +599,7 @@ void ei_engine_free(ei_engine *e) {
         for (int i = 0; i < 3; i++) {
             if (s->graphs[i].sched) ggml_backend_sched_free(s->graphs[i].sched);
             if (s->graphs[i].graph_ctx) ggml_free(s->graphs[i].graph_ctx);
+            free_static_inputs(&s->graphs[i]);
         }
         if (s->qkv_buffer) ggml_backend_buffer_free(s->qkv_buffer);
         if (s->qkv_ctx) ggml_free(s->qkv_ctx);

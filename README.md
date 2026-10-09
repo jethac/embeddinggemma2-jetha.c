@@ -178,13 +178,29 @@ HTTP medians fell from 2094 to 152 ms and 2515 to 338 ms in the reverse order
 (20 measured requests per pass, packed QKV and result caches off). Padding
 regressed for 32-token inputs in both orders, so short requests retain explicit
 attention. The 8191-token request passed cosine 0.999938, and an unequal
-2049-token aggregate batch passed 0.999917 with isolated outputs.
+2049-token API batch passed 0.999917 with isolated outputs. Its two inputs
+crossed the packing cutoff and ran as separate engine forwards.
 All five modality samples
 passed cosine 0.999 (minimum 0.999848); combined with packed QKV, the minimum
 was 0.999824. Unequal batches and lengths around native flash alignment and
 the fallback limit also passed. Persistent caches distinguish this numeric
 mode and implementation version. The flag defaults off pending broader
 hardware and quiet-host validation.
+
+`EI_REUSE_INPUTS2=1` keeps positions, attention masks and pooling weights in
+dedicated backend buffers while a graph and its sequence boundaries remain
+unchanged. Token IDs and media rows are uploaded on every forward; this does
+not cache embeddings. Masks contain exact FP16 zero/negative infinity values.
+The 8191-token CUDA graph uses 256.05 MiB of dedicated auxiliary storage.
+On the contended RTX 5060 Ti, paired warm 8191-token HTTP medians fell from
+2106 to 392 ms and from 1207 to 413 ms in the reverse order (20 measured
+requests per pass, six CPU threads, profiling and result caches disabled,
+global-attention fallback and graph caching enabled, packed QKV disabled).
+These are latency observations, not a quiet llama.cpp throughput comparison.
+Changed text, changed boundaries in one 2049-token/three-sequence engine batch,
+graph rebuilds and short-shape eviction produced bit-identical outputs on
+Windows CPU and CUDA. All five modality samples also matched exactly on both.
+The flag defaults off; other accelerator backends remain unverified.
 
 ## Build and run the development server
 

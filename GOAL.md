@@ -609,9 +609,11 @@ Tests and documentation support that outcome; they do not define completion.
   packed QKV off, result caches off, contended local host). The final 2049-token
   graph has one CUDA split. Padding lost against explicit attention at 32 tokens
   in both orders, so it is used only above the explicit-score memory limit.
-  Final 8191-token and unequal 2049-token aggregate requests passed cosine
+  Final 8191-token and unequal 2049-token API requests passed cosine
   0.999938 and 0.999917, with batch isolation passing. OpenAI usage confirmed
-  the actual token counts. The 2049-token persistent-mode regression passed;
+  their token counts; the unequal inputs (1023/1026) crossed the packing cutoff
+  and ran as separate forwards, so this was not a combined-engine batch check.
+  The 2049-token persistent-mode regression passed;
   cache identity now uses the global-attention v2 domain so older variant
   responses cannot survive this numeric change. All five modalities passed on
   the final opt-in CUDA service; flags off retained exactly matching outputs
@@ -638,6 +640,30 @@ Tests and documentation support that outcome; they do not define completion.
   for CPU selection. The server now disables Metal device enumeration before
   initializing an explicitly selected CPU engine on macOS. The native journey
   checks reject any Metal shader initialization in that CPU process. Native
-  macOS verification of this fix is pending.
+  macOS job 113759883337 in run 37912238090 passed, including the CPU shader
+  exclusion check and all five CPU/Metal modality comparisons.
+
+- Static auxiliary input reuse (`EI_REUSE_INPUTS2=1`, default off) addresses
+  measured 8191-token preparation costs of 388–524 ms per warm forward. Positions,
+  full/local masks and pooling weights now have dedicated primary-backend
+  storage. FP16 mask values are exact zero/negative infinity, eliminating casts.
+  Layout reuse requires identical sequence offsets in the same live graph;
+  changed boundaries, graph rebuild/eviction and compute failure invalidate it.
+  Token IDs and raw media rows are always refreshed. The 8191-token CUDA graph
+  owns 256.05 MiB of auxiliary storage. The profiled warm preparation fell to
+  0.004–0.005 ms. With profiling disabled, paired warm HTTP medians fell from
+  2106 to 392 ms and from 1207 to 413 ms in the reverse order (20 measured
+  requests per pass, six threads, QKV off, global attention/graph caching on,
+  result caches off, contended RTX 5060 Ti host). These are not quiet throughput
+  comparisons against llama.cpp.
+  Changed inputs/boundaries, graph rebuilds and short-shape eviction matched
+  exactly against the flag-off path on CUDA and Windows CPU. The safety test
+  confirms one actual 2049-token/three-sequence engine forward (682/683/684),
+  correcting the earlier API-batch coverage gap. All five modality samples
+  matched exactly on both backends; two changed 8191-token CUDA inputs also
+  matched. No numeric cache identity change is needed for these identical
+  outputs. Comparison metadata checks the requested input-reuse startup mode.
+  Other accelerator backends remain unverified. Linux installed-service CI
+  now exercises the focused sequence-boundary and graph-lifetime safety check.
 
 Keep this file current as implementation decisions and verified evidence change.

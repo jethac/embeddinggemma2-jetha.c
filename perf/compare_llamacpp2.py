@@ -184,6 +184,7 @@ def main():
                       'packed_qkv': os.getenv('EI_QKV2') == '1',
                       'cuda_global_attn': os.getenv('EI_CUDA_GLOBAL_ATTN2') == '1',
                       'cuda_graph_cache': os.getenv('EI_GRAPH_CACHE2') == '1',
+                      'reuse_inputs': os.getenv('EI_REUSE_INPUTS2') == '1',
                       'minimum_rounds': a.rounds, 'target_seconds': a.target_seconds,
                       'quiet_total_cpu_percent': a.quiet_total_cpu_percent,
                       'orders': ['ours/llama', 'llama/ours'],
@@ -208,6 +209,9 @@ def main():
                     graph_cache = 'CUDA short-text graph cache:' in op.log_path.read_text(errors='replace')
                     if graph_cache != (os.getenv('EI_GRAPH_CACHE2') == '1'):
                         raise RuntimeError('native server did not select the requested graph cache mode')
+                    reuse_inputs = 'Backbone static input reuse:' in op.log_path.read_text(errors='replace')
+                    if reuse_inputs != (os.getenv('EI_REUSE_INPUTS2') == '1'):
+                        raise RuntimeError('native server did not select the requested input reuse mode')
                     vectors = []
                     for endpoint in (ours, llama):
                         with ThreadPoolExecutor(max_workers=concurrency) as executor:
