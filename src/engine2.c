@@ -45,6 +45,7 @@ typedef struct {
     graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
     bool graph_cache;
     bool cuda_global_attn;
+    bool cuda_local_attn;
     bool reuse_inputs;
     uint64_t graph_clock;
     int threads;
@@ -73,6 +74,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     const char *domains[] = {
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
+        s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -174,9 +176,13 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     // only above the explicit-attention memory limit; the shorter path is faster.
     int64_t full_keys = s->cuda_global_attn && tokens > 2048 ?
         ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
+    // CUDA's grouped-query and mask-tile scan paths require a 256-key stride.
+    // Pad long local attention so its banded mask can skip work on those paths.
+    int64_t local_keys = s->cuda_local_attn && tokens >= 1024 ?
+        ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
     enum ggml_type mask_type = s->reuse_inputs ? GGML_TYPE_F16 : GGML_TYPE_F32;
     state->full_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, full_keys, padded);
-    state->local_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, (int64_t)tokens, padded);
+    state->local_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, local_keys, padded);
     ggml_set_input(state->full_mask);
     ggml_set_input(state->local_mask);
     struct ggml_tensor *full = s->reuse_inputs ? state->full_mask : ggml_cast(ctx, state->full_mask, GGML_TYPE_F16);
@@ -230,10 +236,11 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         v = ggml_cast(ctx, v32, GGML_TYPE_F16);
         a = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
         ggml_prec_set_acc(a, GGML_PREC_F32);
-        if (!swa && s->cuda_global_attn && full_keys > (int64_t)tokens) {
-            k = ggml_cast(ctx, ggml_pad(ctx, k32, 0, (int)(full_keys - tokens), 0, 0), GGML_TYPE_F16);
-            v = ggml_cast(ctx, ggml_pad(ctx, v32, 0, (int)(full_keys - tokens), 0, 0), GGML_TYPE_F16);
-            struct ggml_tensor *padded_attn = ggml_flash_attn_ext(ctx, q, k, v, full, 1.0f, 0, 0);
+        int64_t keys = swa ? local_keys : full_keys;
+        if (((swa && s->cuda_local_attn) || (!swa && s->cuda_global_attn)) && keys > (int64_t)tokens) {
+            k = ggml_cast(ctx, ggml_pad(ctx, k32, 0, (int)(keys - tokens), 0, 0), GGML_TYPE_F16);
+            v = ggml_cast(ctx, ggml_pad(ctx, v32, 0, (int)(keys - tokens), 0, 0), GGML_TYPE_F16);
+            struct ggml_tensor *padded_attn = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
             ggml_prec_set_acc(padded_attn, GGML_PREC_F32);
             if (ggml_backend_supports_op(s->backends[0], padded_attn)) a = padded_attn;
         } else if (!swa && s->cuda_global_attn && tokens <= 2048 &&
@@ -296,9 +303,11 @@ static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, s
     size_t n = offsets[batch];
     size_t padded = (n + 31) / 32 * 32;
     size_t full_keys = (size_t)state->full_mask->ne[0];
+    size_t local_keys = (size_t)state->local_mask->ne[0];
     int32_t *pos = ei_xmalloc(n * sizeof *pos);
     int32_t *seq = ei_xmalloc(n * sizeof *seq);
-    void *mask = ei_xmalloc(full_keys * padded * (s->reuse_inputs ? sizeof(uint16_t) : sizeof(float)));
+    size_t mask_keys = full_keys > local_keys ? full_keys : local_keys;
+    void *mask = ei_xmalloc(mask_keys * padded * (s->reuse_inputs ? sizeof(uint16_t) : sizeof(float)));
     float *pool = ei_xcalloc(n * batch, sizeof *pool);
     for (size_t b = 0; b < batch; b++) {
         for (size_t t = offsets[b]; t < offsets[b + 1]; t++) {
@@ -319,17 +328,19 @@ static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, s
             for (size_t k = n; k < full_keys; k++) half[q * full_keys + k] = 0xfc00;
         }
         ggml_backend_tensor_set(state->full_mask, half, 0, full_keys * padded * sizeof *half);
-        if (full_keys == n) {
+        if (full_keys == local_keys) {
             for (size_t q = 0; q < n; q++)
                 for (size_t k = 0; k < n; k++)
-                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) half[q * n + k] = 0xfc00;
+                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) half[q * local_keys + k] = 0xfc00;
         } else {
-            for (size_t q = 0; q < padded; q++)
+            for (size_t q = 0; q < padded; q++) {
                 for (size_t k = 0; k < n; k++)
-                    half[q * n + k] = q < n && seq[q] == seq[k] &&
+                    half[q * local_keys + k] = q < n && seq[q] == seq[k] &&
                         abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0 : 0xfc00;
+                for (size_t k = n; k < local_keys; k++) half[q * local_keys + k] = 0xfc00;
+            }
         }
-        ggml_backend_tensor_set(state->local_mask, half, 0, n * padded * sizeof *half);
+        ggml_backend_tensor_set(state->local_mask, half, 0, local_keys * padded * sizeof *half);
     } else {
         float *full_mask = mask;
         for (size_t q = 0; q < padded; q++) {
@@ -338,17 +349,19 @@ static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, s
             for (size_t k = n; k < full_keys; k++) full_mask[q * full_keys + k] = -INFINITY;
         }
         ggml_backend_tensor_set(state->full_mask, full_mask, 0, full_keys * padded * sizeof *full_mask);
-        if (full_keys == n) {
+        if (full_keys == local_keys) {
             for (size_t q = 0; q < n; q++)
                 for (size_t k = 0; k < n; k++)
-                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) full_mask[q * n + k] = -INFINITY;
+                    if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) full_mask[q * local_keys + k] = -INFINITY;
         } else {
-            for (size_t q = 0; q < padded; q++)
+            for (size_t q = 0; q < padded; q++) {
                 for (size_t k = 0; k < n; k++)
-                    full_mask[q * n + k] = q < n && seq[q] == seq[k] &&
+                    full_mask[q * local_keys + k] = q < n && seq[q] == seq[k] &&
                         abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0.0f : -INFINITY;
+                for (size_t k = n; k < local_keys; k++) full_mask[q * local_keys + k] = -INFINITY;
+            }
         }
-        ggml_backend_tensor_set(state->local_mask, full_mask, 0, n * padded * sizeof *full_mask);
+        ggml_backend_tensor_set(state->local_mask, full_mask, 0, local_keys * padded * sizeof *full_mask);
     }
     free(pos); free(seq); free(mask); free(pool);
     if (s->reuse_inputs) {
@@ -541,6 +554,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->cuda_global_attn) fprintf(stderr, "CUDA global attention fallback: explicit scores through 2048 aggregate tokens; padded flash above\n");
+    const char *local_attn = getenv("EI_CUDA_LOCAL_ATTN2");
+    s->cuda_local_attn = local_attn && strcmp(local_attn, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->cuda_local_attn) fprintf(stderr, "CUDA local attention: padded keys from 1024 aggregate tokens\n");
     const char *reuse_inputs = getenv("EI_REUSE_INPUTS2");
     s->reuse_inputs = reuse_inputs && strcmp(reuse_inputs, "1") == 0;
     if (s->reuse_inputs) fprintf(stderr, "Backbone static input reuse: dedicated FP16 masks, matching sequence boundaries\n");

@@ -672,5 +672,35 @@ Tests and documentation support that outcome; they do not define completion.
   audio, video and mixed journeys passed against the existing Windows CPU
   service (minimum cosine 0.999498). HTTP response caching remains available
   on that dev service; the latency measurements above disabled it.
+  CI runs 37913096620 and 37913466268 passed all six jobs, including the
+  installed Linux sequence-boundary and graph-lifetime safety check.
+
+- CUDA local key padding (`EI_CUDA_LOCAL_ATTN2=1`, default off) follows a complete
+  12-forward 8191-token GPU capture: local attention consumed 53.0% of kernel
+  time, global attention 16.3%; all 240 local and 48 global calls were captured.
+  Local keys now pad to a 256-key stride from 1024 aggregate tokens, with added
+  keys masked. This enables the pinned kernel's grouped-query and mask-scan
+  paths. The complete trial capture retained all expected calls: local flash
+  kernels fell from 2195 to 1145 ms, total kernel time from 4141.74 to 3169.92 ms
+  (23.5%). Paired warm HTTP medians fell from 514 to 402 ms and from 362 to
+  282 ms in reverse order (20 measured requests per pass, QKV off, global
+  attention/input reuse on, result caches/profiling off, contended RTX 5060 Ti).
+  No quiet-host llama.cpp throughput claim follows from these measurements.
+  Actual combined 2049-token batches and changed boundaries passed cosine
+  0.999878 or better. Five images (1292 raw tokens) and a long mixed input
+  (1326 raw tokens) also passed; all five short modality samples and aligned
+  8192-token inputs remained bit-identical. The input-reuse lifetime/boundary
+  safety check passed with local padding enabled. The numeric cache domain
+  distinguishes this mode; its 2049-token persistent-cache check passed with
+  cached/fresh responses identical and original/variant outputs different.
+  The flag applies only to CUDA. All five Windows CPU modality samples stayed
+  bit-identical with the flag set (the CPU backend ignores it).
+  The deployed CUDA service on port 42669 now enables local padding alongside
+  global attention, input reuse and short-text graph caching, QKV off. All five
+  deployed modality journeys passed against the existing Windows CPU service
+  (minimum cosine 0.999498). It also returned finite normalized outputs for
+  8191-token text and five images (1292 tokens). Its warm 8191-token median was
+  360 ms for 20 measured requests under current contention; each HTTP body was
+  unique to bypass the dev service's response cache, and the text cache is off.
 
 Keep this file current as implementation decisions and verified evidence change.

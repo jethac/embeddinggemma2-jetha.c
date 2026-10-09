@@ -202,6 +202,20 @@ graph rebuilds and short-shape eviction produced bit-identical outputs on
 Windows CPU and CUDA. All five modality samples also matched exactly on both.
 The flag defaults off; other accelerator backends remain unverified.
 
+`EI_CUDA_LOCAL_ATTN2=1` pads local-attention keys to a 256-key stride for
+unaligned inputs of at least 1024 aggregate tokens. This enables GGML's grouped
+query and mask-scanning paths; every added key is masked. At 8191 tokens,
+paired warm HTTP medians fell from 514 to 402 ms and from 362 to 282 ms in the
+reverse order (20 measured requests per pass, six threads, QKV off, global
+attention and input reuse on, result caches/profiling off, contended RTX 5060 Ti).
+In complete 12-forward GPU captures, local flash-kernel time fell from 2195 to
+1145 ms, and total kernel time fell 23.5%. These are profiling and latency
+results, not a quiet throughput comparison against llama.cpp.
+Actual 2049-token/three-sequence batches, changed boundaries, five-image and
+long mixed inputs passed cosine 0.999 (minimum 0.999878); aligned 8192-token
+inputs and all five short modality samples stayed bit-identical. Persistent
+caches distinguish this numeric mode. It defaults off and applies only to CUDA.
+
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies

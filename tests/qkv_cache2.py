@@ -17,12 +17,15 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn'], default='packed-qkv')
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
 if not 4 <= a.tokens <= 8192: p.error('--tokens must be 4..8192')
-flag, marker = ('EI_QKV2', 'packed QKV:') if a.mode == 'packed-qkv' else (
-    'EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:')
+flag, marker = {
+    'packed-qkv': ('EI_QKV2', 'packed QKV:'),
+    'cuda-global-attn': ('EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:'),
+    'cuda-local-attn': ('EI_CUDA_LOCAL_ATTN2', 'CUDA local attention:'),
+}[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
     cache = work / 'cache'

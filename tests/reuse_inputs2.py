@@ -25,7 +25,8 @@ cases=[
     ('initial',[text(0,'x',682),text(1,'y',683),text(2,'z',684)]),
     ('changed boundaries',[text(3,'w',684),text(4,'a',682),text(5,'b',683)]),
     ('changed inputs',[text(6,'c',684),text(7,'d',682),text(8,'e',683)]),
-    ('rebuild',[text(0,'x',263)]),
+    # With both CUDA attention flags, 1025 gives different full/local key strides.
+    ('rebuild',[text(0,'x',1025)]),
     ('return after rebuild',[text(3,'w',684),text(4,'a',682),text(5,'b',683)]),
     ('short',[text(0,'x',32)]),
     ('short two',[text(1,'y',32),text(2,'z',32)]),
