@@ -94,6 +94,18 @@ inferences still run serially; cross-request batching and resource handling need
 further work.
 Treat this as a development service while those limits are being completed.
 
+To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
+and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
+is saved to `cache.bin.responses` on graceful shutdown, alongside the text embedding
+cache. Stop with SIGTERM/Ctrl-C on Unix or Ctrl-C/Ctrl-Break on Windows; forced
+termination does not save the snapshot. The files include request bodies and media
+bytes. Matching full model/mmproj contents, backend, encoder selection, and client
+batch limit are required for reuse. Changed request bodies or API routes have
+separate keys. Damaged or oversized records are ignored. Persistence reads the
+complete weight files at startup; previous text-cache identities are invalidated
+once by this change. With `--response-cache-mb 0`, HTTP response persistence is
+disabled.
+
 ## Foundation and attribution
 
 Based on [QuixiAI/embeddinggemma.c](https://github.com/QuixiAI/embeddinggemma.c),

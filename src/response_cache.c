@@ -1,6 +1,9 @@
+#define _POSIX_C_SOURCE 200809L
 #include "response_cache.h"
 
 #include <pthread.h>
+#include <unistd.h>
+#include "windows_compat.h"
 
 typedef struct response_cache_entry response_cache_entry;
 
@@ -195,4 +198,89 @@ void ei_response_cache_insert(ei_response_cache *cache,
     cache->used_bytes += bytes;
     lru_push_front(cache, candidate);
     pthread_mutex_unlock(&cache->mutex);
+}
+
+/* Little-endian restart format: magic[8], identity u64, then records of
+ * key_len u64, value_len u64, checksum u64, key bytes, value bytes. Recompute
+ * the checksum and ordinary full-key hash on load. A truncated/corrupt record
+ * ends the usable prefix; no declared length may exceed the resident budget. */
+static const char RESPONSE_MAGIC[8] = {'E','I','H','T','T','P','0','2'};
+
+static uint64_t record_checksum(const char *key, size_t key_len,
+                                const char *value, size_t value_len) {
+    uint64_t lens[2] = {key_len, value_len};
+    uint64_t hash = hash_bytes((const char *)lens, sizeof lens);
+    for (size_t i = 0; i < key_len; i++) {
+        hash ^= (unsigned char)key[i]; hash *= 1099511628211ull;
+    }
+    for (size_t i = 0; i < value_len; i++) {
+        hash ^= (unsigned char)value[i]; hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+void ei_response_cache_load(ei_response_cache *cache, const char *path, uint64_t identity) {
+    if (!cache || !path) return;
+    FILE *file = fopen(path, "rb");
+    if (!file) return;
+    char magic[8]; uint64_t saved_identity;
+    if (fread(magic, 1, sizeof magic, file) != sizeof magic ||
+        memcmp(magic, RESPONSE_MAGIC, sizeof magic) ||
+        fread(&saved_identity, sizeof saved_identity, 1, file) != 1 || saved_identity != identity) {
+        fclose(file); return;
+    }
+    size_t loaded = 0;
+    for (;;) {
+        uint64_t key_len, value_len, checksum;
+        size_t remaining = cache->max_bytes - cache->used_bytes;
+        if (fread(&key_len, sizeof key_len, 1, file) != 1 ||
+            fread(&value_len, sizeof value_len, 1, file) != 1 ||
+            fread(&checksum, sizeof checksum, 1, file) != 1 ||
+            remaining <= sizeof(response_cache_entry) + 1 ||
+            !key_len || !value_len || key_len > remaining - sizeof(response_cache_entry) - 1 ||
+            value_len > remaining - sizeof(response_cache_entry) - 1 - key_len) break;
+        char *data = ei_xmalloc((size_t)(key_len + value_len));
+        bool ok = fread(data, 1, (size_t)(key_len + value_len), file) == key_len + value_len &&
+            checksum == record_checksum(data, (size_t)key_len, data + key_len, (size_t)value_len) &&
+            !memchr(data + key_len, '\0', (size_t)value_len);
+        if (ok) {
+            ei_response_cache_insert(cache, data, (size_t)key_len, data + key_len, (size_t)value_len);
+            loaded++;
+        }
+        free(data);
+        if (!ok) break;
+    }
+    fclose(file);
+    if (loaded) fprintf(stderr, "loaded %zu cached HTTP responses from %s\n", loaded, path);
+}
+
+void ei_response_cache_save(ei_response_cache *cache, const char *path, uint64_t identity) {
+    if (!cache || !path) return;
+    size_t len = strlen(path);
+    char *tmp = ei_xmalloc(len + 8);
+    memcpy(tmp, path, len); memcpy(tmp + len, ".XXXXXX", 8);
+    int fd = mkstemp(tmp);
+    if (fd < 0) { free(tmp); return; }
+    FILE *file = fdopen(fd, "wb");
+    if (!file) { close(fd); unlink(tmp); free(tmp); return; }
+    pthread_mutex_lock(&cache->mutex);
+    bool ok = fwrite(RESPONSE_MAGIC, 1, sizeof RESPONSE_MAGIC, file) == sizeof RESPONSE_MAGIC &&
+              fwrite(&identity, sizeof identity, 1, file) == 1;
+    size_t count = 0;
+    // Oldest first so loading by insertion restores the existing LRU order.
+    for (response_cache_entry *entry = cache->lru_tail; ok && entry; entry = entry->lru_prev) {
+        uint64_t lens[2] = {entry->key_len, entry->value_len};
+        uint64_t checksum = record_checksum(entry->data, entry->key_len,
+                                            entry_value(entry), entry->value_len);
+        ok = fwrite(lens, sizeof lens, 1, file) == 1 &&
+             fwrite(&checksum, sizeof checksum, 1, file) == 1 &&
+             fwrite(entry->data, 1, entry->key_len + entry->value_len, file) == entry->key_len + entry->value_len;
+        if (ok) count++;
+    }
+    pthread_mutex_unlock(&cache->mutex);
+    if (fclose(file)) ok = false;
+    if (ok && ei_replace_file(tmp, path) == 0)
+        fprintf(stderr, "persisted %zu cached HTTP responses to %s\n", count, path);
+    else unlink(tmp);
+    free(tmp);
 }

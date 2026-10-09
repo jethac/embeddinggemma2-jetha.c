@@ -227,6 +227,29 @@ Tests and documentation support that outcome; they do not define completion.
   one; the first cold CUDA wave took 21.45 s including encoder warmup. All five
   matching Windows and CUDA modality outputs were bit-identical before/after.
   Admission limits, error propagation and API isolation pass on Windows/Linux.
+  A CUDA compatible-frame encoder batching experiment was also rejected: paired
+  busy-host medians worsened from 356 to 414 ms (two-frame video), 1128 to 1250 ms
+  (eight-frame video), 376 to 478 ms (two images), 845 to 928 ms (four images),
+  and 585 to 1035 ms (mixed shapes/audio). Both tested sequential/batched samples
+  retained FP32 reference agreement above 0.999; the slower prototype was removed.
+- `--persistent-cache-path` now saves bounded HTTP responses alongside the text
+  cache in a `.responses` snapshot on graceful shutdown. The observed media
+  restart regression failed before implementation with two recomputations; native
+  Windows and Linux CUDA now reload both native/OpenAI responses with zero
+  inference calls. Matching full backbone/mmproj bytes, backend, encoder selection
+  and client batch limit are required. Record checksums and length checks reject
+  damaged or oversized entries. Windows Ctrl-C/Ctrl-Break and Unix SIGTERM stop
+  paths were exercised. Native image requests improved from 6474/7393 ms to
+  32.1/32.5 ms after restart; CUDA improved from 653/201 ms to 0.85/0.79 ms.
+  The files retain raw request/media bytes; persistence requires a nonzero
+  response-cache budget. Weight hashing adds startup I/O and invalidates the
+  previous partial-header text-cache identity once. Cross-request batching and
+  semantic reuse across differently formatted bodies remain unfinished.
+  The default Windows dev endpoint now uses a 64 MiB response cache and
+  `.reference/dev-cache2` persistence. Its real restart loaded all five modality
+  responses without inference; image/video/mixed requests fell from 5757/5539/
+  6246 ms before restart to 27.1/27.2/36.1 ms, with identical 768-dimensional
+  outputs. These are cache-hit improvements, not faster inference kernels.
 - Decoded media input now has bounds checked before image/PCM allocation:
   16 megapixels per image/frame, 5,242,880 audio samples, and 128 MiB of retained
   decoded input/frame buffers across parts. Video frames are capped at 32 across

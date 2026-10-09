@@ -5,6 +5,7 @@
 #include "http_docs.h"
 #include "inference_service.h"
 #include "response_cache.h"
+#include "cache_fingerprint.h"
 #ifdef EI_GEMMA2
 #include "media2.h"
 #include "media_service2.h"
@@ -1327,37 +1328,18 @@ static void ensure_model_available(const char *model_path) {
     download_model(model_path);
 }
 
-/* Fingerprint the model so a persisted cache is only reused with the exact
- * same model file. Hashes the file size and first 64 KiB (GGUF header +
- * metadata + first tensors) — cheap and reliably distinguishes models without
- * reading the whole 278 MB file. */
-static uint64_t model_fingerprint(const char *path) {
-    uint64_t hash = 1469598103934665603ull;
-    FILE *file = fopen(path, "rb");
-    if (!file) return 0;
-    unsigned char buffer[65536];
-    if (fseek(file, 0, SEEK_END) == 0) {
-        int64_t size = (int64_t)ftell(file);
-        for (int i = 0; i < 8; i++) {
-            hash ^= (uint64_t)((size >> (i * 8)) & 0xff);
-            hash *= 1099511628211ull;
-        }
-        rewind(file);
-    }
-    size_t got = fread(buffer, 1, sizeof buffer, file);
-    for (size_t i = 0; i < got; i++) {
-        hash ^= buffer[i];
-        hash *= 1099511628211ull;
-    }
-    fclose(file);
-    return hash;
-}
-
 static volatile sig_atomic_t g_stop_requested = 0;
 static void handle_stop_signal(int sig) {
     (void)sig;
     g_stop_requested = 1;
 }
+#ifdef _WIN32
+static BOOL WINAPI handle_console_stop(DWORD event) {
+    if (event != CTRL_C_EVENT && event != CTRL_BREAK_EVENT) return FALSE;
+    g_stop_requested = 1;
+    return TRUE;
+}
+#endif
 
 static void usage(const char *argv0) {
     fprintf(stderr,
@@ -1663,7 +1645,7 @@ int main(int argc, char **argv) {
     if (!opts.media_service) ei_die("cannot initialize media service");
 #endif
     uint64_t cache_fingerprint = opts.persistent_cache_path
-        ? model_fingerprint(model_path) : 0;
+        ? ei_cache_fingerprint_file(model_path) : 0;
     free(model_path);
     char reserve_error[256];
     if (!ei_engine_reserve(&engine, opts.max_batch_tokens,
@@ -1686,6 +1668,30 @@ int main(int argc, char **argv) {
     if (!service) ei_die("invalid inference service configuration");
     ei_response_cache *response_cache = ei_response_cache_create(
         opts.response_cache_bytes, 4096);
+#ifdef EI_GEMMA2
+    char *response_cache_path = NULL;
+    uint64_t response_identity = cache_fingerprint;
+    if (opts.persistent_cache_path && response_cache) {
+        size_t len = strlen(opts.persistent_cache_path);
+        response_cache_path = ei_xmalloc(len + sizeof ".responses");
+        memcpy(response_cache_path, opts.persistent_cache_path, len);
+        memcpy(response_cache_path + len, ".responses", sizeof ".responses");
+        uint64_t media_identity = opts.mmproj_path ? ei_cache_fingerprint_file(opts.mmproj_path) : 0;
+        response_identity = (response_identity ^ media_identity) * 1099511628211ull;
+        // Bump this domain when model-input assembly or response semantics change.
+        const char *identity_fields[] = {"embeddinggemma2-response-v1", ei_engine_backend(&engine),
+                                         opts.media_encoders};
+        for (size_t field = 0; field < 3; field++) {
+            size_t field_len = strlen(identity_fields[field]);
+            for (size_t i = 0; i <= field_len; i++) {
+                response_identity ^= (unsigned char)identity_fields[field][i];
+                response_identity *= 1099511628211ull;
+            }
+        }
+        response_identity = (response_identity ^ opts.max_client_batch_size) * 1099511628211ull;
+        ei_response_cache_load(response_cache, response_cache_path, response_identity);
+    }
+#endif
 
     socket_queue connection_queue;
     socket_queue_init(&connection_queue, opts.max_queue);
@@ -1741,6 +1747,8 @@ int main(int argc, char **argv) {
 #ifdef _WIN32
         signal(SIGTERM, handle_stop_signal);
         signal(SIGINT, handle_stop_signal);
+        if (!SetConsoleCtrlHandler(handle_console_stop, TRUE))
+            ei_die("cannot initialize graceful console shutdown");
 #else
         struct sigaction action;
         memset(&action, 0, sizeof action);
@@ -1783,6 +1791,10 @@ int main(int argc, char **argv) {
     if (opts.persistent_cache_path) {
         fprintf(stderr, "shutting down; persisting exact cache\n");
         ei_inference_service_dump_cache(service);
+#ifdef EI_GEMMA2
+        ei_response_cache_save(response_cache, response_cache_path, response_identity);
+        free(response_cache_path);
+#endif
     }
     return 0;
 }

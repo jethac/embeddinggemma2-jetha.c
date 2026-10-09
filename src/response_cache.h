@@ -25,4 +25,10 @@ void ei_response_cache_insert(ei_response_cache *cache,
                               const char *key, size_t key_len,
                               const char *value, size_t value_len);
 
+/* Best-effort restart cache. Identity must cover weights, inference semantics,
+ * backend and request limits. Load before serving; save takes a locked snapshot.
+ * Files contain complete request bodies and responses, including media bytes. */
+void ei_response_cache_load(ei_response_cache *cache, const char *path, uint64_t identity);
+void ei_response_cache_save(ei_response_cache *cache, const char *path, uint64_t identity);
+
 #endif
