@@ -40,6 +40,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
     steps:
+      - name: Require VNNI hardware before building the experiment
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media && inputs.cpu_pair_vnni
+        run: |
+          lscpu
+          python -c 'from pathlib import Path; assert "avx512_vnni" in Path("/proc/cpuinfo").read_text().split(), "VNNI experiment requires actual AVX-512 VNNI hardware"'
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build current model implementation
         run: |
@@ -140,9 +145,6 @@ jobs:
         run: |
           lscpu
           cc --version
-          if [ "$EI_CPU_Q8_PAIR_VNNI2" = 1 ]; then
-            python -c 'from pathlib import Path; assert "avx512_vnni" in Path("/proc/cpuinfo").read_text().split(), "VNNI experiment requires actual AVX-512 VNNI hardware"'
-          fi
           args=()
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
