@@ -97,6 +97,11 @@ static void set_error(char *err, size_t err_len, const char *message) {
     if (err && err_len) snprintf(err, err_len, "%s", message);
 }
 
+static void set_context_error(char *err, size_t err_len) {
+    if (err && err_len)
+        snprintf(err, err_len, "input token count must be 1..%d", EI_N_CTX);
+}
+
 static size_t next_power_of_two(size_t value) {
     size_t result = 1;
     while (result < value) result *= 2;
@@ -806,7 +811,7 @@ bool ei_inference_service_embed_tokens(ei_inference_service *service,
                                        float out[EI_N_EMBD],
                                        char *err, size_t err_len) {
     if (!service || !ids || n_tokens == 0 || n_tokens > EI_N_CTX) {
-        set_error(err, err_len, "input token count must be 1..2048");
+        set_context_error(err, err_len);
         return false;
     }
     pthread_mutex_lock(&service->mutex);
@@ -896,7 +901,7 @@ bool ei_inference_service_embed_batch_with_usage(
             for (size_t j = 0; j < batch_size; j++) ei_tokens_free(&tokens[j]);
             free(entries);
             free(tokens);
-            set_error(err, err_len, "input token count must be 1..2048");
+            set_context_error(err, err_len);
             return false;
         }
     }

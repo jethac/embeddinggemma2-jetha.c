@@ -412,5 +412,14 @@ Tests and documentation support that outcome; they do not define completion.
   This round establishes no user-visible inference speedup.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
+- Oversized text requests reported the inherited 2048-token limit even though
+  EmbeddingGemma 2 accepts 8192. Both native and OpenAI errors now derive their
+  limit from the model configuration, preserving the legacy model's 2048 limit.
+  The HTTP regression failed before the fix and passes on the redeployed
+  Windows CPU and Linux CUDA services. All five modality journeys passed on
+  both services. Exact 8192-token requests returned finite normalized vectors:
+  CUDA versus pinned Q8 llama.cpp cosine was 0.99998452, and Windows AVX-512
+  CPU versus CUDA cosine was 0.99992663. This fixes misleading client guidance;
+  it does not change inference speed or increase the existing context limit.
 
 Keep this file current as implementation decisions and verified evidence change.
