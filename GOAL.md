@@ -528,6 +528,14 @@ Tests and documentation support that outcome; they do not define completion.
   including 26.1% to stream-k fixup, versus 7.0% to attention. This still favors
   a focused matmul scheduling experiment before an attention rewrite. Captured
   kernel totals include profiling overhead and do not establish service speed.
+  A private, default-off Q8 tiling trial removed fixup for short dense matmuls,
+  but was rejected: 106 fixed 32-token requests increased combined matmul kernel
+  time from 155.5 to 170.1 ms; 106 fixed three-sequence/96-token requests increased
+  it from 272.0 to 285.6 ms. Both controls retained exact outputs; tiling's minimum
+  cosine was 0.999920/0.999907. This was not a throughput comparison. The source
+  trial was reverted; no new kernel flag or default is shipped. Skipping fixup
+  alone sacrifices enough occupancy to lose on these shapes. Future matmul
+  scheduling work must preserve useful occupancy, with actual measurements.
 
 - The opt-in CPU comparison completed on CI 37892946034 (`1e72b77`): Ubuntu
   24.04/GCC 13.3, AMD EPYC 9V74 with four logical CPUs and two inference threads,
