@@ -46,6 +46,7 @@ typedef struct {
     bool graph_cache;
     bool cuda_global_attn;
     bool cuda_local_attn;
+    bool cuda_local_range;
     bool reuse_inputs;
     uint64_t graph_clock;
     int threads;
@@ -75,6 +76,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
+        s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -178,7 +180,7 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
     // CUDA's grouped-query and mask-tile scan paths require a 256-key stride.
     // Pad long local attention so its banded mask can skip work on those paths.
-    int64_t local_keys = s->cuda_local_attn && tokens >= 1024 ?
+    int64_t local_keys = (s->cuda_local_attn || s->cuda_local_range) && tokens >= 1024 ?
         ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
     enum ggml_type mask_type = s->reuse_inputs ? GGML_TYPE_F16 : GGML_TYPE_F32;
     state->full_mask = ggml_new_tensor_2d(inputs_ctx, mask_type, full_keys, padded);
@@ -237,7 +239,7 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         a = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
         ggml_prec_set_acc(a, GGML_PREC_F32);
         int64_t keys = swa ? local_keys : full_keys;
-        if (((swa && s->cuda_local_attn) || (!swa && s->cuda_global_attn)) && keys > (int64_t)tokens) {
+        if (((swa && (s->cuda_local_attn || s->cuda_local_range)) || (!swa && s->cuda_global_attn)) && keys > (int64_t)tokens) {
             k = ggml_cast(ctx, ggml_pad(ctx, k32, 0, (int)(keys - tokens), 0, 0), GGML_TYPE_F16);
             v = ggml_cast(ctx, ggml_pad(ctx, v32, 0, (int)(keys - tokens), 0, 0), GGML_TYPE_F16);
             struct ggml_tensor *padded_attn = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
@@ -255,6 +257,8 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
             ggml_prec_set_acc(a, GGML_PREC_F32);
             a = ggml_cont(ctx, ggml_permute(ctx, a, 0, 2, 1, 3));
         }
+        if (swa && s->cuda_local_range && tokens >= 1024)
+            ggml_flash_attn_ext_set_mask_range(a, true);
         a = ggml_reshape_2d(ctx, a, dim * 4, (int64_t)tokens);
         a = ggml_mul_mat(ctx, layer_weight(s, il, "attn_output"), a);
         x = ggml_add(ctx, x, norm(ctx, a, layer_weight(s, il, "post_attention_norm"), e->model.rms_eps));
@@ -558,6 +562,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->cuda_local_attn = local_attn && strcmp(local_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->cuda_local_attn) fprintf(stderr, "CUDA local attention: padded keys from 1024 aggregate tokens\n");
+    const char *local_range = getenv("EI_CUDA_LOCAL_RANGE2");
+    s->cuda_local_range = local_range && strcmp(local_range, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->cuda_local_range) fprintf(stderr, "CUDA local mask range: skip fully masked leading key tiles from 1024 tokens\n");
     const char *reuse_inputs = getenv("EI_REUSE_INPUTS2");
     s->reuse_inputs = reuse_inputs && strcmp(reuse_inputs, "1") == 0;
     if (s->reuse_inputs) fprintf(stderr, "Backbone static input reuse: dedicated FP16 masks, matching sequence boundaries\n");

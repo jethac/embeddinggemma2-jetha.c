@@ -123,6 +123,17 @@ names or theoretical throughput alone.
   inspecting placement because unsupported subgraphs automatically run on CPU.
   See AMD's [release notes](https://ryzenai.docs.amd.com/en/latest/relnotes.html)
   and [deployment documentation](https://ryzenai.docs.amd.com/en/latest/modelrun.html).
+- Use FluidInference's [EmbeddingGemma 2 Core ML conversion](https://huggingface.co/FluidInference/embeddinggemma-2-coreml)
+  as an accelerator reference. It ships text, audio and vision assets: text uses
+  fixed 32–512-token ANE functions with CPU token-table lookup; audio and vision
+  use the GPU in the recommended serving path. Its card reports audio attention
+  falling back to CPU under ANE, and vision running on ANE but slower than GPU.
+  Fixed buckets, packed independent sequences and rescaled FP16 RMSNorm are
+  useful compiler/performance experiments for our NPU work. Preserve the full
+  8192-token context and multimodal scope here; its 512-token limit is not our
+  completion target. Reproduce placement, quality and timings on target hardware
+  before adopting a path. Published assets and FluidUse are Apache-2.0; retain
+  their required notices if reused, while our own implementation remains MIT.
 - Preserve and extend dynamic batching, bounded queues, duplicate singleflight,
   exact-result caching, and useful concurrency behavior to multimodal requests.
 - Measure the real request end to end. Add timings for tokenization, media
@@ -702,5 +713,40 @@ Tests and documentation support that outcome; they do not define completion.
   8191-token text and five images (1292 tokens). Its warm 8191-token median was
   360 ms for 20 measured requests under current contention; each HTTP body was
   unique to bypass the dev service's response cache, and the text cache is off.
+  CI run 37916077030 passed all six jobs for this deployed change.
+
+- CUDA lower mask-range scanning (`EI_CUDA_LOCAL_RANGE2=1`, default off) skips
+  fully masked leading key tiles from 1024 aggregate tokens. Both enabled and
+  disabled paths were bit-identical against the previous deployed CUDA build
+  across all five modalities, 8191/8192-token inputs, actual three-sequence
+  2049-token batches with changed boundaries, five images and long mixed inputs.
+  The observed reverse-order pool cleanup assertion is fixed: the existing
+  public `tests/qkv_cache2.py --backend cuda --mode cuda-local-range --tokens
+  1024` failed before the fix and passes afterward. Its 2049-token variant also
+  passes, with cached/fresh responses identical and distinct cache identities.
+  The reusable-input boundary/rebuild/eviction safety check passes with this
+  mode enabled, exercising both F16 and F32 attention masks.
+  Paired warm 8191-token HTTP medians improved from 258.525 to 195.758 ms and
+  from 264.155 to 194.904 ms in reverse order (20 measured requests after six
+  warmups per pass, six threads, QKV off, global/local attention, input reuse
+  and graph caching on, profiling/result caches off, RTX 5060 Ti). That is
+  approximately 25% lower latency than the already padded local-attention path;
+  this is not a matched llama.cpp throughput comparison.
+  A complete 12-forward capture contains 240 local and 48 global flash calls.
+  Local flash time fell from 1145.116 to 199.956 ms; its mask scan increased
+  from 37.15 to 113.272 ms. Total kernel time fell from 3169.918 to 2209.150 ms
+  (30.3%); global flash time was 658.797 ms. The CUDA dev service on port 42669
+  now enables this mode alongside its previous flags. All five deployed
+  modalities passed against Windows CPU (minimum cosine 0.999715), and
+  8191-token text plus five images (1292 tokens) returned normalized outputs.
+  Its warm 8191-token median was 221.990 ms for 20 unique HTTP requests after
+  six warmups, text cache off. The response cache remains available to users.
+  The existing complete trace also identifies a global-attention resource
+  constraint: 252 registers/thread, 256 threads/block and 84,224 bytes of shared
+  memory/block on the RTX 5060 Ti (65,536 registers and 102,400 shared bytes/SM).
+  Global attention already groups all four query heads and runs one block/SM;
+  smaller query tiles are the next measured candidate, rather than adding GQA
+  grouping already present. Local attention uses 255 registers/thread,
+  128 threads/block and 35,328 shared bytes/block, with two blocks/SM.
 
 Keep this file current as implementation decisions and verified evidence change.

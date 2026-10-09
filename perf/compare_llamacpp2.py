@@ -184,6 +184,7 @@ def main():
                       'packed_qkv': os.getenv('EI_QKV2') == '1',
                       'cuda_global_attn': os.getenv('EI_CUDA_GLOBAL_ATTN2') == '1',
                       'cuda_local_attn': os.getenv('EI_CUDA_LOCAL_ATTN2') == '1',
+                      'cuda_local_range': os.getenv('EI_CUDA_LOCAL_RANGE2') == '1',
                       'cuda_graph_cache': os.getenv('EI_GRAPH_CACHE2') == '1',
                       'reuse_inputs': os.getenv('EI_REUSE_INPUTS2') == '1',
                       'minimum_rounds': a.rounds, 'target_seconds': a.target_seconds,
@@ -210,6 +211,9 @@ def main():
                     local_attn = 'CUDA local attention:' in op.log_path.read_text(errors='replace')
                     if local_attn != (os.getenv('EI_CUDA_LOCAL_ATTN2') == '1'):
                         raise RuntimeError('native server did not select the requested local attention mode')
+                    local_range = 'CUDA local mask range:' in op.log_path.read_text(errors='replace')
+                    if local_range != (os.getenv('EI_CUDA_LOCAL_RANGE2') == '1'):
+                        raise RuntimeError('native server did not select the requested local mask range mode')
                     graph_cache = 'CUDA short-text graph cache:' in op.log_path.read_text(errors='replace')
                     if graph_cache != (os.getenv('EI_GRAPH_CACHE2') == '1'):
                         raise RuntimeError('native server did not select the requested graph cache mode')

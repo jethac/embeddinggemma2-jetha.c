@@ -216,6 +216,20 @@ long mixed inputs passed cosine 0.999 (minimum 0.999878); aligned 8192-token
 inputs and all five short modality samples stayed bit-identical. Persistent
 caches distinguish this numeric mode. It defaults off and applies only to CUDA.
 
+`EI_CUDA_LOCAL_RANGE2=1` also skips fully masked leading key tiles in local
+attention from 1024 aggregate tokens, including the key padding above. With
+local padding already enabled, warm 8191-token HTTP medians fell from 259 to
+196 ms and from 264 to 195 ms in the reverse order (20 measured requests after
+six warmups per pass, six threads, QKV off, global attention/input reuse/graph
+caching on, result caches/profiling off, RTX 5060 Ti). This is about 25% lower
+latency than the padded local-attention path on this host; it is not a matched
+llama.cpp throughput claim. In complete 12-forward GPU captures, local flash
+time fell from 1145 to 200 ms and total kernel time fell 30.3%, including the
+additional mask-scan cost. All five modality samples, 8191/8192-token text,
+actual 2049-token/three-sequence batches with changed boundaries, five-image
+inputs and long mixed inputs stayed bit-identical. The flag defaults off,
+applies only to CUDA and has a separate persistent-cache identity.
+
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies

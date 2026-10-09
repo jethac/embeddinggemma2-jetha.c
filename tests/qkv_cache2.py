@@ -17,7 +17,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range'], default='packed-qkv')
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
 if not 4 <= a.tokens <= 8192: p.error('--tokens must be 4..8192')
@@ -25,6 +25,7 @@ flag, marker = {
     'packed-qkv': ('EI_QKV2', 'packed QKV:'),
     'cuda-global-attn': ('EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:'),
     'cuda-local-attn': ('EI_CUDA_LOCAL_ATTN2', 'CUDA local attention:'),
+    'cuda-local-range': ('EI_CUDA_LOCAL_RANGE2', 'CUDA local mask range:'),
 }[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
@@ -68,6 +69,7 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
             return json.load(response)
     os.environ['EI_QKV2'] = '0'
     os.environ['EI_CUDA_GLOBAL_ATTN2'] = '0'
+    os.environ[flag] = '0'
     with server(work/'off.log'):
         separate = request()
     identity_before = struct.unpack('<Q', Path(str(cache)+'.responses').read_bytes()[8:16])[0]
