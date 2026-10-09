@@ -18,6 +18,10 @@ on:
         description: Enable experimental VNNI paired rows in the multimodal comparison
         type: boolean
         default: false
+      media_profile_phases:
+        description: Diagnose actual encoder/backbone costs during the media comparison
+        type: boolean
+        default: false
       media_modalities:
         description: Modalities for the matched media comparison
         type: string
@@ -142,11 +146,13 @@ jobs:
           MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
           EI_CPU_Q8_PAIR_VNNI2: ${{ inputs.cpu_pair_vnni && '1' || '0' }}
           MEDIA_VALIDATE_ONLY: ${{ inputs.media_validate_only && '1' || '0' }}
+          MEDIA_PROFILE_PHASES: ${{ inputs.media_profile_phases && '1' || '0' }}
         run: |
           lscpu
           cc --version
           args=()
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
+          if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)

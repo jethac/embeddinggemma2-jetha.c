@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import re
 from pathlib import Path
 import socket
 import statistics
@@ -113,6 +114,24 @@ def measure_native_pair(on, off, bodies, ignored, options):
             'other_cpu_percent': loads}
 
 
+def phase_costs(path, offset):
+    with path.open('rb') as log:
+        log.seek(offset)
+        lines = log.read().decode(errors='replace').splitlines()
+    result = {}
+    for name, marker, fields in (
+            ('encoder', 'encoder phases:', ('build', 'alloc', 'inputs', 'compute')),
+            ('backbone', 'backbone:', ('build', 'prep', 'compute', 'output'))):
+        samples = [tuple(float(re.search(r'\b' + field + r'=([0-9.]+)', line).group(1))
+                         for field in fields) for line in lines if marker in line]
+        if samples:
+            result[name] = {'samples': len(samples),
+                            'median_ms': dict(zip(fields, map(statistics.median, zip(*samples))))}
+    if 'encoder' not in result:
+        raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
+    return result
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', type=Path, required=True)
@@ -121,6 +140,8 @@ def main():
     p.add_argument('--llama-server', type=Path, required=True)
     p.add_argument('--backend', choices=['cpu', 'cuda'], required=True)
     p.add_argument('--threads', type=int, default=2)
+    p.add_argument('--profile-phases', action='store_true',
+                   help='Diagnose encoder/backbone costs from actual server logs')
     p.add_argument('--concurrency', type=parse_csv_ints, default=[1, 4])
     p.add_argument('--modalities', default='image,audio,video,mixed')
     p.add_argument('--rounds', type=int, default=5)
@@ -148,6 +169,9 @@ def main():
     for port in ((a.port, a.port + 1, a.port + 2) if vnni_probe else (a.port, a.port + 1)):
         with socket.socket() as check: check.bind(('127.0.0.1', port))
     os.environ['EI_THREADS'] = str(a.threads)
+    if a.profile_phases:
+        os.environ['EI_PROFILE_MEDIA2'] = '1'
+        os.environ['EI_PROFILE_BACKBONE2'] = '1'
     ours = Endpoint('127.0.0.1', a.port, '/v1/embeddings', 'embeddinggemma')
     llama = Endpoint('127.0.0.1', a.port + 1, '/v1/embeddings', 'llamacpp')
     ours_cmd = [str(a.embeddinggemma_bin.resolve()), '--model', str(a.model.resolve()),
@@ -162,6 +186,9 @@ def main():
                  '--no-cache-idle-slots', '--no-webui', '--log-disable']
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
+    if a.profile_phases:
+        llama_cmd.remove('--log-disable')
+        llama_cmd += ['--log-verbosity', '4']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
         'flags': {k: v for k, v in os.environ.items() if k.startswith('EI_')},
         'validate_only': a.validate_only, 'orders': ['ours/llama', 'llama/ours'],
@@ -187,6 +214,7 @@ def main():
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as lp:
+                    log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     if vnni_probe:
                         startup = op.log_path.read_text(errors='replace')
                         if not any('libggml-cpu-' + name + '.so' in startup for name in
@@ -227,6 +255,9 @@ def main():
                                                   'native_pair_on_off': native_pair}), flush=True)
                     row = {'modality': kind, 'concurrency': concurrency, 'tokens': tokens,
                            'minimum_cosine': minimum}
+                    if a.profile_phases:
+                        row['phase_costs'] = {name: phase_costs(process.log_path, offset)
+                            for name, process, offset in zip(('ours', 'llama'), (op, lp), log_offsets)}
                     if native_pair is not None:
                         row['native_pair_on_off'] = native_pair
                     print(json.dumps(row), flush=True)
@@ -248,6 +279,9 @@ def main():
                              for name, runs in rows.items()}
                     row.update(ours_emb_s=rates['ours'], llama_emb_s=rates['llama'],
                                speedup=rates['ours']/rates['llama'], passes=rows, other_cpu_percent=loads)
+                    if a.profile_phases:
+                        row['phase_costs'] = {name: phase_costs(process.log_path, offset)
+                            for name, process, offset in zip(('ours', 'llama'), (op, lp), log_offsets)}
                     results.append(row); print(json.dumps(row), flush=True)
     if results:
         print('\n| Modality | Clients | Ours emb/s | llama.cpp emb/s | Ratio |')

@@ -243,6 +243,12 @@ Minimum cosines were 0.999758 and 0.999155 respectively. These results
 support retaining the optional kernel; they do not establish a serving win
 against llama.cpp or replace the EPYC results above.
 
+To diagnose those costs, add `-f media_profile_phases=true` to the media CI
+command, or `--profile-phases` to the comparison script. It prints sampled
+encoder costs for both engines and native backbone costs from actual logs.
+Profiling enables additional logging; use it to choose an optimization,
+then measure that change with profiling disabled.
+
 On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
 requests (four different tones, caches off, two CPU threads under WSL) measured
 386.5 -> 307.6 ms and 625.0 -> 517.2 ms median; a repeat measured
