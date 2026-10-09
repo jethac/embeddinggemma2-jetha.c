@@ -164,17 +164,27 @@ the CI runner, add `-f packed_qkv=true` to the CPU comparison command above.
 attention when GGML's flash kernel cannot handle the input shape. It uses
 matrix multiplication and masked softmax for at most 2048 aggregate tokens,
 bounding the four-head score matrix to 64 MiB. Larger inputs and shapes with
-native CUDA flash support keep the original path. For a 32-token request,
+native CUDA flash support use streaming attention: unsupported larger shapes
+pad K/V to the next 256-key boundary, mask every added key, and use native
+CUDA flash when supported. Other devices retain the existing fallback. For a 32-token request,
 actual scheduler placement changed from nine alternating GPU/CPU splits to
 one GPU split. With text and HTTP caches disabled, graph caching enabled and
 packed QKV disabled, paired warm HTTP medians on the contended RTX 5060 Ti host
 fell from 11.6 to 5.0 ms and from 12.9 to 5.0 ms in the reverse order (100
 measured requests per pass). These are latency observations under contention,
-not a quiet throughput comparison against llama.cpp. All five modalities
+not a quiet throughput comparison against llama.cpp. For an unaligned
+2049-token request, padded flash also produced one CUDA split, and paired warm
+HTTP medians fell from 2094 to 152 ms and 2515 to 338 ms in the reverse order
+(20 measured requests per pass, packed QKV and result caches off). Padding
+regressed for 32-token inputs in both orders, so short requests retain explicit
+attention. The 8191-token request passed cosine 0.999938, and an unequal
+2049-token aggregate batch passed 0.999917 with isolated outputs.
+All five modality samples
 passed cosine 0.999 (minimum 0.999848); combined with packed QKV, the minimum
 was 0.999824. Unequal batches and lengths around native flash alignment and
 the fallback limit also passed. Persistent caches distinguish this numeric
-mode. The flag defaults off pending broader hardware and quiet-host validation.
+mode and implementation version. The flag defaults off pending broader
+hardware and quiet-host validation.
 
 ## Build and run the development server
 

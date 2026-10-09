@@ -67,7 +67,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
-        s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v1" : NULL,
+        s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -146,7 +146,11 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     state->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
     ggml_set_input(state->positions);
     int64_t padded = ((int64_t)tokens + 31) / 32 * 32;
-    state->full_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
+    // The pinned CUDA 512-wide flash kernel requires a 256-key stride. Pad
+    // only above the explicit-attention memory limit; the shorter path is faster.
+    int64_t full_keys = s->cuda_global_attn && tokens > 2048 ?
+        ((int64_t)tokens + 255) / 256 * 256 : (int64_t)tokens;
+    state->full_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, full_keys, padded);
     state->local_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
     ggml_set_input(state->full_mask);
     ggml_set_input(state->local_mask);
@@ -188,15 +192,23 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         k = ggml_rope_ext(ctx, k, state->positions, NULL, dim, GGML_ROPE_TYPE_NEOX, EI_N_CTX,
                           base, 1, 0, 1, 0, 0);
         q = ggml_permute(ctx, q, 0, 2, 1, 3);
-        k = ggml_cast(ctx, ggml_permute(ctx, k, 0, 2, 1, 3), GGML_TYPE_F16);
-        v = ggml_cast(ctx, ggml_permute(ctx, v, 0, 2, 1, 3), GGML_TYPE_F16);
+        struct ggml_tensor *k32 = ggml_permute(ctx, k, 0, 2, 1, 3);
+        struct ggml_tensor *v32 = ggml_permute(ctx, v, 0, 2, 1, 3);
+        k = ggml_cast(ctx, k32, GGML_TYPE_F16);
+        v = ggml_cast(ctx, v32, GGML_TYPE_F16);
         a = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
         ggml_prec_set_acc(a, GGML_PREC_F32);
-        if (!swa && s->cuda_global_attn && tokens <= 2048 &&
+        if (!swa && s->cuda_global_attn && full_keys > (int64_t)tokens) {
+            k = ggml_cast(ctx, ggml_pad(ctx, k32, 0, (int)(full_keys - tokens), 0, 0), GGML_TYPE_F16);
+            v = ggml_cast(ctx, ggml_pad(ctx, v32, 0, (int)(full_keys - tokens), 0, 0), GGML_TYPE_F16);
+            struct ggml_tensor *padded_attn = ggml_flash_attn_ext(ctx, q, k, v, full, 1.0f, 0, 0);
+            ggml_prec_set_acc(padded_attn, GGML_PREC_F32);
+            if (ggml_backend_supports_op(s->backends[0], padded_attn)) a = padded_attn;
+        } else if (!swa && s->cuda_global_attn && tokens <= 2048 &&
             !ggml_backend_supports_op(s->backends[0], a)) {
             // CUDA's 512-wide flash kernel requires aligned K/V lengths.
             // Bound the explicit four-head score matrix to 64 MiB, and keep
-            // larger batches on the existing streaming attention path.
+            // larger batches on streaming attention, padding K/V above.
             struct ggml_tensor *scores = ggml_mul_mat(ctx, k, q);
             ggml_prec_set_acc(scores, GGML_PREC_F32);
             scores = ggml_soft_max_ext_inplace(ctx, scores, state->full_mask, 1.0f, 0);
@@ -257,9 +269,10 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     if (!build_graph(e, state, n, batch, raw, err, err_len)) return false;
     double built = s->profile ? now_ms() : 0;
     size_t padded = (n + 31) / 32 * 32;
+    size_t full_keys = (size_t)state->full_mask->ne[0];
     int32_t *pos = ei_xmalloc(n * sizeof *pos);
     int32_t *seq = ei_xmalloc(n * sizeof *seq);
-    float *mask = ei_xmalloc(n * padded * sizeof *mask);
+    float *mask = ei_xmalloc(full_keys * padded * sizeof *mask);
     float *pool = ei_xcalloc(n * batch, sizeof *pool);
     for (size_t b = 0; b < batch; b++) {
         for (size_t t = offsets[b]; t < offsets[b + 1]; t++) {
@@ -271,13 +284,22 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     ggml_backend_tensor_set(state->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
     ggml_backend_tensor_set(state->positions, pos, 0, n * sizeof *pos);
     ggml_backend_tensor_set(state->pool, pool, 0, n * batch * sizeof *pool);
-    for (size_t q = 0; q < padded; q++)
+    for (size_t q = 0; q < padded; q++) {
         for (size_t k = 0; k < n; k++)
-            mask[q * n + k] = q < n && seq[q] == seq[k] ? 0.0f : -INFINITY;
-    ggml_backend_tensor_set(state->full_mask, mask, 0, n * padded * sizeof *mask);
-    for (size_t q = 0; q < n; q++)
-        for (size_t k = 0; k < n; k++)
-            if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) mask[q * n + k] = -INFINITY;
+            mask[q * full_keys + k] = q < n && seq[q] == seq[k] ? 0.0f : -INFINITY;
+        for (size_t k = n; k < full_keys; k++) mask[q * full_keys + k] = -INFINITY;
+    }
+    ggml_backend_tensor_set(state->full_mask, mask, 0, full_keys * padded * sizeof *mask);
+    if (full_keys == n) {
+        for (size_t q = 0; q < n; q++)
+            for (size_t k = 0; k < n; k++)
+                if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) mask[q * n + k] = -INFINITY;
+    } else {
+        for (size_t q = 0; q < padded; q++)
+            for (size_t k = 0; k < n; k++)
+                mask[q * n + k] = q < n && seq[q] == seq[k] &&
+                    abs(pos[q] - pos[k]) <= (int)e->model.swa_window / 2 ? 0.0f : -INFINITY;
+    }
     ggml_backend_tensor_set(state->local_mask, mask, 0, n * padded * sizeof *mask);
     free(pos); free(seq); free(mask); free(pool);
     double prepared = s->profile ? now_ms() : 0;
@@ -442,7 +464,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *global_attn = getenv("EI_CUDA_GLOBAL_ATTN2");
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
-    if (s->cuda_global_attn) fprintf(stderr, "CUDA global attention fallback: explicit scores for at most 2048 aggregate tokens\n");
+    if (s->cuda_global_attn) fprintf(stderr, "CUDA global attention fallback: explicit scores through 2048 aggregate tokens; padded flash above\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 

@@ -584,21 +584,46 @@ Tests and documentation support that outcome; they do not define completion.
 - An opt-in CUDA global-attention fallback (`EI_CUDA_GLOBAL_ATTN2=1`, default
   off) removes observed CPU attention splits when the pinned CUDA flash kernel
   rejects an input shape. Explicit masked attention is limited to 2048 aggregate
-  tokens (64 MiB maximum four-head scores); supported flash shapes and larger
-  requests retain the original path. Actual 32-token placement changed from nine
+  tokens (64 MiB maximum four-head scores); supported flash shapes retain the
+  original path. Larger unsupported shapes now pad K/V to a 256-key boundary
+  and mask added keys, selecting native CUDA flash when supported and retaining
+  the existing fallback on devices without it. Actual 32-token placement changed from nine
   GPU/CPU splits to one CUDA split. In both orders, 100-request warm HTTP medians
   on the contended local RTX 5060 Ti improved from 11.6 to 5.0 ms and 12.9 to
   5.0 ms, with graph caching on, packed QKV off and both result caches off.
   These are end-to-end latency observations, not quiet llama.cpp throughput.
   All five modalities passed cosine 0.999 (minimum 0.999848); enabling packed
   QKV too passed at minimum 0.999824. Unequal-batch isolation and lengths
-  255/256/257, 1023, 2047/2048/2049 passed; supported aligned lengths and requests
-  above the limit matched exactly with packed QKV off. The existing persistent
+  255/256/257, 1023, 2047/2048/2049 passed in the initial bounded experiment;
+  supported aligned lengths matched exactly with packed QKV off. The existing persistent
   numeric-mode regression also passes for this mode: cached results match fresh
   inference after a mode change. Quiet-host and broader hardware comparisons
   remain necessary before enabling this path by default.
   Current CUDA and Windows CPU builds with both numeric flags off retained
   exactly matching outputs for all five modalities. Both persistent numeric-mode
   regressions pass on CUDA after the cache-fingerprint refactor.
+
+  The larger padded path was selected after actual CUDA placement and paired
+  HTTP measurements: 2049-token median latency fell from 2094 to 152 ms and
+  from 2515 to 338 ms in the reverse order (20 measured warm requests per pass,
+  packed QKV off, result caches off, contended local host). The final 2049-token
+  graph has one CUDA split. Padding lost against explicit attention at 32 tokens
+  in both orders, so it is used only above the explicit-score memory limit.
+  Final 8191-token and unequal 2049-token aggregate requests passed cosine
+  0.999938 and 0.999917, with batch isolation passing. OpenAI usage confirmed
+  the actual token counts. The 2049-token persistent-mode regression passed;
+  cache identity now uses the global-attention v2 domain so older variant
+  responses cannot survive this numeric change. All five modalities passed on
+  the final opt-in CUDA service; flags off retained exactly matching outputs
+  on current Windows CPU and CUDA builds.
+  The 2049-token request also passed with packed QKV enabled (cosine 0.999922),
+  retaining one CUDA split.
+
+- CI 37902823700 hit its 120-second Metal readiness deadline while the service
+  was still initializing the embedded library. The workflow now observes the
+  same live processes for a bounded 300 seconds and logs readiness elapsed time.
+  The following run 37904005129 completed all six jobs; Metal startup took
+  32 seconds and all five CPU/Metal comparisons passed (minimum 0.999506).
+  This does not establish physical Apple GPU throughput or a faster startup.
 
 Keep this file current as implementation decisions and verified evidence change.

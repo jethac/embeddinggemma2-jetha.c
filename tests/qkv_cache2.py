@@ -18,7 +18,9 @@ p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
 p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn'], default='packed-qkv')
+p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
+if not 4 <= a.tokens <= 8192: p.error('--tokens must be 4..8192')
 flag, marker = ('EI_QKV2', 'packed QKV:') if a.mode == 'packed-qkv' else (
     'EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:')
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
@@ -56,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
                         process.kill(); process.wait(timeout=10)
                         raise
     def request(probe=False):
-        body = {'input': 'q0' + ' x' * 28}
+        body = {'input': 'q0' + ' x' * (a.tokens - 4)}
         if probe: body['qkv_cache_probe'] = True
         with urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{port}/api/embed',
             json.dumps(body).encode(), headers={'Content-Type':'application/json'}), timeout=180) as response:
