@@ -64,6 +64,13 @@ measurements remain necessary. These figures cover
 text; image, audio, video, mixed inputs and other hardware require separate
 comparisons. Cache and singleflight savings are separate serving measurements.
 
+For an additional Linux CI CPU measurement, run
+`gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_cpu=true`.
+The opt-in steps build pinned llama.cpp against the service's installed shared
+GGML kernels, then run the same six text cells with two threads, caches disabled
+and both engine orders. Hardware and measurements appear in the job log. CI
+results describe that runner; they do not replace the local host's measurements.
+
 Reproduce with [perf/compare_llamacpp2.py](perf/compare_llamacpp2.py). Build the
 native server using the build instructions below and build `llama-server` from its pinned dependency
 checkout (`build-cmake/_deps/llama-src`) in a separate build directory. Match
