@@ -64,7 +64,27 @@ measurements remain necessary. These figures cover
 text; image, audio, video, mixed inputs and other hardware require separate
 comparisons. Cache and singleflight savings are separate serving measurements.
 
-For an additional Linux CI CPU measurement, run
+A completed [CI comparison](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034)
+on 2026-10-09 used Ubuntu 24.04, GCC 13.3, an AMD EPYC 9V74 runner with four
+logical CPUs, two inference threads, and the same installed shared GGML library
+and runtime CPU plugins for both engines. All six cells used the same Q8 weights,
+uncached requests and both orders described above; observed non-benchmark CPU
+load was 0.8–0.9%. These results describe that runner separately from the WSL host.
+
+| Tokens | Clients | Ours embeddings/s | llama.cpp embeddings/s | Ratio | Ratio by order |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1 | 16.75 | 16.81 | 0.996x | 0.973–1.019x |
+| 32 | 4 | 18.31 | 18.16 | 1.008x | 1.007–1.009x |
+| 256 | 1 | 2.26 | 2.25 | 1.006x | 1.004–1.007x |
+| 256 | 4 | 2.26 | 2.24 | 1.008x | 1.005–1.010x |
+| 1024 | 1 | 0.44 | 0.44 | 1.008x | 1.003–1.014x |
+| 1024 | 4 | 0.41 | 0.41 | 0.994x | 0.991–0.998x |
+
+The geometric mean is **1.003x**, effectively parity, with minimum cosine
+**0.999970**. The small losses remain visible; this is not an established CPU
+speed advantage.
+
+Reproduce the CI comparison with
 `gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_cpu=true`.
 The opt-in steps build pinned llama.cpp against the service's installed shared
 GGML kernels, then run the same six text cells with two threads, caches disabled

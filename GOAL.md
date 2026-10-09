@@ -529,6 +529,16 @@ Tests and documentation support that outcome; they do not define completion.
   a focused matmul scheduling experiment before an attention rewrite. Captured
   kernel totals include profiling overhead and do not establish service speed.
 
+- The opt-in CPU comparison completed on CI 37892946034 (`1e72b77`): Ubuntu
+  24.04/GCC 13.3, AMD EPYC 9V74 with four logical CPUs and two inference threads,
+  matching installed shared GGML kernels/plugins, caches off and both orders.
+  The six ratios were 0.996/1.008/1.006/1.008/1.008/0.994 for 32, 256, and 1024
+  tokens at one/four clients. Geometric mean 1.003x is effectively parity;
+  minimum cosine was 0.999970. README now includes every cell and order range,
+  including losses, separately from the provisional WSL figures. No CPU speed
+  advantage is established. The default-off graph-cache commit `c15270c` also
+  passed all six CI jobs, including Linux and macOS deployed journeys.
+
 - The inherited installer actually requested QuixiAI's 300M release checksums.
   It now targets this repository, its own asset/executable prefix, and
   `EMBEDDINGGEMMA2_*` overrides. A mocked-download regression reproduced the
