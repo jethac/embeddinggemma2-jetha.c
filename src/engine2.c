@@ -55,6 +55,7 @@ typedef struct {
     bool graph_cache;
     int graph_cache_slots;
     bool text_buckets;
+    bool text_batch_buckets;
     bool cuda_global_attn;
     bool cuda_local_attn;
     bool cuda_local_range;
@@ -95,6 +96,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
         s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
+        s->text_batch_buckets ? "embeddinggemma2-text-batch-buckets-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -409,7 +411,8 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     engine2 *s = e->gemma2;
     size_t n = offsets[batch];
     size_t graph_n = n;
-    if (s->text_buckets && !raw && batch == 1 && n <= 256) {
+    if (!raw && n <= 256 && ((s->text_buckets && batch == 1) ||
+                            (s->text_batch_buckets && batch > 1))) {
         graph_n = 32;
         while (graph_n < n) graph_n *= 2;
     }
@@ -615,6 +618,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->text_buckets = text_buckets && strcmp(text_buckets, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->text_buckets) fprintf(stderr, "CUDA text buckets: single sequences up to 256 tokens\n");
+    const char *text_batch_buckets = getenv("EI_TEXT_BATCH_BUCKETS2");
+    s->text_batch_buckets = text_batch_buckets && strcmp(text_batch_buckets, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->text_batch_buckets) fprintf(stderr, "CUDA text batch buckets: at most 256 aggregate tokens\n");
     const char *global_attn = getenv("EI_CUDA_GLOBAL_ATTN2");
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;

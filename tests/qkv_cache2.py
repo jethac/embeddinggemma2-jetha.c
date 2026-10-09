@@ -17,7 +17,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch', 'jpeg-turbo', 'text-buckets'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch', 'jpeg-turbo', 'text-buckets', 'text-batch-buckets'], default='packed-qkv')
 p.add_argument('--mmproj', type=Path)
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
@@ -32,6 +32,7 @@ flag, marker = {
     'media-batch': ('EI_MEDIA_BATCH2', 'Multimodal backbone batching:'),
     'jpeg-turbo': ('EI_JPEG_TURBO2', 'JPEG decoding:'),
     'text-buckets': ('EI_TEXT_BUCKETS2', 'CUDA text buckets:'),
+    'text-batch-buckets': ('EI_TEXT_BATCH_BUCKETS2', 'CUDA text batch buckets:'),
 }[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
@@ -70,6 +71,9 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
                         raise
     def request(probe=False):
         body = {'input': 'q0' + ' x' * (a.tokens - 4)}
+        if a.mode == 'text-batch-buckets':
+            body = {'input': ['q'+str(i)+(' '+word)*(a.tokens-4+i)
+                              for i, word in enumerate(('x', 'y', 'z'))]}
         if a.mode == 'media-batch':
             body = {'input': [{'content': [{'type': 'text', 'text': 'q'+str(i)+(' '+word)*(a.tokens-4+i)}]}
                               for i, word in enumerate(('x', 'y', 'z'))]}

@@ -188,6 +188,19 @@ arrays, longer text and media retained exact outputs. The default is off and
 persistent caches use a separate identity because padded text can differ
 slightly. The CUDA development service enables this option.
 
+`EI_TEXT_BATCH_BUCKETS2=1` independently applies the same token buckets to
+plain text batches with at least two sequences and at most 256 aggregate
+tokens, including batches collected by the scheduler. Each real sequence keeps
+its own positions, attention mask and pooling denominator. Raw multimodal
+inputs and larger batches bypass it. On the CUDA development service, a
+four-client varied-length workload measured 30.4 -> 17.8 ms and 28.3 -> 13.4 ms
+median latency in opposite orders. Tail latency was mixed: p95 was
+54.0 -> 61.3 ms and 58.4 -> 17.0 ms. These shared-host observations qualify
+this workload only. Unequal lengths, empty strings, changed inputs and reordered
+sequences passed the 0.999 cosine gate; longer batches and all five singleton
+modalities retained exact outputs. This separate numeric option defaults off,
+has its own persistent-cache identity, and is enabled on the CUDA dev service.
+
 `EI_QKV2=1` enables experimental packed Q/K/V projections for Q8_0 weights on
 CPU and CUDA. It uses 27.62 MiB of additional weights. In a fixed 106-request,
 32-token CUDA capture, quantized matmul launches fell from 22,680 to 17,640,

@@ -1304,3 +1304,31 @@ Keep this file current as implementation decisions and verified evidence change.
   its existing installed CPU service because the change is CUDA-only. This
   implementation still needs its own CI. Native target hardware, cross-request
   media batching, quiet comparisons and the complete release matrix remain open.
+
+- 2026-10-10: After singleton bucketing, a varied-length four-client text trace
+  still rebuilt 23 of 38 graphs. Median construction/preparation/compute costs
+  were 2.154/0.535/23.792 ms under host contention. Retained independent CUDA
+  `EI_TEXT_BATCH_BUCKETS2=1`, default off, to bucket plain text batches with
+  >=2 sequences and <=256 aggregate tokens using the same ghost isolation.
+  Raw multimodal inputs and larger batches bypass it. Same-build candidate
+  C4 medians were 86.936 -> 30.749 ms and 64.620 -> 19.852 ms in reverse order.
+  Actual unequal-length and boundary requests, empty strings, code, Japanese,
+  permutations and changed contents passed cosine >=0.999 (boundary minimum
+  0.999910); >256-token batches and all five singleton modalities were exact.
+  Native CUDA and Windows builds and persistent-cache isolation passed. A
+  missing ccache PATH entry caused the first local build to fail; restoring
+  the existing /home/jetha/bin launcher fixed it. The owned profiling server
+  exited on SIGTERM after completing its trace; it was not left running.
+- CUDA is deployed with singleton and aggregate bucketing, four cache slots,
+  unchanged 200 us wait, existing inference/persistence settings and profiling
+  unset. Fresh all-five-modality requests exactly matched the candidate and
+  JSON/OpenAI checks passed. Paired deployed C4 medians were 30.386 -> 17.833 ms
+  and 28.332 -> 13.399 ms; p95 was mixed, 53.965 -> 61.333 ms and
+  58.408 -> 17.003 ms. Inputs changed and HTTP keys were unique. Minimum cosine
+  across those runs was 0.999831. This supports the median improvement on this
+  shared-host workload, not a quiet llama.cpp or general tail-latency claim.
+  Logged cached compute workspace ended at 70.13 MiB, excluding weights and
+  auxiliary inputs. Windows retains its installed CPU service because the
+  changed path is CUDA-only. This numeric flag has a separate cache identity.
+  Its CI, native target hardware, cross-request media batching, quiet matched
+  comparisons and the full release matrix remain open.
