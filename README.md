@@ -231,6 +231,18 @@ not time native on/off throughput, so it does not establish whether paired
 VNNI rows improve the native kernel. Do not combine these cells with results
 from other CPU models or configurations.
 
+The [native on/off timing run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38000840284)
+at `f0bfc06` used an Intel Xeon 6973P-C, four logical CPUs and two inference
+threads. With the same one-second audio fixture, Q8_0 weights, caches off,
+both orders and exact native outputs, paired VNNI rows improved native
+throughput by 8.2% at one client (4.83 -> 5.23 emb/s) and 7.5% at four
+(4.36 -> 4.68 emb/s). Other CPU activity was 1.3–1.5%.
+The separate llama.cpp comparison still lost: 4.69 versus 6.29 emb/s
+(0.746×) at one client and 4.65 versus 6.36 (0.731×) at four.
+Minimum cosines were 0.999758 and 0.999155 respectively. These results
+support retaining the optional kernel; they do not establish a serving win
+against llama.cpp or replace the EPYC results above.
+
 On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
 requests (four different tones, caches off, two CPU threads under WSL) measured
 386.5 -> 307.6 ms and 625.0 -> 517.2 ms median; a repeat measured
