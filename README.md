@@ -409,6 +409,24 @@ inferences still run serially; cross-request batching and resource handling need
 further work.
 Treat this as a development service while those limits are being completed.
 
+Reuse HTTP connections for repeated requests. On this Windows/WSL NAT host,
+opening a connection cost about 23 ms. Large requests through WSL's localhost
+relay also incurred a roughly 40 ms delayed-ACK stall on reused connections.
+The Linux server now requests immediate acknowledgements while reading an
+incomplete body. On the deployed CUDA endpoint, one-second audio requests on
+reused connections measured 56.6 -> 19.4 ms and 55.7 -> 14.4 ms in reverse
+order. Eight-client waves measured 104 -> 90 ms and 103 -> 87 ms; another pass
+during builds was effectively flat. These are transport observations on a
+shared host, not a kernel or general throughput claim. Each request had a unique
+cache key; the primary retained its response cache, while the original comparison
+service had caching disabled. All five modality outputs remained identical.
+
+The focused regression uses invalid 43 KB and 2 MiB requests to exclude model
+time. Run it from Windows against the Linux endpoint:
+`python tests/http_body_progress2.py --url http://127.0.0.1:42669`.
+Native Linux and Windows checks cover reusable connections and error framing;
+reproducing the relay stall requires the Windows-to-WSL path.
+
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
 is saved to `cache.bin.responses` on graceful shutdown, alongside the text embedding

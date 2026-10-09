@@ -74,6 +74,7 @@ jobs:
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
           python tests/dependency_logs2.py --log build-cmake/dev.stderr.log
+          python tests/http_body_progress2.py
           python tests/media_text_progress2.py
           python tests/media_budget2.py
           python tests/media_bounds2.py

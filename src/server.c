@@ -764,6 +764,14 @@ static http_read_result read_request(http_connection *connection,
     }
 
     while (connection->buffered.n - body_start < body_len) {
+#if defined(__linux__) && defined(TCP_QUICKACK)
+        /* A relay with Nagle enabled can hold the remaining body until our
+         * delayed ACK arrives, even when the original client uses NODELAY.
+         * Acknowledge the received prefix before waiting for that body. */
+        int quickack = 1;
+        ei_setsockopt(connection->fd, IPPROTO_TCP, TCP_QUICKACK,
+                      &quickack, sizeof quickack);
+#endif
         ssize_t n = recv(connection->fd, tmp, sizeof tmp, 0);
         if (n < 0) {
             if (ei_socket_errno() == EINTR) continue;

@@ -975,3 +975,27 @@ Keep this file current as implementation decisions and verified evidence change.
   versus CPU cosine was 0.99983622. Windows primary keeps the accepted b55577b
   installed binary with batching off; the new Windows build and opt-in path were
   exercised separately. No binary release or version/tag change was made.
+
+- 2026-10-10: Concurrent audio profiling separated encoder/backbone time from
+  Windows-to-WSL transport: native Linux requests took about 11 ms versus 35 ms
+  from Windows, with about 23 ms spent connecting. Moving logs between Windows
+  and Linux storage did not materially change this. Reused connections exposed
+  a separate roughly 40 ms request-body stall in WSL's localhost TCP relay.
+  Linux now requests TCP_QUICKACK before each remaining body read, preserving
+  the existing byte limits, framing and numeric/cache identity. A single initial
+  ACK fixed 43 KB bodies but left a 2 MiB tail stalled; the retained loop fixes
+  both. The focused real-bug regression failed on the original service at
+  42.7 ms versus 0.5 ms for a small request and passed on the final candidate.
+- The final CUDA primary is deployed with its existing flags and persistent
+  response cache. Fresh text, image, audio, video and mixed vectors exactly
+  matched the original uncached CUDA service; OpenAI model validation passed.
+  Windows-to-WSL reused-connection audio medians were 56.571 -> 19.391 ms and
+  55.737 -> 14.429 ms in reverse order; eight-client waves were 104.274 ->
+  90.054 ms and 103.216 -> 87.429 ms. Every call used a unique response key;
+  the comparison service had caching disabled and the primary retained its
+  cache. A pass during builds was flat at eight clients, so no general throughput
+  claim is established. Native Linux and Windows builds passed; the relay
+  regression passed from Windows and Linux, and on the Windows CPU primary.
+  Cross-request raw batching remains unfinished, and accelerator/hardware/release
+  gaps remain. Request-array batching commit 05c4e53 passed all seven CI jobs
+  (37953271489); this transport fix still needs its own CI run.
