@@ -1074,3 +1074,35 @@ Keep this file current as implementation decisions and verified evidence change.
   speedup is claimed. OpenAI model validation passed on both primaries.
   This implementation still needs its own CI run; hardware, cross-request
   batching, quiet llama.cpp comparisons and the full release matrix remain open.
+
+- 2026-10-10: Decoder commit 72a784e passed all seven CI jobs (37964136764).
+  Measuring the actual JSON parse/assembly path found about 101 ms
+  parsing and 3.3 ms copying/wrapping a 13 MB input. A pinned simdjson 5.0.3
+  adapter, converting into the existing JSON representation and borrowing the
+  input collection, measured 6–7 ms parsing/materialization. It statically links
+  the parser with runtime CPU dispatch and scalar fallback, retaining the MIT
+  dependency notice in installed packages. Original parsing remains the fallback
+  for limits/unusual numbers, preserving acceptance and error behavior. No
+  inference kernels or numeric cache identities change. All 30,019 isolated
+  boundary samples matched the original parser's acceptance and materialized
+  JSON under actual `haswell` and forced `fallback` implementations.
+- Paired fresh native Linux uploads with matching caches and unique keys measured
+  397.122 -> 305.099 ms and 405.208 -> 299.434 ms in reverse order (six warm calls
+  per pass), with identical vectors. The CUDA primary is deployed with its
+  existing flags and persistence. All five fresh modalities exactly matched
+  the candidate, and arrays, Unicode, escaped base64, dimensions and usage were
+  identical to the old primary. Later shared-host timings varied substantially;
+  a comparison of the two updated services was 326/319 and 405/351 ms. No general
+  throughput or extra deployed-pass speedup is claimed.
+- Native Windows and CUDA builds passed. The Windows executable/runtime was
+  staged and installed through PowerShell 5 local download fixtures, including
+  the new parser notice. It loads outside the build tree. The installed candidate
+  matched the old primary exactly across all five fresh modalities, despite a
+  100%-busy host during part of that run. The Windows primary is now updated
+  with its existing six-thread, batching-off and persistence settings; all five
+  fresh deployed modalities, JSON safety and OpenAI model checks passed. Runtime
+  DLLs load from the installed prefix and its parser notice matches the source. The
+  focused JSON safety check protects Unicode, duplicate fields, large integers,
+  dimensions/order and malformed-input rejection, and is included in native CI.
+  This parser implementation needs its own CI run. Hardware, cross-request
+  batching, quiet llama.cpp comparisons and the full release matrix remain open.

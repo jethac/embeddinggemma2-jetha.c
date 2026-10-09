@@ -79,6 +79,7 @@ jobs:
           python tests/media_budget2.py
           python tests/media_bounds2.py
           python tests/openai_media_model2.py
+          python tests/media_json2.py
           python tests/text_context2.py
           python tests/video_container2.py
           python tests/media_singleflight2.py --log build-cmake/dev.stderr.log
@@ -164,6 +165,7 @@ jobs:
           python examples/journey2.py
           python tests/media_bounds2.py
           python tests/openai_media_model2.py
+          python tests/media_json2.py
   gemma2-macos:
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
@@ -227,6 +229,7 @@ jobs:
           python3 tests/media_budget2.py
           python3 tests/media_bounds2.py
           python3 tests/openai_media_model2.py
+          python3 tests/media_json2.py
           python3 tests/text_context2.py
           python3 tests/video_container2.py
           python3 tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf

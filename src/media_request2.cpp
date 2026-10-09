@@ -3,6 +3,7 @@ extern "C" {
 #include "media2.h"
 }
 #include "nlohmann/json.hpp"
+#include "simdjson.h"
 #include <array>
 #include <cmath>
 #include <stdexcept>
@@ -11,6 +12,44 @@ extern "C" {
 #include <vector>
 
 using json = nlohmann::json;
+
+static json materialize_json(simdjson::dom::element element) {
+    using simdjson::dom::element_type;
+    switch (element.type()) {
+        case element_type::ARRAY: {
+            json out = json::array();
+            for (auto child : element.get_array()) out.push_back(materialize_json(child));
+            return out;
+        }
+        case element_type::OBJECT: {
+            json out = json::object();
+            // Preserve the existing parser's last-value-wins duplicate keys.
+            for (auto field : element.get_object())
+                out[std::string(field.key)] = materialize_json(field.value);
+            return out;
+        }
+        case element_type::STRING: return std::string(element.get_string().value());
+        case element_type::INT64: return element.get_int64().value();
+        case element_type::UINT64: return element.get_uint64().value();
+        case element_type::DOUBLE: return element.get_double().value();
+        case element_type::BIGINT: {
+            auto number = element.get_bigint().value();
+            return json::parse(number.begin(), number.end());
+        }
+        case element_type::BOOL: return element.get_bool().value();
+        case element_type::NULL_VALUE: return nullptr;
+    }
+    throw std::runtime_error("unknown JSON type");
+}
+
+static json parse_media_json(const char *body, size_t len) {
+    simdjson::dom::parser parser;
+    simdjson::dom::element document;
+    // parse() copies into padded storage; HTTP buffers need no SIMD overread.
+    if (!parser.parse(body, len).get(document)) return materialize_json(document);
+    // Retain acceptance and error behavior for parser limits and unusual numbers.
+    return json::parse(body, body + len);
+}
 
 static std::vector<unsigned char> decode_base64(std::string_view text) {
     if (text.rfind("data:", 0) == 0) {
@@ -87,28 +126,28 @@ static std::string encode_base64(const float *data, size_t count) {
 extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t body_len,
     bool openai, size_t max_batch, char **response, char *err, size_t err_len) {
     try {
-        json request = json::parse(body, body + body_len);
+        json request = parse_media_json(body, body_len);
         int dimensions = request.value("dimensions", 768);
         if (dimensions != 128 && dimensions != 256 && dimensions != 512 && dimensions != 768)
             throw std::runtime_error("dimensions must be 128, 256, 512, or 768");
         std::string encoding = request.value("encoding_format", std::string("float"));
         if (encoding != "float" && encoding != "base64") throw std::runtime_error("unsupported encoding_format");
         std::string model = request.value("model", std::string("embeddinggemma-2"));
-        json input = request.at("input");
-        if (input.is_object()) input = json::array({input});
-        if (!input.is_array() || input.empty() || input.size() > max_batch)
+        const json &input = request.at("input");
+        size_t input_count = input.is_object() ? 1 : input.size();
+        if ((!input.is_object() && !input.is_array()) || !input_count || input_count > max_batch)
             throw std::runtime_error("input must be an object or a bounded array of objects");
         json result = openai ? json{{"object", "list"}, {"data", json::array()}, {"model", model}}
                              : json{{"embeddings", json::array()}};
         size_t total_tokens = 0;
         double total_encoder = 0, total_backbone = 0;
-        std::vector<std::vector<ei_media_part>> items(input.size());
-        std::vector<std::vector<std::vector<unsigned char>>> owned(input.size());
-        std::vector<const ei_media_part *> pointers(input.size());
-        std::vector<size_t> counts(input.size()), token_counts(input.size());
-        std::vector<float> embeddings(input.size() * 768);
-        for (size_t index = 0; index < input.size(); index++) {
-            const json &content = input[index].at("content");
+        std::vector<std::vector<ei_media_part>> items(input_count);
+        std::vector<std::vector<std::vector<unsigned char>>> owned(input_count);
+        std::vector<const ei_media_part *> pointers(input_count);
+        std::vector<size_t> counts(input_count), token_counts(input_count);
+        std::vector<float> embeddings(input_count * 768);
+        for (size_t index = 0; index < input_count; index++) {
+            const json &content = (input.is_object() ? input : input[index]).at("content");
             if (!content.is_array() || content.empty() || content.size() > 64)
                 throw std::runtime_error("content must contain 1..64 parts");
             auto &parts = items[index];
@@ -136,9 +175,9 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
             pointers[index] = parts.data();
             counts[index] = parts.size();
         }
-        if (ei_engine_media_batch_enabled(e) && input.size() > 1) {
-            for (size_t index = 0; index < input.size(); index += 256) {
-                size_t count = std::min(size_t(256), input.size() - index);
+        if (ei_engine_media_batch_enabled(e) && input_count > 1) {
+            for (size_t index = 0; index < input_count; index += 256) {
+                size_t count = std::min(size_t(256), input_count - index);
                 double encoder = 0, backbone = 0;
                 if (!ei_engine_embed_parts_batch(e, pointers.data() + index, counts.data() + index,
                     count, embeddings.data() + index * 768, token_counts.data() + index,
@@ -147,7 +186,7 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                 total_backbone += backbone;
             }
         } else {
-            for (size_t index = 0; index < input.size(); index++) {
+            for (size_t index = 0; index < input_count; index++) {
                 double encoder = 0, backbone = 0;
                 if (!ei_engine_embed_parts(e, pointers[index], counts[index],
                     embeddings.data() + index * 768, &token_counts[index],
@@ -156,7 +195,7 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                 total_backbone += backbone;
             }
         }
-        for (size_t index = 0; index < input.size(); index++) {
+        for (size_t index = 0; index < input_count; index++) {
             float *embedding = embeddings.data() + index * 768;
             double energy = 0;
             for (int j = 0; j < dimensions; j++) energy += (double)embedding[j] * embedding[j];
@@ -171,7 +210,7 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
         }
         result["usage"] = {{"prompt_tokens", total_tokens}, {"total_tokens", total_tokens}};
         fprintf(stderr, "multimodal request: %zu inputs, %zu tokens, encoder %.2f ms, backbone %.2f ms\n",
-                input.size(), total_tokens, total_encoder, total_backbone);
+                input_count, total_tokens, total_encoder, total_backbone);
         std::string text = result.dump();
         *response = static_cast<char *>(malloc(text.size() + 1));
         if (!*response) throw std::runtime_error("out of memory");

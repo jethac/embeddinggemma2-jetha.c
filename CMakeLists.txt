@@ -64,12 +64,20 @@ if(NOT TARGET mtmd)
     add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd")
 endif()
 find_package(Threads REQUIRED)
+FetchContent_Declare(simdjson2
+    GIT_REPOSITORY https://github.com/simdjson/simdjson.git
+    GIT_TAG bf89ddd00ef5fcb6a7f20611ea8853d258b67249 # v5.0.3
+    SOURCE_SUBDIR include) # Populate sources without its developer targets.
+FetchContent_MakeAvailable(simdjson2)
+# Keep runtime CPU dispatch and scalar fallback; do not build with -march=native.
+add_library(ei-simdjson2 STATIC "${simdjson2_SOURCE_DIR}/singleheader/simdjson.cpp")
+target_include_directories(ei-simdjson2 PUBLIC "${simdjson2_SOURCE_DIR}/singleheader")
 add_executable(embeddinggemma2-jetha
     src/server.c src/engine2.c src/model2.c src/gguf.c src/tokenizer2.c
     src/kernels.c src/quants.c src/parallel.c src/inference_service.c
     src/response_cache.c src/float_format.c src/media_request2.cpp src/media_service2.c)
 target_compile_definitions(embeddinggemma2-jetha PRIVATE EI_GEMMA2)
-target_link_libraries(embeddinggemma2-jetha PRIVATE mtmd ggml llama vendor::nlohmann Threads::Threads)
+target_link_libraries(embeddinggemma2-jetha PRIVATE mtmd ggml llama vendor::nlohmann ei-simdjson2 Threads::Threads)
 if(WIN32)
     target_compile_definitions(embeddinggemma2-jetha PRIVATE _CRT_RAND_S)
     target_link_libraries(embeddinggemma2-jetha PRIVATE ws2_32)
@@ -86,6 +94,7 @@ set(EI_LICENSE_DIR "${CMAKE_INSTALL_DATADIR}/licenses/embeddinggemma2-jetha")
 install(FILES LICENSE DESTINATION "${EI_LICENSE_DIR}" RENAME LICENSE)
 install(FILES "${llama_SOURCE_DIR}/LICENSE" DESTINATION "${EI_LICENSE_DIR}" RENAME llama.cpp-LICENSE)
 install(FILES deps/LICENSE-nlohmann.txt DESTINATION "${EI_LICENSE_DIR}")
+install(FILES "${simdjson2_SOURCE_DIR}/LICENSE-MIT" DESTINATION "${EI_LICENSE_DIR}" RENAME simdjson-LICENSE-MIT)
 foreach(vendor_license hash/xxhash/LICENSE hash/sha256/LICENSE hash/rotate-bits/LICENSE.md)
     get_filename_component(vendor_directory "${vendor_license}" DIRECTORY)
     install(FILES "${llama_SOURCE_DIR}/vendor/${vendor_license}"

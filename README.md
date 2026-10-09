@@ -283,8 +283,9 @@ python tests/media_text_progress2.py --url http://127.0.0.1:42667
 
 ## Build and run the development server
 
-CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies
-the small media preprocessing fixes in `deps/`. Python 3.9 or newer is required
+CMake fetches pinned llama.cpp/GGML/libmtmd and simdjson dependencies, retaining
+their MIT notices, and applies the small media preprocessing fixes in `deps/`.
+Python 3.9 or newer is required
 for dependency patching, model download and the sample client; inference runs
 inside the native executable.
 
@@ -449,6 +450,16 @@ about 5–8% lower HTTP latency, with identical vectors and matching cache setti
 The CUDA primary completed a later pass at 364 ms; this separate pass is not an
 additional speedup comparison. Both development primaries include the change;
 these observations establish no Windows CPU inference speedup.
+
+Multimodal JSON parsing uses pinned simdjson 5.0.3 with runtime CPU dispatch
+and scalar fallback. Parsing and converting a 13 MB request measured 6–7 ms
+versus 101 ms with the previous parser. Actual uncached uploads measured
+397 -> 305 ms and 405 -> 299 ms in reverse order (23–26% lower HTTP latency),
+with identical embeddings and the same cache/client policy above. Shared-host
+latency varies; this is not a general throughput or Windows inference claim.
+The original parser remains a fallback for parser limits and unusual numbers,
+and malformed JSON remains rejected. simdjson's MIT notice ships with runtime
+packages; the project's license remains MIT.
 
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot

@@ -40,7 +40,7 @@ def stage(build, prefix, dist, target, backend):
     subprocess.run([sys.executable, str(Path(__file__).with_name('check-binary-platform.py')),
                     target, str(binary)], check=True)
     root = prefix / 'share/licenses/embeddinggemma2-jetha'
-    for name in ('LICENSE', 'llama.cpp-LICENSE', 'LICENSE-nlohmann.txt',
+    for name in ('LICENSE', 'llama.cpp-LICENSE', 'LICENSE-nlohmann.txt', 'simdjson-LICENSE-MIT',
                  'hash/xxhash/LICENSE', 'hash/sha256/LICENSE', 'hash/rotate-bits/LICENSE.md'):
         if not (root / name).is_file():
             raise ValueError(f'missing distribution license: {name}')
