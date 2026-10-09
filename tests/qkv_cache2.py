@@ -17,7 +17,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch', 'jpeg-turbo'], default='packed-qkv')
 p.add_argument('--mmproj', type=Path)
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
@@ -30,6 +30,7 @@ flag, marker = {
     'cuda-local-range': ('EI_CUDA_LOCAL_RANGE2', 'CUDA local mask range:'),
     'geglu': ('EI_GEGLU2', 'Fused GeGLU:'),
     'media-batch': ('EI_MEDIA_BATCH2', 'Multimodal backbone batching:'),
+    'jpeg-turbo': ('EI_JPEG_TURBO2', 'JPEG decoding:'),
 }[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)

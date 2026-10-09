@@ -41,7 +41,10 @@ def stage(build, prefix, dist, target, backend):
                     target, str(binary)], check=True)
     root = prefix / 'share/licenses/embeddinggemma2-jetha'
     for name in ('LICENSE', 'llama.cpp-LICENSE', 'LICENSE-nlohmann.txt', 'simdjson-LICENSE-MIT',
-                 'hash/xxhash/LICENSE', 'hash/sha256/LICENSE', 'hash/rotate-bits/LICENSE.md'):
+                 'hash/xxhash/LICENSE', 'hash/sha256/LICENSE', 'hash/rotate-bits/LICENSE.md',
+                 'libjpeg-turbo/LICENSE.md', 'libjpeg-turbo/README.ijg',
+                 'libjpeg-turbo/spng/LICENSE', 'libjpeg-turbo/spng/libpng-LICENSE.txt',
+                 'libjpeg-turbo/zlib/LICENSE'):
         if not (root / name).is_file():
             raise ValueError(f'missing distribution license: {name}')
     files = []

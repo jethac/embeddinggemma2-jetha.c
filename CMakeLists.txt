@@ -66,6 +66,37 @@ if(NOT TARGET mtmd)
     add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd")
 endif()
 find_package(Threads REQUIRED)
+include(ExternalProject)
+FetchContent_Declare(jpeg2
+    URL https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz
+    URL_HASH SHA256=6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e
+    SOURCE_SUBDIR src)
+FetchContent_MakeAvailable(jpeg2)
+# libjpeg-turbo requires an independent CMake project. Statically link its
+# runtime-dispatched decoder; do not install its developer tools or headers.
+set(EI_JPEG_BINARY "${CMAKE_BINARY_DIR}/jpeg2-build")
+set(EI_JPEG_ARCHIVE "${EI_JPEG_BINARY}/${CMAKE_STATIC_LIBRARY_PREFIX}turbojpeg${CMAKE_STATIC_LIBRARY_SUFFIX}")
+if(MSVC)
+    set(EI_JPEG_ARCHIVE "${EI_JPEG_BINARY}/Release/turbojpeg-static.lib")
+endif()
+ExternalProject_Add(ei-jpeg2-build
+    SOURCE_DIR "${jpeg2_SOURCE_DIR}" BINARY_DIR "${EI_JPEG_BINARY}"
+    DOWNLOAD_COMMAND "" INSTALL_COMMAND ""
+    CMAKE_ARGS -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_C_COMPILER=${CMAKE_C_COMPILER}
+        -DCMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+        -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TOOLS=OFF
+        -DWITH_TESTS=OFF -DWITH_SIMD=ON -DREQUIRE_SIMD=ON
+    BUILD_COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --config Release --target turbojpeg-static
+    BUILD_BYPRODUCTS "${EI_JPEG_ARCHIVE}")
+add_library(ei-jpeg2 STATIC IMPORTED)
+set_target_properties(ei-jpeg2 PROPERTIES IMPORTED_LOCATION "${EI_JPEG_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES "${jpeg2_SOURCE_DIR}/src")
+add_dependencies(ei-jpeg2 ei-jpeg2-build)
+if(UNIX)
+    set_property(TARGET ei-jpeg2 PROPERTY INTERFACE_LINK_LIBRARIES m)
+endif()
 FetchContent_Declare(simdjson2
     GIT_REPOSITORY https://github.com/simdjson/simdjson.git
     GIT_TAG bf89ddd00ef5fcb6a7f20611ea8853d258b67249 # v5.0.3
@@ -77,10 +108,10 @@ target_include_directories(ei-simdjson2 PUBLIC "${simdjson2_SOURCE_DIR}/singlehe
 add_executable(embeddinggemma2-jetha
     src/server.c src/engine2.c src/model2.c src/gguf.c src/tokenizer2.c
     src/kernels.c src/quants.c src/parallel.c src/inference_service.c
-    src/response_cache.c src/float_format.c src/media_request2.cpp src/media_service2.c)
+    src/response_cache.c src/float_format.c src/media_request2.cpp src/media_service2.c src/jpeg_decode2.c)
 target_compile_definitions(embeddinggemma2-jetha PRIVATE EI_GEMMA2)
 target_include_directories(embeddinggemma2-jetha PRIVATE "${llama_SOURCE_DIR}/vendor")
-target_link_libraries(embeddinggemma2-jetha PRIVATE mtmd ggml llama vendor::nlohmann ei-simdjson2 Threads::Threads)
+target_link_libraries(embeddinggemma2-jetha PRIVATE mtmd ggml llama vendor::nlohmann ei-simdjson2 ei-jpeg2 Threads::Threads)
 if(WIN32)
     target_compile_definitions(embeddinggemma2-jetha PRIVATE _CRT_RAND_S)
     target_link_libraries(embeddinggemma2-jetha PRIVATE ws2_32)
@@ -98,6 +129,12 @@ install(FILES LICENSE DESTINATION "${EI_LICENSE_DIR}" RENAME LICENSE)
 install(FILES "${llama_SOURCE_DIR}/LICENSE" DESTINATION "${EI_LICENSE_DIR}" RENAME llama.cpp-LICENSE)
 install(FILES deps/LICENSE-nlohmann.txt DESTINATION "${EI_LICENSE_DIR}")
 install(FILES "${simdjson2_SOURCE_DIR}/LICENSE-MIT" DESTINATION "${EI_LICENSE_DIR}" RENAME simdjson-LICENSE-MIT)
+install(FILES "${jpeg2_SOURCE_DIR}/LICENSE.md" "${jpeg2_SOURCE_DIR}/README.ijg"
+    DESTINATION "${EI_LICENSE_DIR}/libjpeg-turbo")
+install(FILES "${jpeg2_SOURCE_DIR}/src/spng/LICENSE" "${jpeg2_SOURCE_DIR}/src/spng/libpng-LICENSE.txt"
+    DESTINATION "${EI_LICENSE_DIR}/libjpeg-turbo/spng")
+install(FILES "${jpeg2_SOURCE_DIR}/src/spng/zlib/LICENSE"
+    DESTINATION "${EI_LICENSE_DIR}/libjpeg-turbo/zlib")
 foreach(vendor_license hash/xxhash/LICENSE hash/sha256/LICENSE hash/rotate-bits/LICENSE.md)
     get_filename_component(vendor_directory "${vendor_license}" DIRECTORY)
     install(FILES "${llama_SOURCE_DIR}/vendor/${vendor_license}"
@@ -123,6 +160,9 @@ add_executable(decoder-stall2 EXCLUDE_FROM_ALL tests/decoder_stall2.c)
 add_executable(decoder-deadline-check2 EXCLUDE_FROM_ALL tests/decoder_deadline2.cpp)
 add_executable(media-id-check2 EXCLUDE_FROM_ALL tests/media_id2.cpp)
 target_link_libraries(media-id-check2 PRIVATE mtmd)
+add_executable(jpeg-decode-check2 EXCLUDE_FROM_ALL tests/jpeg_decode2.c src/jpeg_decode2.c)
+target_include_directories(jpeg-decode-check2 PRIVATE src)
+target_link_libraries(jpeg-decode-check2 PRIVATE ei-jpeg2)
 target_link_libraries(decoder-deadline-check2 PRIVATE mtmd)
 add_executable(media-admission-check2 EXCLUDE_FROM_ALL tests/media_admission2.c src/media_service2.c)
 target_include_directories(media-admission-check2 PRIVATE src "${llama_SOURCE_DIR}/vendor")

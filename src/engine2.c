@@ -4,6 +4,7 @@
  * cache: this encoder attends bidirectionally to the complete input. */
 #include "engine.h"
 #include "media2.h"
+#include "jpeg_decode2.h"
 #include "ggml.h"
 #include "ggml-alloc.h"
 #include "ggml-backend.h"
@@ -57,6 +58,7 @@ typedef struct {
     bool reuse_inputs;
     bool fused_geglu;
     bool media_batch;
+    bool jpeg_turbo;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -88,6 +90,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
+        s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -596,6 +599,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *media_batch = getenv("EI_MEDIA_BATCH2");
     s->media_batch = media_batch && strcmp(media_batch, "1") == 0;
     if (s->media_batch) fprintf(stderr, "Multimodal backbone batching: up to 1024 tokens, inputs up to 512\n");
+    const char *jpeg_turbo = getenv("EI_JPEG_TURBO2");
+    s->jpeg_turbo = jpeg_turbo && strcmp(jpeg_turbo, "1") == 0;
+    if (s->jpeg_turbo) fprintf(stderr, "JPEG decoding: libjpeg-turbo 3.2.0\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 
@@ -817,7 +823,18 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
                 videos[i].total_frames = &decoded_video_frames;
                 media[i].bitmap = mtmd_bitmap_init_lazy(s->media, NULL, &videos[i], read_video_frame2);
             } else {
-                media[i] = mtmd_helper_bitmap_init_from_buf(s->media, parts[i].data, parts[i].size, false, opt);
+                unsigned char *rgb = NULL;
+                int width = 0, height = 0;
+                int decoded = parts[i].type == EI_PART_IMAGE && s->jpeg_turbo
+                    ? ei_jpeg_decode2(parts[i].data, parts[i].size, opt.max_image_pixels,
+                                      opt.max_decoded_bytes, &rgb, &width, &height) : 0;
+                if (decoded < 0) { fail(err, err_len, "cannot decode JPEG or decoded size limit exceeded"); goto done; }
+                if (decoded > 0) {
+                    media[i].bitmap = mtmd_bitmap_init(width, height, rgb);
+                    free(rgb);
+                } else {
+                    media[i] = mtmd_helper_bitmap_init_from_buf(s->media, parts[i].data, parts[i].size, false, opt);
+                }
             }
             if (!media[i].bitmap) { fail(err, err_len, "cannot decode media input or decoded size limit exceeded"); goto done; }
             if (parts[i].type != EI_PART_VIDEO && (media[i].video_ctx ||

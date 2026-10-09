@@ -147,6 +147,12 @@ and the intermediate image contains at least 262,144 pixels. Pixel arithmetic
 and output are unchanged. The CUDA development service uses six threads; Windows
 keeps the default pending a measured benefit on that host.
 
+`EI_JPEG_TURBO2=1` opts into libjpeg-turbo 3.2.0 for 8-bit RGB, YCbCr and
+grayscale JPEG images. Other JPEG variants retain the existing decoder. The
+default is off: decoded pixels can differ slightly, and this option has a
+separate persistent-cache identity. Builds require NASM on x86; the decoder is
+statically linked and retains runtime CPU dispatch. ARM builds use NEON.
+
 `EI_GRAPH_CACHE2=1` enables an experimental CUDA cache of two text graph shapes,
 each with at most 256 aggregate batch tokens. Other requests use the normal
 workspace. In a 120-request, 32-token/four-client trace, graph rebuilds fell from
@@ -290,6 +296,10 @@ python tests/media_text_progress2.py --url http://127.0.0.1:42667
 ```
 
 ## Build and run the development server
+
+Install NASM on x86 build hosts (for example, `apt install nasm`, `brew install
+nasm`, or the MinGW `mingw-w64-x86_64-nasm` package). libjpeg-turbo is built from
+a pinned source archive and linked into the executable.
 
 CMake fetches pinned llama.cpp/GGML/libmtmd and simdjson dependencies, retaining
 their MIT notices, and applies the small media preprocessing fixes in `deps/`.
@@ -488,6 +498,14 @@ images and audio still produced fresh results matching the original service.
 These shared-host observations establish no general throughput or Windows
 inference speedup.
 
+Opt-in accelerated JPEG decoding measured a fresh 3,488,975-byte upload at
+226 -> 191 ms and 245 -> 215 ms in reverse order, using matching caches and six
+warm calls per pass on the CUDA development host (12–16% lower latency).
+The sampled JPEG embedding had cosine 0.999528 against the existing decoder;
+nine additional photo/encoding cases had minimum cosine 0.999808. This is a
+shared-host JPEG-upload comparison, not a llama.cpp or general inference result.
+Windows quality checks passed, but no Windows speedup is established.
+
 With six resize threads, fresh 1800-by-1800 image uploads measured 284 -> 268 ms
 and 290 -> 261 ms in reverse order, compared with the same build using one thread
 (6–10% lower latency). Embeddings matched exactly, including a large patterned
@@ -516,6 +534,8 @@ with Windows host-layer changes from
 [jethac/embeddinggemma.c](https://github.com/jethac/embeddinggemma.c).
 The project remains MIT licensed, including new work; see [LICENSE](LICENSE).
 The original QuixiAI copyright notice is preserved.
+This software is based in part on the work of the Independent JPEG Group.
+libjpeg-turbo and its bundled dependency notices accompany the runtime package.
 
 [UPSTREAM_README.md](UPSTREAM_README.md) preserves the original documentation
 and benchmark claims for the original 300M model. They do not establish

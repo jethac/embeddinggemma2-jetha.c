@@ -1214,3 +1214,38 @@ Keep this file current as implementation decisions and verified evidence change.
   an accelerated JPEG path, but does not qualify a shipped decoder or an HTTP
   speedup. Broader image/format validation, bounded error handling, portable
   dependency distribution and any required numeric cache identity remain to do.
+
+- 2026-10-10: Resize commit dfab253 completed all seven CI jobs successfully.
+  Nine additional JPEG cases (photos, low quality, progressive, grayscale and
+  odd dimensions) gave minimum cosine 0.999808 against the actual old decoder.
+  Retained opt-in `EI_JPEG_TURBO2=1` uses pinned libjpeg-turbo 3.2.0 for 8-bit
+  RGB/YCbCr/grayscale images; unsupported JPEG variants retain the old decoder.
+  The default stays off. A separate numeric cache identity prevents reuse of
+  old responses. Native Windows cache-isolation checks passed.
+- The decoder checks positive dimensions and pixel/byte limits before output
+  allocation, limits intermediate memory, handles errors without exiting the
+  process, and frees its buffers/decoder on failure. Native Windows and Linux
+  safety checks passed for valid decoding, malformed headers and size limits.
+  Native CI includes those checks and an older-CPU emulation; x86 builds need
+  NASM. The pinned library uses CPU dispatch and is statically linked. Required
+  IJG, libjpeg-turbo, libspng/libpng and zlib notices are installed/staged.
+- Matching cache settings and unique-key 3,488,975-byte JPEG uploads measured
+  226.096 -> 190.515 ms and 245.077 -> 214.930 ms in reverse order, six warm
+  calls per pass (12–16% lower HTTP latency on the shared CUDA host). Embedding
+  cosine on that patterned image was 0.999528; pixels/embeddings are not exact.
+  The pinned native decoder reproduced the nine-case minimum 0.999808. The
+  Windows native JPEG candidate had cosine 0.999893 against its old service.
+  No general inference, llama.cpp comparison or Windows speedup is claimed.
+- CUDA is deployed with JPEG acceleration, six resize threads, existing
+  inference/persistence settings and profiling unset. All five fresh deployed
+  modalities exactly matched its candidate. The deployed JPEG response also
+  matched the candidate exactly, and an oversized JPEG was rejected. JSON and
+  OpenAI checks passed. Windows is deployed from the new 39-file runtime/license
+  package installed through the PowerShell 5 local fixture, with JPEG and resize
+  parallelism off. Its candidate matched all five old-service embeddings, and
+  all five final fresh installed modalities and JSON/OpenAI checks passed;
+  runtime DLLs load from the installed prefix. The final Linux CMake safety-target
+  configure/build is still running; its identical safety source already passed
+  a direct native compile/link against the built pinned library. This decoder
+  implementation needs its own CI run. Hardware, batching, quiet comparisons
+  and the complete release matrix remain open.
