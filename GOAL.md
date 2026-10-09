@@ -1134,3 +1134,33 @@ Keep this file current as implementation decisions and verified evidence change.
   parser commit 91b5fc9 still has two native jobs running as of the last check.
   Hardware, cross-request batching, quiet comparisons and the complete release
   matrix remain unfinished.
+
+- 2026-10-10: Parser commit 91b5fc9 passed its CI run (37966001730). The hashing
+  commit 84a71d1 has six successful jobs and its native Windows job still running
+  as of the latest check. New opt-in `EI_PROFILE_MEDIA2` timings split decoding,
+  preprocessing and encoder/assembly work without changing inputs or cache
+  semantics. A warm large-image run showed decoding 51–60 ms, preprocessing
+  about 31 ms and encoder/assembly about 46 ms. The existing SHA-256 media ID
+  generation alone measured about 45 ms for the decoded 9.72 MB image bytes.
+- The model-specific engine never reads media IDs or reuses encoder results
+  by ID. The helper now has an explicit `compute_id` option, still true by
+  default; this server disables it while keeping complete-request cache equality
+  and fresh encoder execution. Native helper safety checks preserve the exact
+  default SHA-256 value, decoded bytes and pixel bounds. Changed same-shape red,
+  green and blue images and 440/880 Hz audio produced distinct fresh results
+  exactly matching the SHA-ID baseline. All five fresh modalities also matched
+  the old CUDA and Windows services exactly. No numeric/cache domain changes.
+- With builds finished, matching caches and unique-key native Linux uploads
+  measured 249.109 -> 208.732 ms and 240.155 -> 199.230 ms in reverse order
+  (six warm calls per pass), with identical vectors. An earlier pass during a
+  Windows build was 321/239 and 319/241 ms; it is not the qualified speed claim.
+  The retained improvement is 16–17% lower latency for that upload, with no
+  general throughput or Windows inference claim. CUDA is deployed with profiling
+  unset and its existing flags/persistence; all five final fresh modalities
+  exactly matched the candidate and JSON/OpenAI checks passed. The Windows
+  executable/runtime was staged and installed through PowerShell 5 local download
+  fixtures, loads outside the build tree, and is deployed with existing settings.
+  All five final Windows modalities and JSON/OpenAI checks passed; its media and
+  kernel/runtime DLLs load from the installed prefix.
+  This implementation still needs its own CI run. Hardware, cross-request
+  batching, quiet comparisons and the full release matrix remain unfinished.

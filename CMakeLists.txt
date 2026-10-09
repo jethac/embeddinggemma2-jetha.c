@@ -52,6 +52,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-container.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-deadline.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-mask-range.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-media-id.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
@@ -119,6 +120,8 @@ if(MINGW)
 endif()
 add_executable(decoder-stall2 EXCLUDE_FROM_ALL tests/decoder_stall2.c)
 add_executable(decoder-deadline-check2 EXCLUDE_FROM_ALL tests/decoder_deadline2.cpp)
+add_executable(media-id-check2 EXCLUDE_FROM_ALL tests/media_id2.cpp)
+target_link_libraries(media-id-check2 PRIVATE mtmd)
 target_link_libraries(decoder-deadline-check2 PRIVATE mtmd)
 add_executable(media-admission-check2 EXCLUDE_FROM_ALL tests/media_admission2.c src/media_service2.c)
 target_include_directories(media-admission-check2 PRIVATE src "${llama_SOURCE_DIR}/vendor")

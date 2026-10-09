@@ -138,6 +138,8 @@ Under WSL, Windows `python.exe` must be on PATH for host CPU sampling. An idle
 guest cannot qualify a saturated Windows host. Set `EI_PROFILE_BACKBONE2=1` on
 the native server to log graph construction, input preparation, synchronized
 execution and output processing times; leave it unset for throughput measurements.
+`EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
+leave it unset for normal serving.
 
 `EI_GRAPH_CACHE2=1` enables an experimental CUDA cache of two text graph shapes,
 each with at most 256 aggregate batch tokens. Other requests use the normal
@@ -469,6 +471,16 @@ was inconsistent, so no cache-hit speedup is established. Both development
 primaries restored an old response snapshot and served an exact cached response
 without inference. These shared-host observations establish no general
 throughput or Windows inference speedup.
+
+Media decoding skips SHA-256 media IDs in this server: encoders always run from
+fresh input, and response caching compares full request keys. The helper keeps
+SHA-256 IDs enabled by default for callers that use them. Phase measurements
+found about 45 ms spent generating an unused ID for the large image. With builds
+finished, paired uploads measured 249 -> 209 ms and 240 -> 199 ms in reverse
+order (16–17% lower latency), with identical embeddings. Changed same-shape
+images and audio still produced fresh results matching the original service.
+These shared-host observations establish no general throughput or Windows
+inference speedup.
 
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot

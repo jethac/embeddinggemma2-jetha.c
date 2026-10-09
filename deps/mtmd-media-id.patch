@@ -1,0 +1,38 @@
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -41,6 +41,7 @@
+     size_t max_image_pixels; // 0 means unlimited
+     size_t max_audio_samples; // mono samples at the model's sample rate; 0 means unlimited
+     size_t max_decoded_bytes; // decoded image/PCM bytes; 0 means unlimited
++    bool compute_id; // SHA-256 ID; disable only when the caller never reuses media by ID
+ };
+ typedef struct mtmd_helper_init_opt mtmd_helper_init_opt;
+ 
+@@ -77,7 +78,7 @@
+ // note:
+ //   - for now, video input is only supported via C++ helper functions
+ //   - audio files will be auto-detected based on magic bytes
+-//   - output bitmap will have SHA-256 hash (hex string) as the ID
++//   - output bitmap has a SHA-256 ID unless opt.compute_id is false
+ // returns nullptr on failure
+ // this function is thread-safe
+ MTMD_API struct mtmd_helper_bitmap_wrapper mtmd_helper_bitmap_init_from_buf(
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -390,7 +390,7 @@
+ 
+     GGML_UNUSED(opt); // only used by video code paths
+ 
+-    if (!placeholder) {
++    if (!placeholder && opt.compute_id) {
+         // use sha256 to prevent cache poisoning
+         id = hash_sha256_hex(buf, len);
+     }
+@@ -967,6 +967,7 @@
+         /* max_image_pixels */ 0,
+         /* max_audio_samples */ 0,
+         /* max_decoded_bytes */ 0,
++        /* compute_id */ true,
+     };
+ }
+ 

@@ -775,6 +775,8 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
      * progress during decoding and encoding. Lock order is media, then backbone,
      * and text takes only the backbone lock. */
     double start = now_ms();
+    bool phase_profile = getenv("EI_PROFILE_MEDIA2") != NULL;
+    double decode_end = 0, preprocess_end = 0;
     size_t decoded_bytes = 0;
     size_t video_frames = 0;
     size_t decoded_video_frames = 0;
@@ -786,6 +788,9 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
             inputs[i].text = &texts[i];
         } else {
             struct mtmd_helper_init_opt opt = mtmd_helper_init_opt_default();
+            // Every encoder executes from fresh input. Exact response caching
+            // compares the full request; media IDs are never used for reuse.
+            opt.compute_id = false;
             if (decoded_bytes >= decoded_limit) {
                 fail(err, err_len, "media exceeds 128 MiB decoded input budget"); goto done;
             }
@@ -824,10 +829,12 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
             inputs[i].bitmap = media[i].bitmap;
         }
     }
+    if (phase_profile) decode_end = now_ms();
     if (mtmd_tokenize_from_parts(s->media, chunks, input_refs, n_parts, true) != 0) {
         fail(err, err_len, "media preprocessing failed"); goto done;
     }
     size_t count = mtmd_helper_get_n_tokens(chunks);
+    if (phase_profile) preprocess_end = now_ms();
     if (!count || count > EI_N_CTX) { fail(err, err_len, "multimodal input exceeds 8192-token context"); goto done; }
     raw = ei_xmalloc(count * HIDDEN * sizeof *raw);
     size_t cursor = 0;
@@ -849,6 +856,9 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
         cursor += nt;
     }
     *encoder_ms = now_ms() - start;
+    if (phase_profile) fprintf(stderr, "media phases: decode %.2f ms, preprocess %.2f ms, encode/assemble %.2f ms\n",
+                              decode_end - start, preprocess_end - decode_end,
+                              *encoder_ms - (preprocess_end - start));
     *tokens = count;
     *prepared = raw;
     raw = NULL;
