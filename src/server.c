@@ -16,6 +16,7 @@
 #include <limits.h>
 #include <pthread.h>
 #include <signal.h>
+#include <time.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include "windows_compat.h"
@@ -71,6 +72,18 @@ static int ei_setsockopt(ei_socket fd, int level, int name,
 #endif
 #define MAX_BODY_BYTES (16u * 1024u * 1024u)
 #define MAX_HEADER_BYTES (64u * 1024u)
+
+static double startup_time_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (double)now.tv_sec * 1000.0 + (double)now.tv_nsec / 1000000.0;
+}
+
+static void startup_timing(const char *stage, double *started) {
+    double now = startup_time_ms();
+    fprintf(stderr, "startup: %s %.2f ms\n", stage, now - *started);
+    *started = now;
+}
 
 #ifndef _WIN32
 extern char **environ;
@@ -1630,8 +1643,10 @@ int main(int argc, char **argv) {
     ensure_model_available(model_path);
 
     fprintf(stderr, "loading model: %s\n", model_path);
+    double startup_stage = startup_time_ms();
     ei_engine engine;
     ei_engine_load_backend(&engine, model_path, opts.backend);
+    startup_timing("backbone load", &startup_stage);
 #ifdef EI_GEMMA2
     if (opts.mmproj_path) {
         char media_error[256];
@@ -1639,6 +1654,7 @@ int main(int argc, char **argv) {
                                   strcmp(opts.media_encoders, "audio") != 0,
                                   strcmp(opts.media_encoders, "vision") != 0,
                                   media_error, sizeof media_error)) ei_die("%s", media_error);
+        startup_timing("media encoder load", &startup_stage);
     }
     opts.media_service = ei_media_service_create(&engine, opts.max_client_batch_size,
                                                  64, 128u * 1024u * 1024u);
@@ -1646,6 +1662,7 @@ int main(int argc, char **argv) {
 #endif
     uint64_t cache_fingerprint = opts.persistent_cache_path
         ? ei_cache_fingerprint_file(model_path) : 0;
+    startup_timing("backbone cache fingerprint", &startup_stage);
     free(model_path);
     char reserve_error[256];
     if (!ei_engine_reserve(&engine, opts.max_batch_tokens,
@@ -1676,7 +1693,9 @@ int main(int argc, char **argv) {
         response_cache_path = ei_xmalloc(len + sizeof ".responses");
         memcpy(response_cache_path, opts.persistent_cache_path, len);
         memcpy(response_cache_path + len, ".responses", sizeof ".responses");
+        startup_stage = startup_time_ms();
         uint64_t media_identity = opts.mmproj_path ? ei_cache_fingerprint_file(opts.mmproj_path) : 0;
+        startup_timing("media cache fingerprint", &startup_stage);
         response_identity = (response_identity ^ media_identity) * 1099511628211ull;
         // Bump this domain when model-input assembly or response semantics change.
         const char *identity_fields[] = {"embeddinggemma2-response-v1", ei_engine_backend(&engine),

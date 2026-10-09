@@ -56,6 +56,13 @@ media encoders use CUDA as well as the backbone. Other accelerator backends
 remain unverified. The Linux CPU service build and image regression
 pass in CI; macOS builds remain unverified for this implementation.
 
+On WSL, put weights on the Linux filesystem rather than a Windows-mounted
+drive. For example, download with `--directory ~/embeddinggemma2-models` and
+pass the files in that directory to `--model` and `--mmproj`. The local CUDA
+service's measured fingerprinting time fell from 13.1 seconds to 2.4 seconds
+after this move. Startup logs separate backbone loading, media encoder loading,
+and cache fingerprinting so storage delays can be distinguished from inference.
+
 ```sh
 python examples/embed.py --text "task: search result | query: what powers the cell"
 python examples/embed.py --image picture.jpg --dimensions 256

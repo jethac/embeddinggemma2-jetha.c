@@ -294,7 +294,22 @@ Tests and documentation support that outcome; they do not define completion.
   5.78 s on CUDA; these cold requests do not establish a kernel speed change.
   CUDA startup exceeded the helper's 300-second observation window while the
   same process remained alive in WSL file I/O; it subsequently became ready
-  without restart. Startup I/O needs measurement and optimization.
+  without restart. The decoder change now passes the Linux model CI job and
+  all four inherited platform jobs.
+- Startup logs now separate backbone loading, media encoder loading, and both
+  full-file cache fingerprints. Two Windows-mounted-path startups took
+  28.7/80.2 s in total, including 13.1/48.5 s for fingerprinting. Matching
+  native-WSL-storage startups took 23.0/6.2 s, including 2.4/1.1 s for
+  fingerprinting. Order was mounted/native/native/mounted; host load varied,
+  so these are observations rather than a quiet-host or cold-start guarantee.
+  Both native copies were validated against all original bytes. The default
+  CUDA endpoint now uses `/home/jetha/embeddinggemma2-models`, retains its
+  existing persistent cache, and serves the startup-timing build. All five
+  uncached modality outputs on the native-storage trial were unchanged; the
+  deployed primary reloaded all five responses and returned an unchanged
+  uncached video in 1.79 s. This is a storage/startup improvement, not a GPU
+  inference kernel optimization. Windows server compilation with the actual
+  build defines passes; its existing primary remains on the deadline build.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates
