@@ -288,6 +288,13 @@ Tests and documentation support that outcome; they do not define completion.
   not an overall request or inference deadline. Patch application now compares
   expected source prefixes, allowing overlapping dependency patches to upgrade
   and reconfigure without rewriting already-patched files or losing local edits.
+  Both default Windows/CUDA endpoints now serve the deadline build, reload
+  their existing persistent responses, and return unchanged uncached video
+  embeddings. The latter requests took 82.5 s on the busy Windows host and
+  5.78 s on CUDA; these cold requests do not establish a kernel speed change.
+  CUDA startup exceeded the helper's 300-second observation window while the
+  same process remained alive in WSL file I/O; it subsequently became ready
+  without restart. Startup I/O needs measurement and optimization.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates
