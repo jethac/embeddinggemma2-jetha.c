@@ -161,7 +161,8 @@ def main():
                     '--video-timestamp-interval', '0']
                 print(json.dumps({'llama_command': matched_llama_cmd}), flush=True)
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
-                     ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log') as lp:
+                     ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
+                                   env={k: v for k, v in os.environ.items() if k != 'EI_CPU_Q8_PAIR2'}) as lp:
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:

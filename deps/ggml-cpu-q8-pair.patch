@@ -1,0 +1,78 @@
+--- a/ggml/src/ggml-cpu/llamafile/sgemm.cpp
++++ b/ggml/src/ggml-cpu/llamafile/sgemm.cpp
+@@ -55,6 +55,7 @@
+ #include "simd-mappings.h"
+ 
+ #include <array>
++#include <cstdlib>
+ #include <type_traits>
+ 
+ #ifdef _MSC_VER
+@@ -1611,8 +1612,67 @@
+ 
+ #if defined(__AVX2__) && defined(__F16C__)
+ // Templated functions for gemm of dimensions 4xN
++#if defined(__AVX512BW__) && defined(__AVX512DQ__) && !defined(__AVX512VNNI__) && !defined(__AVXVNNI__)
++    // Pair output rows while preserving each row's eight-lane accumulation.
++    // VNNI variants retain their existing dot-product kernel.
++    template <int RN>
++    NOINLINE void gemm4xN512(int64_t m0, int64_t m, int64_t n0, int64_t n) {
++        const int64_t xtiles = (n - n0) / RN;
++        const int64_t tiles = xtiles * ((m - m0) / 4);
++        const int64_t duty = (tiles + nth - 1) / nth;
++        const __m512i ones = _mm512_set1_epi16(1);
++        for (int64_t job = duty * ith; job < MIN(duty * (ith + 1), tiles); ++job) {
++            const int64_t ii = m0 + job / xtiles * 4;
++            const int64_t jj = n0 + job % xtiles * RN;
++            __m512 acc[RN][2] = {};
++            for (int64_t l = 0; l < k; ++l) {
++                const uint64_t a_delta = ((uint64_t)A[lda * (ii + 3) + l].d << 48) |
++                    ((uint64_t)A[lda * (ii + 2) + l].d << 32) |
++                    ((uint64_t)A[lda * (ii + 1) + l].d << 16) | A[lda * ii + l].d;
++                const __m128 da = _mm_cvtph_ps(_mm_set_epi64x(0, a_delta));
++                __m512i av[2], magnitude[2];
++                __mmask64 negative[2];
++                for (int pair = 0; pair < 2; ++pair) {
++                    av[pair] = _mm512_inserti64x4(_mm512_castsi256_si512(load(A + lda * (ii + pair * 2) + l)),
++                        load(A + lda * (ii + pair * 2 + 1) + l), 1);
++                    magnitude[pair] = _mm512_abs_epi8(av[pair]);
++                    negative[pair] = _mm512_cmp_epi8_mask(av[pair], _mm512_setzero_si512(), _MM_CMPINT_LT);
++                }
++                for (int j = 0; j < RN; ++j) {
++                    const __m128 d = _mm_mul_ps(da, _mm_set1_ps(unhalf(B[ldb * (jj + j) + l].d)));
++                    const __m512 ds = _mm512_broadcast_f32x4(d);
++                    const __m512 scales[2] = {
++                        _mm512_permutexvar_ps(_mm512_setr_epi32(0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1), ds),
++                        _mm512_permutexvar_ps(_mm512_setr_epi32(2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3), ds)};
++                    const __m512i bv = _mm512_broadcast_i64x4(load(B + ldb * (jj + j) + l));
++                    for (int pair = 0; pair < 2; ++pair) {
++                        const __m512i signed_b = _mm512_mask_sub_epi8(bv, negative[pair], _mm512_setzero_si512(), bv);
++                        const __m512i dot = _mm512_madd_epi16(ones, _mm512_maddubs_epi16(magnitude[pair], signed_b));
++                        acc[j][pair] = _mm512_fmadd_ps(scales[pair], _mm512_cvtepi32_ps(dot), acc[j][pair]);
++                    }
++                }
++            }
++            for (int j = 0; j < RN; ++j) {
++                for (int pair = 0; pair < 2; ++pair) {
++                    C[ldc * (jj + j) + ii + pair * 2] = hsum(_mm512_castps512_ps256(acc[j][pair]));
++                    C[ldc * (jj + j) + ii + pair * 2 + 1] = hsum(_mm512_extractf32x8_ps(acc[j][pair], 1));
++                }
++            }
++        }
++    }
++#endif
++
+     template <int RN>
+     NOINLINE void gemm4xN(int64_t m0, int64_t m, int64_t n0, int64_t n) {
++#if defined(__AVX512BW__) && defined(__AVX512DQ__) && !defined(__AVX512VNNI__) && !defined(__AVXVNNI__)
++        if constexpr (std::is_same<TA, block_q8_0>::value && std::is_same<TB, block_q8_0>::value) {
++            static const bool pair_rows = [] {
++                const char * value = std::getenv("EI_CPU_Q8_PAIR2");
++                return value && value[0] == '1' && value[1] == '\0';
++            }();
++            if (pair_rows && n - n0 >= 16) { gemm4xN512<RN>(m0, m, n0, n); return; }
++        }
++#endif
+         int64_t ytiles = (m - m0) / 4;
+         int64_t xtiles = (n - n0) / RN;
+         int64_t tiles = xtiles * ytiles;

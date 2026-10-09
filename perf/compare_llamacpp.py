@@ -170,18 +170,19 @@ class Endpoint:
 
 class ManagedServer:
     def __init__(self, command: list[str], endpoint: Endpoint,
-                 health_path: str, log_path: Path):
+                 health_path: str, log_path: Path, env: dict[str, str] | None = None):
         self.command = command
         self.endpoint = endpoint
         self.health_path = health_path
         self.log_path = log_path
+        self.env = env
         self.process: subprocess.Popen[bytes] | None = None
         self.log_file: Any = None
 
     def __enter__(self) -> "ManagedServer":
         self.log_file = self.log_path.open("wb")
         self.process = subprocess.Popen(
-            self.command, stdout=self.log_file, stderr=subprocess.STDOUT
+            self.command, stdout=self.log_file, stderr=subprocess.STDOUT, env=self.env
         )
         deadline = time.monotonic() + 180.0
         last_error: Exception | None = None

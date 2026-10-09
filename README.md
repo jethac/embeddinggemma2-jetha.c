@@ -139,7 +139,20 @@ threads completed these cells (rates average both engine orders):
 
 Images were effectively tied and singleton audio lost by about 2.4%.
 Four-client audio failed the unchanged 0.999 quality gate at 0.998898;
-its throughput is excluded. Video and mixed timings remain pending.
+its throughput is excluded.
+A [completed video/mixed run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37989164220/job/114018620645)
+at source `7de92b9` used an EPYC 9V74, Ubuntu 24.04, GCC 13.3 and two threads.
+Both orders passed the same gates, with 0.78–1.6% other CPU load:
+
+| Modality | Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Video | 1 | 0.126597 | 0.127990 | 0.989x | 0.999929 |
+| Video | 4 | 0.124921 | 0.128824 | 0.970x | 0.999912 |
+| Mixed | 1 | 0.100246 | 0.102592 | 0.977x | 0.999914 |
+| Mixed | 4 | 0.100817 | 0.102479 | 0.984x | 0.999911 |
+
+These cells lost by about 1–3%. Different runner CPUs prevent pooling them into
+a single matched-hardware result with the image/audio cells above.
 A [focused validation run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37989080400)
 passed singleton/four-client audio on an EPYC 9V45 at minimum cosine
 0.999773/0.999044, without throughput timing. It does not resolve the 7763
@@ -186,6 +199,32 @@ execution and output processing times; leave it unset for throughput measurement
 it also logs encoder graph construction, allocation, input preparation and compute.
 For video it separates lazy frame-read waits from remaining preprocessing.
 Leave it unset for normal serving.
+
+`EI_CPU_Q8_PAIR2=1` optionally pairs Q8 matrix output rows in 512-bit registers
+on non-VNNI AVX-512 BW/DQ CPU variants. It defaults off; matrices with fewer
+than 16 remaining input columns and other ISAs retain their existing kernels.
+Each row retains the original eight-lane integer and FP32 reduction order.
+VNNI variants keep their existing dot-product implementation. Both comparison
+harnesses clear this flag in llama.cpp's environment, even when sharing the
+same GGML library; set it only to measure the native optimization.
+
+On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
+requests (four different tones, caches off, two CPU threads under WSL) measured
+386.5 -> 307.6 ms and 625.0 -> 517.2 ms median; a repeat measured
+404.6 -> 312.6 ms and 727.2 -> 586.4 ms. Vectors were exact.
+User-space counters over the repeat showed CPU time 52.04 -> 40.75 s and
+instructions 281.7 -> 205.9 billion, with effective frequency
+3.759 -> 3.746 GHz. These qualify this kernel on the older AVX-512 target,
+not quiet throughput, VNNI hardware, or a new llama.cpp comparison.
+
+The native Windows dev service enables this flag with six threads and its
+matching installed runtime. Fresh alternating requests against the same package
+with the flag off measured one-second audio 188.7 -> 166.3 ms, two-second audio
+307.0 -> 254.0 ms (19/20 paired wins each), and the image fixture
+5.832 -> 4.727 s (6/6 wins). Singleton, array, unequal-length, long-text and
+all-five-modality outputs were exact; an old cached response restored
+byte-for-byte without inference. These are shared-host service improvements,
+not new quiet llama.cpp results. Other CPU variants retain their existing path.
 
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
