@@ -1164,3 +1164,32 @@ Keep this file current as implementation decisions and verified evidence change.
   kernel/runtime DLLs load from the installed prefix.
   This implementation still needs its own CI run. Hardware, cross-request
   batching, quiet comparisons and the full release matrix remain unfinished.
+
+- 2026-10-10: Media-ID commit 128cdbc and request-hash commit 84a71d1 both
+  completed CI successfully. Measured large-image resizing showed the horizontal
+  pass costing roughly 17–25 ms. An AVX2 prototype was inconsistent or slower
+  and was discarded. Bounded independent row execution preserved the original
+  fixed-point arithmetic and reduced a paired horizontal pass from 24.6 to
+  12.7 ms and 23.9 to 14.0 ms with six threads. The retained option is
+  `EI_IMAGE_THREADS2=2..16`, default one; small images stay scalar and thread
+  creation failure finishes unassigned rows on the caller.
+- Native Linux unique-key 12,960,131-byte uploads, matching cache settings,
+  fresh connections and six warm calls per pass measured one/six threads at
+  283.582/267.787 ms and 290.126/261.029 ms in reverse order. All vectors were
+  identical. Original and parallel resized bytes matched across 36 geometry,
+  target and filter cases; a fresh large patterned image exercised the actual
+  parallel encoder path and matched the single-thread response exactly.
+- CUDA is deployed with six resize threads and existing inference/persistence
+  settings, profiling unset. All five fresh deployed modalities exactly matched
+  the candidate; JSON and OpenAI checks passed. Later deployed upload pairs were
+  661.520/619.978 and 786.311/519.235 ms on the shared host: latency varied
+  substantially, so these do not establish an additional speedup beyond the
+  earlier 6–10% observation. No inference or general throughput gain is claimed.
+- Native Windows was built, staged and installed through the PowerShell 5 local
+  download fixture. Its new candidate exactly matched all five old-service
+  embeddings, and the installed primary completed fresh journeys and JSON/OpenAI
+  checks. Runtime DLLs load from the installed prefix. Windows keeps resize
+  parallelism disabled pending a measured benefit. Pixel-exact resizing changes
+  no numeric cache identity. This resize implementation needs its own CI run;
+  hardware, cross-request batching, quiet llama.cpp comparisons and the full
+  native release matrix remain open.

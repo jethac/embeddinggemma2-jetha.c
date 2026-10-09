@@ -141,6 +141,12 @@ execution and output processing times; leave it unset for throughput measurement
 `EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
 leave it unset for normal serving.
 
+`EI_IMAGE_THREADS2=2` through `16` opts into parallel horizontal image resizing;
+the default is one thread. It applies only when the source has at least 128 rows
+and the intermediate image contains at least 262,144 pixels. Pixel arithmetic
+and output are unchanged. The CUDA development service uses six threads; Windows
+keeps the default pending a measured benefit on that host.
+
 `EI_GRAPH_CACHE2=1` enables an experimental CUDA cache of two text graph shapes,
 each with at most 256 aggregate batch tokens. Other requests use the normal
 workspace. In a 120-request, 32-token/four-client trace, graph rebuilds fell from
@@ -481,6 +487,15 @@ order (16–17% lower latency), with identical embeddings. Changed same-shape
 images and audio still produced fresh results matching the original service.
 These shared-host observations establish no general throughput or Windows
 inference speedup.
+
+With six resize threads, fresh 1800-by-1800 image uploads measured 284 -> 268 ms
+and 290 -> 261 ms in reverse order, compared with the same build using one thread
+(6–10% lower latency). Embeddings matched exactly, including a large patterned
+image that exercises the parallel path. This is an upload/preprocessing result
+on the shared CUDA development host, not a llama.cpp comparison or an inference
+throughput claim. Later deployed pairs varied substantially (662/620 and
+786/519 ms for one/six threads) under host contention, so they establish no
+additional speedup.
 
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
