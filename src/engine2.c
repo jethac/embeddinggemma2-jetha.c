@@ -467,7 +467,8 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     void *log_debug = debug_logs && strcmp(debug_logs, "1") == 0 ? (void *)"1" : NULL;
     ggml_log_set(dependency_log, log_debug);
     llama_log_set(dependency_log, log_debug);
-    mtmd_log_set(dependency_log, log_debug);
+    // Helpers have a separate logger for synchronous probe/frame messages.
+    mtmd_helper_log_set(dependency_log, log_debug);
     memset(e, 0, sizeof *e);
     ei_model_load(&e->model, path);
     ggml_backend_load_all();

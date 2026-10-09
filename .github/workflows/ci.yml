@@ -103,6 +103,7 @@ jobs:
           python tests/media_json2.py
           python tests/text_context2.py
           python tests/video_container2.py
+          python tests/dependency_logs2.py --log build-cmake/dev.stderr.log --video
           python tests/media_singleflight2.py --log build-cmake/dev.stderr.log
           python tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
           python tests/media_decoder_deadline2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --stub build-cmake/bin/decoder-stall2

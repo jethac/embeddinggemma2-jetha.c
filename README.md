@@ -140,6 +140,15 @@ threads completed these cells (rates average both engine orders):
 Images were effectively tied and singleton audio lost by about 2.4%.
 Four-client audio failed the unchanged 0.999 quality gate at 0.998898;
 its throughput is excluded. Video and mixed timings remain pending.
+A [focused validation run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37989080400)
+passed singleton/four-client audio on an EPYC 9V45 at minimum cosine
+0.999773/0.999044, without throughput timing. It does not resolve the 7763
+failure: a local AVX2-only run reproduced 0.998898 on the 660 Hz fixture.
+Our concurrent/serial results agreed closely, while llama.cpp's changed
+(cosine 0.999443 for that fixture). AVX-512 passed the same cross-engine
+probe at 0.999399. Additional pinned FP32 SDPA reference checks of these four
+tones found native Q8 cosines of 0.998170–0.999622 and llama.cpp cosines of
+0.998248–0.999656; matching the other Q8 engine is not a broader FP32 guarantee.
 Local `--validate-only` checks completed all four singleton journeys
 (minimum cosine 0.999769), but do not replace the isolated run's failure.
 Use `--backend cuda` with matching native CUDA builds for GPU measurements.
@@ -176,6 +185,18 @@ execution and output processing times; leave it unset for throughput measurement
 `EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
 for video it also separates lazy frame-read waits from remaining preprocessing.
 leave it unset for normal serving.
+
+Dependency debug output, including video-helper probe/frame messages, is
+filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
+timings remain visible. The video helper previously bypassed this filter and
+flushed many small writes to the synchronous log sink. On the CUDA dev service,
+alternating fresh-key requests against the saved old executable, with both log
+sinks on the same Windows-mounted filesystem, gave HTTP medians of 1755 to
+710 ms (96x96 MP4), 1506 to 897 ms (1080p MP4), and 1057 to 499 ms (320x240
+Matroska). The old/new paths both used the optional metadata probe. All three
+video outputs and all five modality journeys stayed bit-identical, and an old
+persisted response returned without inference. These shared-host measurements
+describe that log sink under contention, not quiet-host or llama.cpp throughput.
 
 An optional metadata probe avoids loading ffprobe's unrelated device/filter
 libraries for each video. Build with `-DEI_VIDEO_PROBE=ON` and system libavformat
