@@ -53,6 +53,7 @@ typedef struct {
     int n_backends;
     graph2 graphs[1 + MAX_GRAPH_CACHE2]; // Normal workspace plus bounded short-text shapes.
     bool graph_cache;
+    bool raw_graph_cache;
     int graph_cache_slots;
     bool text_buckets;
     bool text_batch_buckets;
@@ -127,7 +128,7 @@ static struct ggml_tensor *norm(struct ggml_context *ctx, struct ggml_tensor *x,
 }
 
 static graph2 *select_graph(engine2 *s, size_t tokens, size_t batch, bool raw) {
-    if (!s->graph_cache || raw || tokens > 256) return &s->graphs[0];
+    if (!s->graph_cache || (raw && !s->raw_graph_cache) || tokens > 256) return &s->graphs[0];
     graph2 *chosen = &s->graphs[1];
     for (int i = 1; i <= s->graph_cache_slots; i++) {
         graph2 *state = &s->graphs[i];
@@ -614,6 +615,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         }
         fprintf(stderr, "CUDA short-text graph cache: %d shapes, at most 256 tokens\n", s->graph_cache_slots);
     }
+    const char *raw_graph_cache = getenv("EI_RAW_GRAPH_CACHE2");
+    s->raw_graph_cache = s->graph_cache && raw_graph_cache && strcmp(raw_graph_cache, "1") == 0;
+    if (s->raw_graph_cache) fprintf(stderr, "CUDA raw-input graph cache: sharing the bounded short-input slots\n");
     const char *text_buckets = getenv("EI_TEXT_BUCKETS2");
     s->text_buckets = text_buckets && strcmp(text_buckets, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;

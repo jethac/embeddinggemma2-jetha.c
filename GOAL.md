@@ -1332,3 +1332,38 @@ Keep this file current as implementation decisions and verified evidence change.
   changed path is CUDA-only. This numeric flag has a separate cache identity.
   Its CI, native target hardware, cross-request media batching, quiet matched
   comparisons and the full release matrix remain open.
+
+- 2026-10-10: Raw-input backbone graphs bypassed the short-text cache. Cycling
+  four audio durations rebuilt all 48 graphs (7/12/19/29 tokens), measuring
+  96.167 ms end-to-end median on the shared host. Median backbone construction,
+  preparation and compute were 2.040/0.407/30.246 ms. Retained optional CUDA
+  `EI_RAW_GRAPH_CACHE2=1`, default off and only active with `EI_GRAPH_CACHE2=1`,
+  to share the existing bounded slots with raw graphs of <=256 aggregate
+  tokens. Keys still distinguish input type, token count and batch count;
+  larger inputs use the normal workspace. There is no shape, arithmetic or
+  numeric-fingerprint change. Four candidate raw compute workspaces totaled
+  6.80 MiB before other workloads, excluding weights and auxiliary inputs.
+- Same-build audio candidates with fresh keys and changed frequencies measured
+  84.053 -> 51.134 ms and 88.873 -> 49.358 ms median in opposite orders, with
+  exact vectors. Fifty-five raw/text shape-isolation, eviction, changed-input,
+  unequal-array and long-input checks were exact. All five modalities exactly
+  matched the off candidate. A long-input check first encountered an expired
+  keep-alive connection; rerunning those checks with fresh connections passed.
+  Native Windows and CUDA builds passed.
+- The owned CUDA primary is deployed with raw graph reuse, the existing text
+  bucketing flags, four slots, 200 us wait and other inference/persistence
+  settings; profiling is unset. The old primary exceeded the helper's shutdown
+  wait, then exited and saved its caches. Its replacement was started only
+  after verifying that exit. An old persisted typed-text response returned
+  byte-for-byte without inference. All five fresh final journeys exactly
+  matched the candidate, and JSON/OpenAI checks passed. Paired deployed audio
+  medians were 96.281 -> 94.595 ms and 73.559 -> 53.715 ms; p95 was
+  147.587 -> 144.249 ms and 107.663 -> 135.792 ms. Cached compute workspace
+  ended at 34.28 MiB after the mixed journeys and audio waves, excluding weights
+  and auxiliary inputs. These variable shared-host
+  results qualify this specific reuse workload only. No general latency or
+  quiet llama.cpp improvement is claimed. Windows retains its installed CPU
+  service because this path is CUDA-only. Aggregate text-bucketing commit
+  0a36ad9 completed CI successfully. This implementation's CI, native target
+  hardware, cross-request media batching, quiet comparisons and the full
+  release matrix remain open.

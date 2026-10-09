@@ -174,6 +174,25 @@ Eviction, unequal arrays, longer text and all five modalities retained exact
 outputs. Capacity changes preserve persistent-cache identity; the development
 service uses four slots and the existing 200 µs batch wait.
 
+`EI_RAW_GRAPH_CACHE2=1`, together with `EI_GRAPH_CACHE2=1`, lets raw-input
+backbone graphs share the same bounded cache slots. This covers short audio,
+typed text, video and mixed inputs when their aggregate length is at most
+256 tokens; larger inputs use the normal workspace. Graph keys distinguish
+raw embeddings from token IDs. Shapes and arithmetic are unchanged, and so is
+persistent-cache identity. The option defaults off and is enabled on the CUDA
+development service.
+
+Cycling four audio durations rebuilt all 48 backbone graphs without this
+option. The candidate retained four 7/12/19/29-token graphs using 6.80 MiB of
+logged compute workspace, excluding weights and auxiliary inputs. Fresh-key,
+changed-audio candidate medians were 84.1 -> 51.1 ms and 88.9 -> 49.4 ms in
+opposite orders. Final deployed measurements were variable: 96.3 -> 94.6 ms
+and 73.6 -> 53.7 ms, with mixed tail latency. These shared-host measurements
+support this specific reuse workload, not a quiet llama.cpp comparison or a
+general latency claim. Raw/text shape isolation, eviction, changing contents,
+unequal arrays, long inputs and all five modalities retained exact outputs;
+an old persisted response also returned without inference after deployment.
+
 `EI_TEXT_BUCKETS2=1` optionally rounds singleton CUDA text graphs of at most
 256 tokens to 32/64/128/256-token shapes. Padding is isolated from real tokens
 in attention and excluded from pooling. Arrays, longer text and media bypass
