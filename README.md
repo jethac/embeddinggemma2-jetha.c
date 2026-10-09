@@ -100,6 +100,15 @@ guest cannot qualify a saturated Windows host. Set `EI_PROFILE_BACKBONE2=1` on
 the native server to log graph construction, input preparation, synchronized
 execution and output processing times; leave it unset for throughput measurements.
 
+`EI_GRAPH_CACHE2=1` enables an experimental CUDA cache of two text graph shapes,
+each with at most 256 aggregate batch tokens. Other requests use the normal
+workspace. In a 120-request, 32-token/four-client trace, graph rebuilds fell from
+64 to 2 and actual CUDA graph launches rose from 20 to 330. The two retained
+32/96-token workspaces used 15.18 MiB combined. Changed inputs, unequal sequence
+lengths, eviction, long text and all five modalities retained exactly matching
+outputs. This flag defaults off: these are graph-reuse measurements, and a
+quiet-host throughput comparison is still needed before claiming a speedup.
+
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies

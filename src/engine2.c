@@ -21,16 +21,23 @@
 #define GRAPH_NODES 4096
 
 typedef struct {
-    struct ggml_context *weights;
-    ggml_backend_buffer_t weight_buffer;
-    ggml_backend_t backends[2];
-    int n_backends;
     ggml_backend_sched_t sched;
     struct ggml_context *graph_ctx;
     struct ggml_cgraph *graph;
     struct ggml_tensor *input, *positions, *full_mask, *local_mask, *pool, *output;
     size_t graph_tokens, graph_batch;
     bool graph_raw;
+    uint64_t last_used;
+} graph2;
+
+typedef struct {
+    struct ggml_context *weights;
+    ggml_backend_buffer_t weight_buffer;
+    ggml_backend_t backends[2];
+    int n_backends;
+    graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
+    bool graph_cache;
+    uint64_t graph_clock;
     int threads;
     bool profile;
     pthread_mutex_t mutex;
@@ -68,42 +75,63 @@ static struct ggml_tensor *norm(struct ggml_context *ctx, struct ggml_tensor *x,
     return w ? ggml_mul(ctx, x, w) : x;
 }
 
-static bool build_graph(ei_engine *e, size_t tokens, size_t batch, bool raw,
+static graph2 *select_graph(engine2 *s, size_t tokens, size_t batch, bool raw) {
+    if (!s->graph_cache || raw || tokens > 256) return &s->graphs[0];
+    graph2 *chosen = &s->graphs[1];
+    for (int i = 1; i <= 2; i++) {
+        graph2 *state = &s->graphs[i];
+        if (state->graph && state->graph_tokens == tokens &&
+            state->graph_batch == batch && state->graph_raw == raw) {
+            chosen = state;
+            break;
+        }
+        if (state->last_used < chosen->last_used) chosen = state;
+    }
+    chosen->last_used = ++s->graph_clock;
+    return chosen;
+}
+
+static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch, bool raw,
                         char *err, size_t err_len) {
     engine2 *s = e->gemma2;
-    if (s->graph && s->graph_tokens == tokens && s->graph_batch == batch && s->graph_raw == raw)
+    if (!state->sched) {
+        state->sched = ggml_backend_sched_new(s->backends, NULL, s->n_backends,
+                                              GRAPH_NODES, false, true);
+        if (!state->sched) return fail(err, err_len, "cannot initialize graph scheduler");
+    }
+    if (state->graph && state->graph_tokens == tokens && state->graph_batch == batch && state->graph_raw == raw)
         return true;
-    ggml_backend_sched_reset(s->sched);
-    if (s->graph_ctx) ggml_free(s->graph_ctx);
-    s->graph = NULL;
+    ggml_backend_sched_reset(state->sched);
+    if (state->graph_ctx) ggml_free(state->graph_ctx);
+    state->graph = NULL;
     struct ggml_init_params params = {
         .mem_size = ggml_tensor_overhead() * GRAPH_NODES + ggml_graph_overhead_custom(GRAPH_NODES, false),
         .no_alloc = true,
     };
-    struct ggml_context *ctx = s->graph_ctx = ggml_init(params);
+    struct ggml_context *ctx = state->graph_ctx = ggml_init(params);
     if (!ctx) return fail(err, err_len, "cannot allocate graph metadata");
     struct ggml_cgraph *g = ggml_new_graph_custom(ctx, GRAPH_NODES, false);
     struct ggml_tensor *x;
     if (raw) {
-        s->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, HIDDEN, (int64_t)tokens);
-        x = s->input;
+        state->input = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, HIDDEN, (int64_t)tokens);
+        x = state->input;
     } else {
-        s->input = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
-        x = ggml_scale(ctx, ggml_get_rows(ctx, weight(s, "token_embd.weight"), s->input), sqrtf(HIDDEN));
+        state->input = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
+        x = ggml_scale(ctx, ggml_get_rows(ctx, weight(s, "token_embd.weight"), state->input), sqrtf(HIDDEN));
     }
-    ggml_set_name(s->input, "input");
-    ggml_set_input(s->input);
-    s->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
-    ggml_set_input(s->positions);
+    ggml_set_name(state->input, "input");
+    ggml_set_input(state->input);
+    state->positions = ggml_new_tensor_1d(ctx, GGML_TYPE_I32, (int64_t)tokens);
+    ggml_set_input(state->positions);
     int64_t padded = ((int64_t)tokens + 31) / 32 * 32;
-    s->full_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
-    s->local_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
-    ggml_set_input(s->full_mask);
-    ggml_set_input(s->local_mask);
-    struct ggml_tensor *full = ggml_cast(ctx, s->full_mask, GGML_TYPE_F16);
-    struct ggml_tensor *local = ggml_cast(ctx, s->local_mask, GGML_TYPE_F16);
-    s->pool = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, (int64_t)batch);
-    ggml_set_input(s->pool);
+    state->full_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
+    state->local_mask = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, padded);
+    ggml_set_input(state->full_mask);
+    ggml_set_input(state->local_mask);
+    struct ggml_tensor *full = ggml_cast(ctx, state->full_mask, GGML_TYPE_F16);
+    struct ggml_tensor *local = ggml_cast(ctx, state->local_mask, GGML_TYPE_F16);
+    state->pool = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, (int64_t)tokens, (int64_t)batch);
+    ggml_set_input(state->pool);
 
     struct ggml_tensor *ple = ggml_scale(ctx,
         ggml_mul_mat(ctx, weight(s, "per_layer_model_proj.weight"), x), 1.0f / sqrtf(HIDDEN));
@@ -122,9 +150,9 @@ static bool build_graph(ei_engine *e, size_t tokens, size_t batch, bool raw,
         q = norm(ctx, q, layer_weight(s, il, "attn_q_norm"), e->model.rms_eps);
         k = norm(ctx, k, layer_weight(s, il, "attn_k_norm"), e->model.rms_eps);
         v = norm(ctx, v, NULL, e->model.rms_eps);
-        q = ggml_rope_ext(ctx, q, s->positions, NULL, dim, GGML_ROPE_TYPE_NEOX, EI_N_CTX,
+        q = ggml_rope_ext(ctx, q, state->positions, NULL, dim, GGML_ROPE_TYPE_NEOX, EI_N_CTX,
                           base, 1, 0, 1, 0, 0);
-        k = ggml_rope_ext(ctx, k, s->positions, NULL, dim, GGML_ROPE_TYPE_NEOX, EI_N_CTX,
+        k = ggml_rope_ext(ctx, k, state->positions, NULL, dim, GGML_ROPE_TYPE_NEOX, EI_N_CTX,
                           base, 1, 0, 1, 0, 0);
         q = ggml_permute(ctx, q, 0, 2, 1, 3);
         k = ggml_cast(ctx, ggml_permute(ctx, k, 0, 2, 1, 3), GGML_TYPE_F16);
@@ -149,17 +177,28 @@ static bool build_graph(ei_engine *e, size_t tokens, size_t batch, bool raw,
     x = norm(ctx, x, weight(s, "output_norm.weight"), e->model.rms_eps);
     /* Linear projection commutes with mean pooling. Pool 512-wide activations
      * first to avoid projecting every token into 768 dimensions. */
-    x = ggml_mul_mat(ctx, ggml_cont(ctx, ggml_transpose(ctx, x)), s->pool);
-    s->output = ggml_mul_mat(ctx, weight(s, "output.weight"), x);
-    ggml_set_name(s->output, "embedding");
-    ggml_set_output(s->output);
-    ggml_build_forward_expand(g, s->output);
-    if (!ggml_backend_sched_alloc_graph(s->sched, g))
+    x = ggml_mul_mat(ctx, ggml_cont(ctx, ggml_transpose(ctx, x)), state->pool);
+    state->output = ggml_mul_mat(ctx, weight(s, "output.weight"), x);
+    ggml_set_name(state->output, "embedding");
+    ggml_set_output(state->output);
+    ggml_build_forward_expand(g, state->output);
+    if (!ggml_backend_sched_alloc_graph(state->sched, g))
         return fail(err, err_len, "cannot allocate inference graph");
-    s->graph = g;
-    s->graph_tokens = tokens;
-    s->graph_batch = batch;
-    s->graph_raw = raw;
+    state->graph = g;
+    state->graph_tokens = tokens;
+    state->graph_batch = batch;
+    state->graph_raw = raw;
+    if (s->graph_cache && state != &s->graphs[0]) {
+        size_t workspace = 0;
+        for (int slot = 1; slot <= 2; slot++) {
+            if (!s->graphs[slot].sched) continue;
+            for (int backend = 0; backend < s->n_backends; backend++)
+                workspace += ggml_backend_sched_get_buffer_size(s->graphs[slot].sched,
+                                                                s->backends[backend]);
+        }
+        fprintf(stderr, "CUDA short-text graph cache: %zu tokens, %zu sequences, %.2f MiB total cached workspace\n",
+                tokens, batch, (double)workspace / (1024 * 1024));
+    }
     return true;
 }
 
@@ -167,9 +206,10 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
                     size_t batch, float *out, char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     size_t n = offsets[batch];
+    graph2 *state = select_graph(s, n, batch, raw);
     double started = s->profile ? now_ms() : 0;
-    bool rebuilt = !s->graph || s->graph_tokens != n || s->graph_batch != batch || s->graph_raw != raw;
-    if (!build_graph(e, n, batch, raw, err, err_len)) return false;
+    bool rebuilt = !state->graph || state->graph_tokens != n || state->graph_batch != batch || state->graph_raw != raw;
+    if (!build_graph(e, state, n, batch, raw, err, err_len)) return false;
     double built = s->profile ? now_ms() : 0;
     size_t padded = (n + 31) / 32 * 32;
     int32_t *pos = ei_xmalloc(n * sizeof *pos);
@@ -183,23 +223,23 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
             pool[b * n + t] = 1.0f / (float)(offsets[b + 1] - offsets[b]);
         }
     }
-    ggml_backend_tensor_set(s->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
-    ggml_backend_tensor_set(s->positions, pos, 0, n * sizeof *pos);
-    ggml_backend_tensor_set(s->pool, pool, 0, n * batch * sizeof *pool);
+    ggml_backend_tensor_set(state->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
+    ggml_backend_tensor_set(state->positions, pos, 0, n * sizeof *pos);
+    ggml_backend_tensor_set(state->pool, pool, 0, n * batch * sizeof *pool);
     for (size_t q = 0; q < padded; q++)
         for (size_t k = 0; k < n; k++)
             mask[q * n + k] = q < n && seq[q] == seq[k] ? 0.0f : -INFINITY;
-    ggml_backend_tensor_set(s->full_mask, mask, 0, n * padded * sizeof *mask);
+    ggml_backend_tensor_set(state->full_mask, mask, 0, n * padded * sizeof *mask);
     for (size_t q = 0; q < n; q++)
         for (size_t k = 0; k < n; k++)
             if (abs(pos[q] - pos[k]) > (int)e->model.swa_window / 2) mask[q * n + k] = -INFINITY;
-    ggml_backend_tensor_set(s->local_mask, mask, 0, n * padded * sizeof *mask);
+    ggml_backend_tensor_set(state->local_mask, mask, 0, n * padded * sizeof *mask);
     free(pos); free(seq); free(mask); free(pool);
     double prepared = s->profile ? now_ms() : 0;
-    if (ggml_backend_sched_graph_compute(s->sched, s->graph) != GGML_STATUS_SUCCESS)
+    if (ggml_backend_sched_graph_compute(state->sched, state->graph) != GGML_STATUS_SUCCESS)
         return fail(err, err_len, "inference failed");
     double computed = s->profile ? now_ms() : 0;
-    ggml_backend_tensor_get(s->output, out, 0, batch * EI_N_EMBD * sizeof *out);
+    ggml_backend_tensor_get(state->output, out, 0, batch * EI_N_EMBD * sizeof *out);
     for (size_t b = 0; b < batch; b++) {
         float *row = out + b * EI_N_EMBD;
         double energy = 0;
@@ -311,8 +351,11 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         }
     }
     ggml_backend_buffer_set_usage(s->weight_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
-    s->sched = ggml_backend_sched_new(s->backends, NULL, s->n_backends, GRAPH_NODES, false, true);
-    if (!s->sched) ei_die("cannot initialize graph scheduler");
+    s->graphs[0].sched = ggml_backend_sched_new(s->backends, NULL, s->n_backends, GRAPH_NODES, false, true);
+    if (!s->graphs[0].sched) ei_die("cannot initialize graph scheduler");
+    const char *cache = getenv("EI_GRAPH_CACHE2");
+    s->graph_cache = cache && strcmp(cache, "1") == 0 && strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->graph_cache) fprintf(stderr, "CUDA short-text graph cache: two shapes, at most 256 tokens\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 
@@ -365,8 +408,10 @@ void ei_engine_free(ei_engine *e) {
     engine2 *s = e->gemma2;
     if (s) {
         if (s->media) mtmd_free(s->media);
-        ggml_backend_sched_free(s->sched);
-        if (s->graph_ctx) ggml_free(s->graph_ctx);
+        for (int i = 0; i < 3; i++) {
+            if (s->graphs[i].sched) ggml_backend_sched_free(s->graphs[i].sched);
+            if (s->graphs[i].graph_ctx) ggml_free(s->graphs[i].graph_ctx);
+        }
         ggml_backend_buffer_free(s->weight_buffer);
         ggml_free(s->weights);
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);

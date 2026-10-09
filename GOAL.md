@@ -513,4 +513,14 @@ Tests and documentation support that outcome; they do not define completion.
   rewrite. The existing Windows CPU and Linux CUDA development services remain
   available; profiling services shut down after their actual request journeys.
 
+- An opt-in CUDA short-text graph cache (`EI_GRAPH_CACHE2=1`, default off)
+  retains two shapes of at most 256 aggregate tokens; media and longer text use
+  the normal workspace. The same 120-request/four-client trace now rebuilds 2
+  graphs instead of 64, with 330 actual CUDA graph launches instead of 20.
+  The retained 32/96-token workspaces total 15.18 MiB. Thirty-six changed-input,
+  unequal-length, eviction and long-text requests exactly matched the proven
+  cache-off service; all five fresh modality outputs also matched exactly.
+  The graph topology and numerical kernels are unchanged. Quiet-host matched
+  throughput is still required before a speed claim or default promotion.
+
 Keep this file current as implementation decisions and verified evidence change.
