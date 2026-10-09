@@ -450,4 +450,14 @@ Tests and documentation support that outcome; they do not define completion.
   types; busy-host timings establish no inference speedup. Binary release
   packaging and the other unverified accelerators remain unfinished.
 
+- The macOS job now probes `MTLCreateSystemDefaultDevice` before configuring
+  Metal. When a device exists, it runs the installed Metal service and compares
+  all five uncached modality outputs with the installed CPU service, requiring
+  cosine above 0.999 and checking that the backbone and media logs select Metal.
+  This is an execution attempt, not qualification until the job proves it.
+  `examples/journey2.py --compare-url` exposes the same comparison for running
+  services. Its local Windows CPU versus Linux CUDA journey passed for all five
+  inputs; minimum cosine was 0.99949802 (audio). These busy-host requests establish
+  no throughput improvement. Metal execution remains unverified pending CI.
+
 Keep this file current as implementation decisions and verified evidence change.

@@ -14,6 +14,7 @@ import wave
 
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--url', default='http://127.0.0.1:42667')
+p.add_argument('--compare-url', help='Compare each embedding with another running service')
 a = p.parse_args()
 
 def part(kind, data):
@@ -52,3 +53,14 @@ with tempfile.TemporaryDirectory(prefix='embeddinggemma2-example-') as tmp:
         tokens = '' if name == 'text' else f"{result['usage']['total_tokens']} tokens; "
         print(name, f'{(time.perf_counter() - start) * 1000:.1f} ms;',
               tokens + '768 finite normalized dimensions', flush=True)
+        if a.compare_url:
+            reference_request = urllib.request.Request(a.compare_url.rstrip('/') + '/api/embed',
+                request.data, headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(reference_request, timeout=300) as response:
+                reference = json.load(response)['embeddings'][0]
+            assert len(reference) == 768 and all(math.isfinite(x) for x in reference)
+            reference_norm = sum(x*x for x in reference)
+            assert abs(reference_norm - 1) < 1e-5
+            cosine = sum(x*y for x,y in zip(vector, reference)) / math.sqrt(norm * reference_norm)
+            print(name, f'comparison cosine: {cosine:.8f}', flush=True)
+            assert cosine > 0.999, 'embedding differs from comparison service: ' + name

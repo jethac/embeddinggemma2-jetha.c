@@ -72,9 +72,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Inspect the actual Metal device
+        id: metal
+        run: |
+          swift -e 'import Metal; if let device = MTLCreateSystemDefaultDevice() { print("Metal device: \(device.name)"); } else { print("No Metal device on this runner"); }'
+          swift -e 'import Metal; print("available=" + (MTLCreateSystemDefaultDevice() == nil ? "OFF" : "ON"))' >> "$GITHUB_OUTPUT"
       - name: Build the current model for native macOS CPU
         run: |
-          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=${{ steps.metal.outputs.available }} -DGGML_OPENMP=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 media-admission-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 3
           build-cmake/bin/media-admission-check2
           build-cmake/bin/response-persistence-check2
@@ -122,6 +127,29 @@ jobs:
           python3 tests/text_context2.py
           python3 tests/video_container2.py
           python3 tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+      - name: Run Metal and compare all five modalities with CPU
+        if: steps.metal.outputs.available == 'ON'
+        env:
+          EI_THREADS: '3'
+        run: |
+          binary="$PWD/build-installed/bin/embeddinggemma2-jetha"
+          "$binary" --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/cpu.stdout.log 2> build-cmake/cpu.stderr.log &
+          cpu_pid=$!
+          "$binary" --bind 127.0.0.1 --port 42668 --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/metal.stdout.log 2> build-cmake/metal.stderr.log &
+          metal_pid=$!
+          trap 'kill "$cpu_pid" "$metal_pid" 2>/dev/null || true' EXIT
+          for port in 42667 42668; do
+            ready=0
+            for attempt in $(seq 1 120); do
+              if curl -fsS "http://127.0.0.1:$port/healthz"; then ready=1; break; fi
+              if ! kill -0 "$cpu_pid" 2>/dev/null || ! kill -0 "$metal_pid" 2>/dev/null; then break; fi
+              sleep 1
+            done
+            if [ "$ready" != 1 ]; then cat build-cmake/metal.stderr.log build-cmake/cpu.stderr.log; exit 1; fi
+          done
+          grep 'EmbeddingGemma 2: Metal' build-cmake/metal.stderr.log
+          grep 'CLIP using Metal backend' build-cmake/metal.stderr.log
+          python3 examples/journey2.py --url http://127.0.0.1:42668 --compare-url http://127.0.0.1:42667
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
     name: Legacy 300M CPU (${{ matrix.platform }})

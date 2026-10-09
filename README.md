@@ -152,6 +152,8 @@ cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release \
 Then use the build/run commands above, adding `--backend cpu` when starting the
 server. With FFmpeg on `PATH`, `python examples/journey2.py` sends synthetic
 text, image, audio, video and mixed requests and prints their latency and size.
+Add `--url URL --compare-url OTHER_URL` to compare all five outputs against
+another running service; the journey requires cosine above 0.999 for each.
 
 On WSL, put weights on the Linux filesystem rather than a Windows-mounted
 drive. For example, download with `--directory ~/embeddinggemma2-models` and
