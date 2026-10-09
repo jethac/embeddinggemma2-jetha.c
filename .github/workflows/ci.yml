@@ -55,6 +55,8 @@ jobs:
           python scripts/download-model2.py
           cmake --install build-cmake --prefix "$PWD/build-installed"
           python tests/installed_service2.py --prefix build-installed
+          python scripts/stage-release2.py --build build-cmake --prefix build-installed --dist build-release-assets --target linux-x86_64 --backend cpu
+          python tests/installer_runtime2.py --assets build-release-assets
           python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
           python tests/reuse_inputs2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
           python tests/cpu_fallback2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf

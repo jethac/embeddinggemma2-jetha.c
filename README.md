@@ -398,12 +398,18 @@ The original QuixiAI copyright notice is preserved.
 and benchmark claims for the original 300M model. They do not establish
 EmbeddingGemma 2 results for this project.
 
-`install.sh` targets this repository's future releases and the
-`embeddinggemma2-jetha` executable, using `EMBEDDINGGEMMA2_*` environment
-overrides. No binary releases exist yet; use the CMake source installation above.
-It does not download upstream's 300M server or replace its executable.
+`install.sh` and Windows `install.ps1` target this repository's future releases.
+They verify both the raw executable and its matching runtime archive against
+`SHA256SUMS`, then install the libraries, CPU plugins and license notices together.
+No binary releases exist yet; use the CMake source installation above.
+Unix exposes `embeddinggemma2-jetha` through a relative symlink; Windows exposes
+`embeddinggemma2-jetha.cmd` (default directory:
+`$env:LOCALAPPDATA/Programs/embeddinggemma2-jetha`). Updates preserve the previous
+application directory and validate the new executable before switching the launcher.
+Model weights remain separate; video/WebP need FFmpeg on PATH.
+See [RELEASE.md](RELEASE.md) for native staging and the complete release matrix.
 
-The inherited Makefile, staging scripts, and [CONTRIBUTING.md](CONTRIBUTING.md)
+The inherited Makefile, `scripts/stage-release.sh`, and [CONTRIBUTING.md](CONTRIBUTING.md)
 still describe the 300M implementation. Use the CMake commands above for this
 port; adaptation of those workflows is unfinished. CI has a new Linux service
 job; the retained platform matrix still exercises the legacy model. Model weights, local

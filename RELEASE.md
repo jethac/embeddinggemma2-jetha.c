@@ -1,264 +1,151 @@
 # Release Runbook
 
-This runbook publishes one GitHub release containing raw executable files for
-every supported platform. GitHub generates source archives automatically; do
-not wrap binary assets in tarballs or zip files.
+This runbook distributes EmbeddingGemma 2 from
+`jethac/embeddinggemma2-jetha.c`. No binary release has been published yet.
+The inherited Makefile `release-*` targets and `scripts/stage-release.sh`
+build the legacy 300M server; use the CMake workflow below for this port.
 
-## Release Contract
+## Release contract
 
 - Obtain explicit approval for the exact version before editing `VERSION`,
   creating a tag, or publishing a release.
-- Build every binary from the same clean release commit.
-- Publish all seven executables on every release, even when only one backend
-  changed.
-- Do not publish model weights, GGUF files, standalone metallibs, object files,
-  debug bundles, or dependency source trees.
-- Keep the stable asset names below. The installer depends on them.
-- Strip each executable. Ad-hoc sign and verify both Darwin executables.
-- Publish `SHA256SUMS` covering exactly the seven executable assets.
+- Build the entire matrix from the same clean release commit. Use native build
+  hosts and verify the final installed payload on the corresponding hardware.
+- Retain MIT and dependency notices. Keep model weights, GGUFs, dependency source,
+  headers, static archives, debug files and build intermediates out of assets.
+- Keep upstream's raw executable naming and `SHA256SUMS` convention with this
+  project's prefix. Each executable also needs a matching runtime archive:
+  portable CPU dispatch, media libraries and Windows compiler runtime DLLs
+  cannot be served by the raw executable alone.
+- Strip executables and runtime libraries. Ad-hoc sign and verify Darwin files;
+  embed the Metal shader library. Review loader dependencies and minimum OS/ABI
+  requirements on the actual intended hosts before publishing.
+- Publish all 18 binary/runtime assets and `SHA256SUMS`; do not substitute
+  partial, mixed-commit or unqualified accelerator builds.
 
-Expected assets:
+## Asset matrix
+
+| Target | Backends | Runtime suffix |
+|---|---|---|
+| Darwin ARM64 | cpu, metal | `.runtime.tar.gz` |
+| Linux ARM64 | cpu, cuda (GB10) | `.runtime.tar.gz` |
+| Linux x86_64 | cpu, cuda, rocm, xpu | `.runtime.tar.gz` |
+| Windows x86_64 | cpu | `.runtime.zip` |
+
+Raw executables are named `embeddinggemma2-jetha-TARGET-BACKEND`, with `.exe`
+on Windows. Runtime archives have the same stem. For example:
 
 ```text
-embeddinggemma-darwin-arm64-cpu
-embeddinggemma-darwin-arm64-metal
-embeddinggemma-linux-arm64-cpu
-embeddinggemma-linux-x86_64-cpu
-embeddinggemma-linux-x86_64-cuda
-embeddinggemma-linux-x86_64-rocm
-embeddinggemma-linux-x86_64-xpu
+embeddinggemma2-jetha-linux-x86_64-cpu
+embeddinggemma2-jetha-linux-x86_64-cpu.runtime.tar.gz
+embeddinggemma2-jetha-windows-x86_64-cpu.exe
+embeddinggemma2-jetha-windows-x86_64-cpu.runtime.zip
 SHA256SUMS
 ```
 
-## Prepare The Release Commit
+Archives contain application-relative `bin/`, `lib/` and `share/licenses/`
+files. They exclude the main executable, which remains a separate raw asset.
+System accelerator drivers/toolkits remain host prerequisites; packaging does
+not establish support for hardware that has not run the model.
 
-1. Confirm the exact approved version, including the leading `v`.
-2. Update `VERSION` and every version-pinned README example.
-3. Update benchmark tables, compatibility notes, and the optimization log for
-   user-visible backend changes.
-4. Run CPU tests and script validation.
-5. Commit and push the release commit before distributing it to build hosts.
+## Build and stage
+
+After exact version approval, update the version and relevant README examples,
+commit and push. Create a detached worktree from that clean commit for each
+native host. Never stage development output as a published release.
+
+For Linux x86_64 CPU (use fresh build, install and distribution directories):
+
+```sh
+cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_NATIVE=OFF -DEI_CPU_DISPATCH=ON \
+  -DGGML_CUDA=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_METAL=OFF
+cmake --build build-release --target embeddinggemma2-jetha -j 4
+cmake --install build-release --prefix "$PWD/release-install" --strip
+python3 scripts/stage-release2.py --build build-release \
+  --prefix release-install --dist dist --target linux-x86_64 --backend cpu
+```
+
+Use `--target windows-x86_64`, `linux-arm64` or `darwin-arm64` on the matching
+native host. Windows uses the project's MinGW CMake instructions in the README.
+ARM64 uses `-DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF`. Select exactly the intended
+accelerator with `GGML_CUDA`, `GGML_METAL`, `GGML_HIP` or `GGML_SYCL`; disable the
+others. Metal also requires `-DGGML_METAL_EMBED_LIBRARY=ON`. CUDA/ROCm/SYCL
+architecture and toolchain settings must cover the hardware advertised in the
+release. GB10, Strix Halo, native Metal, ROCm and XPU qualification is still
+unfinished; these commands do not make those release targets ready.
+
+The stager strips the disposable installation prefix in place, validates the
+executable platform and required notices, then writes the raw executable and
+runtime archive. Never point it at a deployed application prefix.
+
+## Try the installed journey
+
+Before publication, run the installers against locally staged real assets
+(the fixture replaces only network downloads):
+
+```sh
+python3 tests/installer_runtime2.py --assets dist
+```
+
+On Windows:
+
+```powershell
+./tests/installer_runtime2.ps1 -AssetsDir ./dist
+```
+
+These check loading from a path with spaces and preservation of a working
+installation after checksum failure. They do not qualify inference or a GPU.
+Extract each actual payload into a fresh prefix and run
+`tests/installed_service2.py --prefix PREFIX` without build-tree library paths.
+Start that executable with the backbone and both media encoders, disable caches,
+and run `examples/journey2.py --url URL` for text, image, audio, video and mixed
+requests. Compare against the reference and the accepted CPU implementation;
+check context limits and numerical quality for that backend. Review the actual
+loaded modules, not just the archive listing. Video/WebP require FFmpeg on PATH.
+Run the relevant existing safety/regression checks and required CI checks.
+
+## Assemble and publish
+
+Collect all nine executable/runtime pairs from the same commit into one fresh
+`dist` directory. Generate and verify the full distribution:
+
+```sh
+sh scripts/release-assets.sh checksums dist
+sh scripts/release-assets.sh verify dist
+```
+
+The verifier rejects missing assets, wrong executable platforms, invalid
+archives, duplicate checksum entries and checksum mismatches. It cannot prove
+native hardware qualification or a common source commit; complete those above.
+Do not use legacy `make release-ready` to qualify this port.
+
+Only after exact version approval and all qualification is complete:
 
 ```sh
 version=$(cat VERSION)
-git status --short
-make check-scripts
-make test
-git grep -n "$version" README.md
-git push origin main
-```
-
-Create a detached worktree from that exact commit. Use its contents for every
-local and remote build:
-
-```sh
-commit=$(git rev-parse HEAD)
-worktree="/tmp/embeddinggemma-$version-$commit"
-git worktree add --detach "$worktree" "$commit"
-export MODEL="$HOME/.cache/embeddinggemma.c/embeddinggemma-300M-qat-Q4_0.gguf"
-```
-
-Do not build a release from a development directory containing stale objects.
-The `release-*` targets clean the selected backend before compiling it.
-
-## Darwin ARM64 CPU And Metal
-
-Requirements: Apple Silicon, macOS 14 or newer deployment target, full Xcode 26
-or newer, and the installed Metal Toolchain component.
-
-```sh
-cd "$worktree"
-xcode-select -p
-xcodebuild -version
-xcrun --find metal
-make test
-make test-metal
-make release-darwin DIST=/tmp/embeddinggemma-dist
-```
-
-`release-darwin` rebuilds CPU and Metal, strips and ad-hoc signs both files, and
-checks that both executables retain the configured macOS 14.0 minimum and that
-the Metal executable contains both embedded `__DATA,__metallib` and
-`__DATA,__metal4lib` sections.
-Validate the staged executables, not only the unstripped build output:
-
-```sh
-codesign --verify --verbose=2 /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-cpu
-codesign --verify --verbose=2 /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-metal
-vtool -show-build /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-cpu
-vtool -show-build /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-metal
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-cpu \
-  --model "$MODEL" --backend cpu
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-darwin-arm64-metal \
-  --model "$MODEL" --backend metal
-```
-
-Both metallibs are embedded in the Metal executable. They are intermediate
-build files, not release assets. Runtime selection preserves the Metal 3.1
-fallback on Apple Silicon GPUs without Metal 4 tensor support.
-
-## Linux X86_64 CPU
-
-Use a broadly compatible Linux build host and avoid enabling host-specific ISA
-flags such as `-march=native`.
-
-```sh
-cd "$worktree"
-make test
-make release-linux-cpu DIST=/tmp/embeddinggemma-dist
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cpu \
-  --model "$MODEL" --backend cpu
-ldd /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cpu
-```
-
-Review `ldd` output for unexpected non-system dependencies.
-
-## Linux ARM64 CPU
-
-Build on any aarch64 Linux host. An Apple Silicon Mac works via Docker — the
-arm64 container runs natively (no emulation). Use an old-glibc base image
-(Debian bullseye, glibc 2.31) so the executable runs on older distributions;
-the staged binary's actual symbol ceiling is GLIBC_2.27.
-
-```sh
-docker run --rm --platform linux/arm64 -v "$worktree:/src" -w /src \
-  debian:bullseye bash -c '
-    apt-get update -qq && apt-get install -y -qq build-essential python3 file
-    make test BUILD=build-linux-arm64
-    make release-linux-cpu BUILD=build-linux-arm64 DIST=/tmp/embeddinggemma-dist
-    python3 testdata/test_http_dimensions.py \
-      --binary /tmp/embeddinggemma-dist/embeddinggemma-linux-arm64-cpu \
-      --model model/embeddinggemma-300M-qat-Q4_0.gguf --backend cpu
-    ldd /tmp/embeddinggemma-dist/embeddinggemma-linux-arm64-cpu'
-```
-
-Only the cpu variant is published for linux-arm64; `install.sh` downgrades
-auto-detected GPU variants to cpu on this platform (no CUDA/ROCm/XPU ARM
-binaries).
-
-## Linux X86_64 CUDA
-
-Build with the production CUDA toolkit. Do not set `CUDA_ARCH`, `CUDA_ARCHS`,
-or `CUDA_PTX_ARCH` for a release. The default emits native cubins for every
-architecture supported by the installed compiler and PTX for the newest one.
-
-```sh
-cd "$worktree"
-make test-cuda NVCC=/usr/local/cuda/bin/nvcc CUDA_ARCHS=86
-make release-linux-cuda DIST=/tmp/embeddinggemma-dist \
-  NVCC=/usr/local/cuda/bin/nvcc CUDA_HOME=/usr/local/cuda
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cuda \
-  --model "$MODEL" --backend cuda
-cuobjdump --list-elf /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cuda
-cuobjdump --list-ptx /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cuda
-ldd /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-cuda
-```
-
-The focused test may use the host architecture for speed. The release command
-must run without an architecture override and must show both cubins and PTX.
-
-## Linux X86_64 ROCm
-
-Build one portable CDNA executable. Do not set `ROCM_ARCH` or `ROCM_ARCHS` for
-the release; the default includes `gfx908`, `gfx90a`, `gfx942`, and `gfx950`.
-
-```sh
-cd "$worktree"
-make test-rocm HIPCC=/opt/rocm/bin/hipcc ROCM_ARCHS=gfx942
-make release-linux-rocm DIST=/tmp/embeddinggemma-dist \
-  HIPCC=/opt/rocm/bin/hipcc ROCM_HOME=/opt/rocm
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-rocm \
-  --model "$MODEL" --backend rocm
-/opt/rocm/bin/roc-obj-ls \
-  /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-rocm
-ldd /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-rocm
-```
-
-The staged file must list all four CDNA code objects and no missing runtime
-libraries.
-
-## Linux X86_64 XPU SYCL
-
-Use the pinned dependencies fetched by `make xpu-deps`. The production Xe2
-build enables the specialized FlashAttention and packed-W4 routes and embeds
-device images for PVC and BMG targets.
-
-```sh
-cd "$worktree"
-source /opt/intel/oneapi/setvars.sh
-make xpu-deps
-make test-xpu XPU_XE2_FLASH=1 SYCL_CXX=icpx
-make release-linux-xpu DIST=/tmp/embeddinggemma-dist SYCL_CXX=icpx
-python3 testdata/test_http_dimensions.py \
-  --binary /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-xpu \
-  --model "$MODEL" --backend xpu
-ldd /tmp/embeddinggemma-dist/embeddinggemma-linux-x86_64-xpu
-```
-
-Run on a Level Zero GPU and confirm the specialized route is active in the
-startup diagnostics. Review `ldd` for oneAPI, oneMKL, and Level Zero runtime
-availability.
-
-## Assemble And Verify
-
-Copy the six staged executables into one empty directory on the release
-workstation. Preserve the names exactly, then generate and verify checksums:
-
-```sh
-cd "$worktree"
-make release-checksums DIST=/tmp/embeddinggemma-dist
-make release-verify DIST=/tmp/embeddinggemma-dist
-make release-ready DIST=/tmp/embeddinggemma-dist
-```
-
-`release-ready` rejects a dirty worktree, a malformed `VERSION`, a README that
-does not mention the version, an incomplete asset matrix, wrong executable
-formats, duplicate checksum entries, and checksum mismatches.
-
-Create an annotated tag only after all staged artifacts pass:
-
-```sh
-version=$(cat VERSION)
-git tag -a "$version" -m "embeddinggemma.c $version"
+git tag -a "$version" -m "embeddinggemma2-jetha.c $version"
 git push origin "$version"
+gh release create "$version" dist/embeddinggemma2-jetha-* dist/SHA256SUMS \
+  --repo jethac/embeddinggemma2-jetha.c \
+  --title "embeddinggemma2-jetha.c $version" --notes-file release-notes.md
 ```
 
-Prepare release notes that summarize user-visible changes, tested hardware,
-runtime requirements, correctness validation, and architecture coverage. Then
-publish the raw files:
+Release notes describe tested hardware, runtime requirements, measured
+performance and limitations. Verify the published asset list, then try a pinned
+GitHub installation in a fresh directory on every released platform:
 
 ```sh
-gh release create "$version" /tmp/embeddinggemma-dist/* \
-  --title "embeddinggemma.c $version" \
-  --notes-file /tmp/release-notes.md
+./install.sh --version "$version" --variant cpu --install-dir /tmp/gemma2-install
+/tmp/gemma2-install/embeddinggemma2-jetha --help
 ```
 
-Verify the published asset list before declaring the release complete:
-
-```sh
-gh release view "$version" --json tagName,name,url,assets \
-  --jq '{tag:.tagName,name,url,assets:[.assets[].name]}'
+```powershell
+./install.ps1 -Version APPROVED_TAG -InstallDir "$env:TEMP/gemma2-install"
+& "$env:TEMP/gemma2-install/embeddinggemma2-jetha.cmd" --help
 ```
 
-## Installer Acceptance
-
-Test a pinned install from GitHub after publication. Use a temporary directory
-so the developer's active binary is not replaced:
-
-```sh
-./install.sh --version "$(cat VERSION)" --variant cpu \
-  --install-dir /tmp/embeddinggemma-install
-/tmp/embeddinggemma-install/embeddinggemma --help
-```
-
-On each accelerator platform, repeat with its explicit variant. Also test
-automatic selection and Linux CPU fallback when accelerator runtime libraries
-are unavailable.
-
-If publication is incomplete or an asset is wrong, fix the release before
-announcing it. Do not silently move an existing tag to a different commit.
+Repeat the full inference journey through the installed application. Exercise
+explicit accelerator selection, automatic selection, and Linux CPU fallback
+when accelerator libraries are unavailable. A failed/incomplete publication is
+not ready to announce. Never move an existing release tag to another commit.

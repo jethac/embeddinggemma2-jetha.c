@@ -158,7 +158,8 @@ Do not invent a separate distribution workflow without a concrete need.
 - Build the complete supported release matrix from the same clean commit.
 - Build and run the real journey on native platforms and matching accelerator
   hardware for the targets being released, using the final staged executables.
-- Publish raw executables with stable asset names and `SHA256SUMS`. Keep model
+- Publish raw executables and matching runtime archives with stable asset names
+  and `SHA256SUMS`. Keep model
   weights and intermediate files out of releases. Preserve checksum-verified
   installation and appropriate backend detection/fallback.
 - Strip binaries, sign and verify Darwin artifacts, and retain portable OS/ABI
@@ -870,3 +871,30 @@ Tests and documentation support that outcome; they do not define completion.
   The next direction is the unfinished release packaging/fresh-install journey.
 
 Keep this file current as implementation decisions and verified evidence change.
+
+- Release packaging now retains raw executables with matching runtime archives.
+  A raw Windows executable alone failed with 0xC0000135; the real CPU payload
+  contains 22 DLLs, including 14 portable CPU variants, plus dependency notices.
+  Its relocated service completed all five uncached modalities with cosine
+  1.00000000 against the accepted CPU service. The primary Windows endpoint now
+  runs the new installer's versioned application directory; fresh requests for
+  all five modalities again matched the packaged comparison service exactly.
+  All loaded model/compiler runtime DLLs came from that installed directory.
+  This fixes distribution startup, without establishing an inference speedup.
+- Unix and Windows installers verify the executable and runtime checksums before
+  switching their launcher and preserve the existing application after a corrupt
+  download. Real package tests passed with installation paths containing spaces.
+  The Unix test first caught a global shell variable replacing the executable
+  filename with the archive filename; Windows PowerShell 5 first rejected valid
+  native stderr from --help. Both bugs were fixed and the same journeys passed.
+  Linux packaging checks used the existing relocated cb14b3e CPU installation;
+  its installed application completed all five uncached modalities with finite,
+  normalized 768-dimensional outputs and all model libraries loaded from the
+  application prefix. A fresh current portable Linux build is still rebuilding.
+  These are local
+  download fixtures, not published-GitHub installer acceptance.
+- The port release runbook and asset verifier now describe nine native
+  executable/runtime pairs (18 checksum entries), including Windows CPU and
+  Linux ARM64 CUDA for GB10. Linux CI exercises actual package installation.
+  No version/tag/release was created. Complete same-commit native qualification,
+  accelerator hardware access and final GitHub installation remain unfinished.

@@ -12,7 +12,7 @@ usage() {
 Usage: install.sh [--version VERSION] [--variant auto|cpu|metal|cuda|rocm|xpu]
                   [--install-dir DIRECTORY]
 
-Downloads an embeddinggemma2-jetha release binary and installs it as
+Downloads a release binary and its matching runtime archive and installs it as
 ~/.local/bin/embeddinggemma2-jetha by default.
 
 Environment overrides:
@@ -108,14 +108,12 @@ if [ "$variant" = auto ]; then
     fi
 fi
 
-# Only the cpu variant is published for linux-arm64 (no CUDA/ROCm/XPU
-# binaries on ARM). Auto-detection may still see a GPU (e.g. Jetson's
-# nvidia-smi) — downgrade auto to cpu; reject an explicit GPU request.
-if [ "$platform-$architecture" = linux-arm64 ] && [ "$variant" != cpu ]; then
+# ARM64 CUDA covers the GB10 target; ROCm/XPU ARM assets are not part of the matrix.
+if [ "$platform-$architecture" = linux-arm64 ] && [ "$variant" != cpu ] && [ "$variant" != cuda ]; then
     if [ "$requested_variant" = auto ]; then
         variant=cpu
     else
-        die "the $variant variant is not published for linux-arm64; only cpu is available"
+        die "the $variant variant is not published for linux-arm64; use cpu or cuda"
     fi
 fi
 
@@ -172,32 +170,56 @@ download "$release_url/SHA256SUMS" "$checksums" ||
     die "could not download this project's release checksums; use the README's CMake source installation"
 
 verify_asset() {
-    asset=$1
-    file=$tmpdir/$asset
-    download "$release_url/$asset" "$file"
-    expected=$(awk -v name="$asset" '$2 == name { print $1; exit }' "$checksums")
-    [ -n "$expected" ] || die "SHA256SUMS has no entry for $asset"
-    actual=$(sha256_file "$file")
-    [ "$actual" = "$expected" ] || die "checksum verification failed for $asset"
+    verify_name=$1
+    verify_file=$tmpdir/$verify_name
+    download "$release_url/$verify_name" "$verify_file"
+    expected=$(awk -v name="$verify_name" '$2 == name { print $1; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
+        die "SHA256SUMS must contain exactly one entry for $verify_name"
+    case "$expected" in ''|*[!a-fA-F0-9]*) die "invalid checksum for $verify_name" ;; esac
+    [ "${#expected}" -eq 64 ] || die "invalid checksum for $verify_name"
+    actual=$(sha256_file "$verify_file")
+    [ "$actual" = "$expected" ] || die "checksum verification failed for $verify_name"
 }
 
-asset="embeddinggemma2-jetha-$platform-$architecture-$variant"
-printf 'Selecting %s (%s/%s, %s)\n' "$asset" "$platform" "$architecture" "$variant"
-verify_asset "$asset"
+prepare_variant() {
+    asset="embeddinggemma2-jetha-$platform-$architecture-$variant"
+    runtime="$asset.runtime.tar.gz"
+    printf 'Selecting %s (%s/%s, %s)\n' "$asset" "$platform" "$architecture" "$variant"
+    verify_asset "$asset"
+    verify_asset "$runtime"
+    # A checksum-verified runtime archive must stay inside its application prefix.
+    tar -tzf "$tmpdir/$runtime" > "$tmpdir/entries"
+    awk '
+        /^\// || /(^|\/)\.\.(\/|$)/ { exit 1 }
+        !/^(bin|lib|share)\// { exit 1 }
+    ' "$tmpdir/entries" || die 'runtime archive contains unsafe paths'
+    tar -tvzf "$tmpdir/$runtime" > "$tmpdir/entry-types"
+    awk '
+        $1 !~ /^[-dl]/ { exit 1 }
+        $1 ~ /^l/ && ($(NF-1) != "->" || $NF !~ /^[A-Za-z0-9._+-]+$/ || $NF == "." || $NF == "..") { exit 1 }
+    ' "$tmpdir/entry-types" || die 'runtime archive contains unsafe links or special files'
+    app=$tmpdir/$asset.app
+    mkdir "$app"
+    tar -xzf "$tmpdir/$runtime" -C "$app"
+    mkdir -p "$app/bin"
+    cp "$tmpdir/$asset" "$app/bin/embeddinggemma2-jetha"
+    chmod 0755 "$app/bin/embeddinggemma2-jetha"
+    [ -f "$app/share/licenses/embeddinggemma2-jetha/LICENSE" ] || die 'runtime archive has no project license'
+}
+prepare_variant
 
 # A visible accelerator does not guarantee that the published binary's runtime
 # libraries are installed. In automatic mode, use CPU if the loader reports a
 # missing dependency.
 if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1; then
-    ldd_output=$(ldd "$tmpdir/$asset" 2>&1 || true)
+    ldd_output=$(ldd "$app/bin/embeddinggemma2-jetha" 2>&1 || true)
     if printf '%s\n' "$ldd_output" | grep -q 'not found'; then
         if [ "$requested_variant" = auto ] && [ "$variant" != cpu ]; then
             printf '%s\n' \
                 "$variant runtime dependencies are missing; falling back to the CPU binary." >&2
             variant=cpu
-            asset="embeddinggemma2-jetha-$platform-$architecture-$variant"
-            verify_asset "$asset"
-            ldd_output=$(ldd "$tmpdir/$asset" 2>&1 || true)
+            prepare_variant
+            ldd_output=$(ldd "$app/bin/embeddinggemma2-jetha" 2>&1 || true)
         fi
         if printf '%s\n' "$ldd_output" | grep -q 'not found'; then
             printf '%s\n' "$ldd_output" >&2
@@ -206,11 +228,15 @@ if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1; then
     fi
 fi
 
+"$app/bin/embeddinggemma2-jetha" --help >/dev/null 2>&1 || die 'staged executable failed to load'
 mkdir -p "$install_dir"
+application=$(mktemp -d "$install_dir/.embeddinggemma2-jetha-runtime.XXXXXX") ||
+    die "could not create an application directory in $install_dir"
+cp -R "$app/." "$application/"
 staged=$(mktemp "$install_dir/.embeddinggemma2-jetha.XXXXXX") ||
-    die "could not create a temporary file in $install_dir"
-cp "$tmpdir/$asset" "$staged"
-chmod 0755 "$staged"
+    die "could not create a temporary launcher in $install_dir"
+rm -f "$staged"
+ln -s "$(basename "$application")/bin/embeddinggemma2-jetha" "$staged"
 mv -f "$staged" "$install_dir/embeddinggemma2-jetha"
 staged=
 

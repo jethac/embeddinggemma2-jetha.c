@@ -12,7 +12,7 @@ usage() {
 Usage: scripts/release-assets.sh checksums [DIST_DIR]
        scripts/release-assets.sh verify [DIST_DIR]
 
-Writes or verifies the complete set of raw release executables.
+Writes or verifies the complete port release: raw executables and runtime archives.
 EOF
 }
 
@@ -35,12 +35,22 @@ sha256_file() {
 
 command=$1
 dist_dir=${2:-dist}
-assets='embeddinggemma-darwin-arm64-cpu
-embeddinggemma-darwin-arm64-metal
-embeddinggemma-linux-x86_64-cpu
-embeddinggemma-linux-x86_64-cuda
-embeddinggemma-linux-x86_64-rocm
-embeddinggemma-linux-x86_64-xpu'
+targets='darwin-arm64-cpu
+darwin-arm64-metal
+linux-arm64-cpu
+linux-arm64-cuda
+linux-x86_64-cpu
+linux-x86_64-cuda
+linux-x86_64-rocm
+linux-x86_64-xpu
+windows-x86_64-cpu'
+assets=$(printf '%s\n' "$targets" | while IFS= read -r target; do
+    case "$target" in
+        windows-*) printf 'embeddinggemma2-jetha-%s.exe\nembeddinggemma2-jetha-%s.runtime.zip\n' "$target" "$target" ;;
+        *) printf 'embeddinggemma2-jetha-%s\nembeddinggemma2-jetha-%s.runtime.tar.gz\n' "$target" "$target" ;;
+    esac
+done)
+asset_count=$(printf '%s\n' "$assets" | wc -l | tr -d ' ')
 
 require_assets() {
     printf '%s\n' "$assets" | while IFS= read -r asset; do
@@ -48,17 +58,30 @@ require_assets() {
         [ -f "$path" ] || die "missing release asset: $path"
         [ ! -L "$path" ] || die "release asset must not be a symlink: $path"
         [ -s "$path" ] || die "release asset is empty: $path"
-        [ -x "$path" ] || die "release asset is not executable: $path"
+        case "$asset" in
+            *.runtime.tar.gz) tar -tzf "$path" >/dev/null || die "invalid runtime archive: $asset"; continue ;;
+            *.runtime.zip) unzip -tq "$path" >/dev/null || die "invalid runtime archive: $asset"; continue ;;
+            *.exe) ;;
+            *) [ -x "$path" ] || die "release asset is not executable: $path" ;;
+        esac
 
         description=$(file -b "$path")
         case "$asset" in
-            embeddinggemma-darwin-arm64-*)
+            embeddinggemma2-jetha-darwin-arm64-*)
                 printf '%s\n' "$description" | grep -Eq 'Mach-O.*arm64' ||
                     die "$asset is not an arm64 Mach-O executable: $description"
                 ;;
-            embeddinggemma-linux-x86_64-*)
+            embeddinggemma2-jetha-linux-x86_64-*)
                 printf '%s\n' "$description" | grep -Eq 'ELF 64-bit.*x86-64' ||
                     die "$asset is not an x86-64 ELF executable: $description"
+                ;;
+            embeddinggemma2-jetha-linux-arm64-*)
+                printf '%s\n' "$description" | grep -Eq 'ELF 64-bit.*(aarch64|ARM aarch64)' ||
+                    die "$asset is not an arm64 ELF executable: $description"
+                ;;
+            embeddinggemma2-jetha-windows-x86_64-*)
+                printf '%s\n' "$description" | grep -Eq 'PE32\+.*x86-64' ||
+                    die "$asset is not an x86-64 PE executable: $description"
                 ;;
         esac
     done
@@ -81,15 +104,15 @@ case "$command" in
         require_assets
         checksums=$dist_dir/SHA256SUMS
         [ -f "$checksums" ] || die "missing release asset: $checksums"
-        [ "$(awk 'NF { count++ } END { print count + 0 }' "$checksums")" -eq 6 ] ||
-            die 'SHA256SUMS must contain exactly six entries'
+        [ "$(awk 'NF { count++ } END { print count + 0 }' "$checksums")" -eq "$asset_count" ] ||
+            die "SHA256SUMS must contain exactly $asset_count entries"
         printf '%s\n' "$assets" | while IFS= read -r asset; do
             expected=$(awk -v name="$asset" '$2 == name { print $1; count++ } END { if (count != 1) exit 1 }' "$checksums") ||
                 die "SHA256SUMS must contain exactly one entry for $asset"
             actual=$(sha256_file "$dist_dir/$asset")
             [ "$actual" = "$expected" ] || die "checksum mismatch: $asset"
         done
-        printf 'Verified six raw executables and %s/SHA256SUMS\n' "$dist_dir"
+        printf 'Verified %s release assets and %s/SHA256SUMS\n' "$asset_count" "$dist_dir"
         ;;
     *)
         usage >&2
