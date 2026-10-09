@@ -458,6 +458,12 @@ Tests and documentation support that outcome; they do not define completion.
   `examples/journey2.py --compare-url` exposes the same comparison for running
   services. Its local Windows CPU versus Linux CUDA journey passed for all five
   inputs; minimum cosine was 0.99949802 (audio). These busy-host requests establish
-  no throughput improvement. Metal execution remains unverified pending CI.
+  no throughput improvement. The first Metal attempt found an Apple Paravirtual
+  device and built successfully, but startup failed: our selector expected the
+  registry name `Metal`, while the pinned dependency uses `MTL`. The selector
+  and runtime log checks now use the actual registry/backend names. The existing
+  explicit-Metal CI journey reproduced the bug before the fix; its rerun must
+  pass before claiming Metal execution. A virtual GPU is not evidence of physical
+  Apple Silicon performance.
 
 Keep this file current as implementation decisions and verified evidence change.

@@ -147,8 +147,8 @@ jobs:
             done
             if [ "$ready" != 1 ]; then cat build-cmake/metal.stderr.log build-cmake/cpu.stderr.log; exit 1; fi
           done
-          grep 'EmbeddingGemma 2: Metal' build-cmake/metal.stderr.log
-          grep 'CLIP using Metal backend' build-cmake/metal.stderr.log
+          grep 'EmbeddingGemma 2: MTL' build-cmake/metal.stderr.log
+          grep 'CLIP using MTL' build-cmake/metal.stderr.log
           python3 examples/journey2.py --url http://127.0.0.1:42668 --compare-url http://127.0.0.1:42667
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:

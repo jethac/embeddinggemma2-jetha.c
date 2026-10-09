@@ -245,7 +245,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
             const char *name = ggml_backend_reg_name(ggml_backend_dev_backend_reg(d));
             if (strcmp(requested, "auto") == 0 ||
                 (strcmp(requested, "cuda") == 0 && strcmp(name, "CUDA") == 0) ||
-                (strcmp(requested, "metal") == 0 && strcmp(name, "Metal") == 0) ||
+                (strcmp(requested, "metal") == 0 && strcmp(name, "MTL") == 0) ||
                 ((strcmp(requested, "rocm") == 0 || strcmp(requested, "hip") == 0) && strcmp(name, "ROCm") == 0) ||
                 ((strcmp(requested, "xpu") == 0 || strcmp(requested, "sycl") == 0) && strcmp(name, "SYCL") == 0)) {
                 device = d;
