@@ -369,9 +369,10 @@ Tests and documentation support that outcome; they do not define completion.
   exceed cosine 0.999 against FP32. These results retain the current selection,
   without establishing quiet-host or measured-frequency performance. ARM dispatch,
   physical older/newer CPU coverage and release packaging
-  remain unfinished. The dev build requires its shared libraries and plugins;
-  adapting the inherited executable installation/release flow to acquire these
-  matching dependencies remains unfinished.
+  remain unfinished. The dev build requires its shared libraries and plugins.
+  Source installation now includes the matching media library, CPU plugins,
+  MinGW runtime DLLs and dependency license notices; adapting the inherited
+  binary release flow to distribute these dependencies remains unfinished.
 - Initial fixed-shape ONNX exports of the backbone, vision, and audio encoders
   run on CPU ONNX Runtime. Their assembled 294-token text/image/audio sample
   matches the FP32 reference at cosine 0.99999994 (maximum element error
@@ -432,5 +433,21 @@ Tests and documentation support that outcome; they do not define completion.
   CUDA outputs matched the pre-change vectors exactly; duplicate singleflight
   and decoded-media budget checks passed on both services. This fixes decoder
   head-of-line blocking; it does not establish a llama.cpp throughput speedup.
+
+- `cmake --install` previously omitted `libmtmd`: the staged Windows executable
+  failed with loader status 0xc0000135 and Linux failed with missing
+  `libmtmd.so.SOVERSION`. Installation now includes the media library with the
+  pinned llama library's actual version, CPU plugins, MinGW runtime DLLs and
+  dependency license notices. The startup regression failed before the fix and
+  passes on Windows/Linux from unrelated working directories without build-tree
+  library paths (Windows uses only System32 on PATH). Both complete install
+  directories were relocated; all five uncached text/image/audio/video/mixed
+  journeys passed, with finite normalized 768-dimensional outputs and media
+  counts 260/29/248/294. Logs confirm the AVX-512 plugin loads from each relocated
+  install. The Windows development endpoint now runs the installed executable.
+  CI serves its Linux/macOS journeys from installed payloads as well. This
+  changes source installation from a startup failure to five working input
+  types; busy-host timings establish no inference speedup. Binary release
+  packaging and the other unverified accelerators remain unfinished.
 
 Keep this file current as implementation decisions and verified evidence change.

@@ -111,7 +111,7 @@ build-cmake/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
 
 These commands require a C/C++ compiler and Git. The currently exercised build
 uses MinGW64 on Windows; choose that toolchain explicitly and put its `bin`
-directory on `PATH` for compilation and runtime DLLs. Video requires `ffmpeg`
+directory on `PATH` for compilation and running directly from the build tree. Video requires `ffmpeg`
 and `ffprobe` on `PATH`. Omit `--mmproj` for text-only execution. With `--mmproj`,
 use `--media-encoders vision` for image/video workloads or `--media-encoders audio`
 for audio workloads to skip the unused encoder's weights. The default `all`
@@ -125,6 +125,15 @@ Keep the generated `bin` directory intact when running or copying this dev build
 its shared libraries and CPU plugins are required. Release packaging remains
 unfinished. For a local static experiment, use `-DEI_CPU_DISPATCH=OFF` and
 `-DGGML_AVX512=ON` on compatible hardware; that build has no runtime ISA fallback.
+
+Install the built service with `cmake --install build-cmake --prefix local-install`.
+Run `local-install/bin/embeddinggemma2-jetha` (`.exe` on Windows) with the same
+model and encoder arguments. Keep the whole install directory when moving it:
+libraries, CPU plugins and license notices are installed alongside the service.
+The MinGW install includes its runtime DLLs, so the installed executable does
+not need the compiler's `bin` directory on PATH. Models remain separate; video
+still requires external `ffmpeg` and `ffprobe`.
+
 CUDA is exercised on an RTX 5060 Ti through Ubuntu under WSL with CUDA 13.0.
 Build with `-DGGML_CUDA=ON` and start with `--backend cuda`; this requires the
 CUDA toolkit at build time and a compatible NVIDIA driver at runtime. Both

@@ -56,7 +56,11 @@ if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
 endif()
 if(NOT TARGET mtmd)
-    add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd" EXCLUDE_FROM_ALL)
+    # The dependency's version variables are scoped to its directory. Copy the
+    # actual library properties before configuring its media library here.
+    get_target_property(LLAMA_VERSION_BASE llama VERSION)
+    get_target_property(LLAMA_VERSION_MAJOR llama SOVERSION)
+    add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd")
 endif()
 find_package(Threads REQUIRED)
 add_executable(embeddinggemma2-jetha
@@ -77,6 +81,31 @@ if(NOT MSVC)
     target_link_libraries(embeddinggemma2-jetha PRIVATE m)
 endif()
 install(TARGETS embeddinggemma2-jetha RUNTIME DESTINATION bin)
+set(EI_LICENSE_DIR "${CMAKE_INSTALL_DATADIR}/licenses/embeddinggemma2-jetha")
+install(FILES LICENSE DESTINATION "${EI_LICENSE_DIR}" RENAME LICENSE)
+install(FILES "${llama_SOURCE_DIR}/LICENSE" DESTINATION "${EI_LICENSE_DIR}" RENAME llama.cpp-LICENSE)
+install(FILES deps/LICENSE-nlohmann.txt DESTINATION "${EI_LICENSE_DIR}")
+foreach(vendor_license hash/xxhash/LICENSE hash/sha256/LICENSE hash/rotate-bits/LICENSE.md)
+    get_filename_component(vendor_directory "${vendor_license}" DIRECTORY)
+    install(FILES "${llama_SOURCE_DIR}/vendor/${vendor_license}"
+        DESTINATION "${EI_LICENSE_DIR}/${vendor_directory}")
+endforeach()
+if(MINGW)
+    # Shared kernels/media still import the compiler runtimes even though the
+    # executable statically links its own C++ runtime. Keep them beside the DLLs.
+    get_filename_component(EI_MINGW_BIN "${CMAKE_CXX_COMPILER}" DIRECTORY)
+    file(GLOB EI_MINGW_RUNTIME_DLLS
+        "${EI_MINGW_BIN}/libgcc_s_*.dll" "${EI_MINGW_BIN}/libstdc++-*.dll"
+        "${EI_MINGW_BIN}/libwinpthread-*.dll" "${EI_MINGW_BIN}/libgomp-*.dll")
+    install(FILES ${EI_MINGW_RUNTIME_DLLS} DESTINATION "${CMAKE_INSTALL_BINDIR}")
+    foreach(runtime_license gcc-libs libwinpthread)
+        set(runtime_license_dir "${EI_MINGW_BIN}/../share/licenses/${runtime_license}")
+        if(EXISTS "${runtime_license_dir}")
+            install(DIRECTORY "${runtime_license_dir}/"
+                DESTINATION "${EI_LICENSE_DIR}/${runtime_license}")
+        endif()
+    endforeach()
+endif()
 add_executable(decoder-stall2 EXCLUDE_FROM_ALL tests/decoder_stall2.c)
 add_executable(decoder-deadline-check2 EXCLUDE_FROM_ALL tests/decoder_deadline2.cpp)
 target_link_libraries(decoder-deadline-check2 PRIVATE mtmd)
