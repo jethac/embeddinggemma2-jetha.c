@@ -10,6 +10,10 @@ on:
         description: Run the matched uncached CPU comparison against pinned llama.cpp
         type: boolean
         default: false
+      benchmark_media:
+        description: Compare uncached image, audio, video and mixed CPU requests with pinned llama.cpp
+        type: boolean
+        default: false
       packed_qkv:
         description: Enable experimental packed QKV in the CPU comparison
         type: boolean
@@ -22,7 +26,7 @@ jobs:
   gemma2-linux:
     name: EmbeddingGemma 2 service (Linux CPU)
     runs-on: ubuntu-24.04
-    timeout-minutes: ${{ inputs.benchmark_cpu && 45 || 30 }}
+    timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build current model implementation
@@ -93,7 +97,7 @@ jobs:
           python tests/media_decoder_deadline2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --stub build-cmake/bin/decoder-stall2
           python examples/embed.py --text 'task: search result | query: what powers the cell'
       - name: Build the pinned comparison server with the installed GGML kernels
-        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_cpu
+        if: github.event_name == 'workflow_dispatch' && (inputs.benchmark_cpu || inputs.benchmark_media)
         run: |
           cmake -S build-cmake/_deps/llama-src -B build-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_USE_SYSTEM_GGML=ON -DCMAKE_PREFIX_PATH="$PWD/build-installed" -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DGGML_NATIVE=OFF
           cmake --build build-llama --target llama-server -j 2
@@ -110,6 +114,14 @@ jobs:
           lscpu
           cc --version
           python perf/compare_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --token-counts 32,256,1024 --concurrency 1,4 --rounds 5 --target-seconds 8
+      - name: Measure matched multimodal CPU journeys in both engine orders
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
+        env:
+          EI_QKV2: ${{ inputs.packed_qkv && '1' || '0' }}
+        run: |
+          lscpu
+          cc --version
+          python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --concurrency 1,4 --rounds 5 --target-seconds 8
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022

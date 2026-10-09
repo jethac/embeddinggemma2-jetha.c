@@ -110,6 +110,28 @@ GGML kernels, then run the same six text cells with two threads, caches disabled
 and both engine orders. Hardware and measurements appear in the job log. CI
 results describe that runner; they do not replace the local host's measurements.
 
+The [multimodal comparison](perf/compare_media_llamacpp2.py) covers image,
+audio, video and mixed HTTP requests at one and four concurrent clients. It
+uses the same Q8 backbone and media weights, thread count and installed GGML
+kernels for both servers, with embedding/response/prompt caches disabled.
+Each cell starts fresh servers, checks matching token counts and cosine >=0.999,
+then warms and measures both orders under the same quiet-host guard. Clients
+use distinct colors and tones to avoid measuring duplicate singleflight.
+The native and llama.cpp media JSON schemas differ; the encoded media bytes
+are the same. Square image grids are matched at 256 pooled patches and video
+frames at 121 patches, corresponding to the native 280/140-token budgets.
+Video sampling is 1 fps without timestamps. Native video requests include an
+explicit `Video:` text part to match llama.cpp's automatic helper prefix;
+this comparison does not change the native visual-only video default.
+
+Run the isolated CPU comparison with
+`gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_media=true`.
+The job prints its hardware, exact commands, per-pass latencies, rates and
+quality gates. Local `--validate-only` checks completed all four singleton
+journeys (minimum cosine 0.999769); multimodal throughput results are pending.
+Use `--backend cuda` with matching native CUDA builds for GPU measurements.
+The same Windows host-load check applies under WSL.
+
 Reproduce with [perf/compare_llamacpp2.py](perf/compare_llamacpp2.py). Build the
 native server using the build instructions below and build `llama-server` from its pinned dependency
 checkout (`build-cmake/_deps/llama-src`) in a separate build directory. Match

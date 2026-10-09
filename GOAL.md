@@ -1367,3 +1367,24 @@ Keep this file current as implementation decisions and verified evidence change.
   0a36ad9 completed CI successfully. This implementation's CI, native target
   hardware, cross-request media batching, quiet comparisons and the full
   release matrix remain open.
+
+- 2026-10-10: Moved from graph-cache tuning to the missing matched multimodal
+  llama.cpp comparisons. The local host still showed 1148% aggregate observed
+  CPU, so no quiet local figures were qualified. Added a direct multimodal HTTP
+  comparison using the same Q8 backbone/media files, threads and kernels, fresh
+  servers per cell, distinct client inputs, caches off, both orders and the
+  existing quiet-host guard. The optional CI `benchmark_media` path builds
+  pinned llama.cpp against installed shared GGML and measures image/audio/video/
+  mixed at C1/C4. Timing rejects profiling flags. No service speedup is claimed
+  from adding this tool; its results will select the next optimization.
+- Actual wire probes first caught a missing OpenAI model field, then different
+  preprocessing: native image 260 tokens versus llama.cpp 85, and native video
+  248 versus llama.cpp 250. The benchmark now aligns the actual square grids
+  (256 image patches, 121 per video frame), 1 fps and no timestamps. It adds
+  `Video:` explicitly to the native comparison request to match the generic
+  llama.cpp helper's automatic prefix; the reference-correct native visual-only
+  default stays unchanged. All four singleton journeys completed with matching
+  counts and cosine >=0.999: image 260/0.999965, audio 29/0.999769, video
+  250/0.999932 and mixed 296/0.999902. These are quality/wire checks on a busy
+  host, not throughput results. CI measurements, broader backends/hardware,
+  cross-request media batching and the full release matrix remain open.
