@@ -249,6 +249,30 @@ all-five-modality outputs were exact; an old cached response restored
 byte-for-byte without inference. These are shared-host service improvements,
 not new quiet llama.cpp results. Other CPU variants retain their existing path.
 
+`EI_MEDIA_PIPELINE2=1` overlaps one request's media encoder with another's
+backbone inference. It defaults off and is enabled on the CUDA dev service.
+Decoding remains serialized; at most two singleton raw inputs (32 MiB total)
+can be in flight, alongside the existing bounded request-array workspace.
+Backbone work retains its own lock and graph-cache isolation.
+
+On the RTX 5060 Ti CUDA dev service at `fdd9dae`, fresh-key one-second audio
+waves against the same build with the flag off measured:
+
+| Clients | Pipeline off, wave median | Deployed pipeline on | Paired wins |
+|---|---:|---:|---:|
+| 4 | 41.1 ms | 33.7 ms | 25/26 |
+| 8 | 79.4 ms | 62.4 ms | 26/26 |
+
+Both used six CPU threads and the same model and existing CUDA options.
+The primary retained its 64 MiB response cache; every request had a fresh key,
+and the comparison server had caching disabled. These are shared-host HTTP
+wave improvements, not quiet llama.cpp comparisons. Two candidate runs also
+improved four-/eight-client waves by about 21–26%. All five modalities,
+concurrent text/audio, arrays, longer raw inputs and post-error requests kept
+exact outputs and usage. A persisted response restored without inference.
+This overlaps stages across requests; cross-request backbone batching remains
+unfinished.
+
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
 timings remain visible. The video helper previously bypassed this filter and
