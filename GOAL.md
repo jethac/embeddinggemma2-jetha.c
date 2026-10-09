@@ -493,4 +493,24 @@ Tests and documentation support that outcome; they do not define completion.
   normalized dimensions. The existing CI fallback journeys now use the installed
   executable, covering deployment dependencies as well as build-tree dispatch.
 
+- The opt-in CI CPU comparison builds pinned llama.cpp against the installed
+  shared GGML library and runs the existing six text cells with two threads,
+  caches off, both orders and the quiet-host guard. Its first run failed before
+  measurement because `GGML_BACKEND_PATH` expects a library file, not a directory.
+  The baseline now has symlinks to the exact installed CPU plugins beside its
+  executable, with no override. The local rebuilt baseline starts and returns
+  a finite normalized 768-dimensional vector; rerun CI before publishing rates.
+- Nsight Systems 2025.3.2 captured API calls but no GPU kernel timings with the
+  installed CUDA 13.4 driver. A separately extracted NVIDIA CLI 2026.5.1 collects
+  kernel data. In one 120-request, 32-token/four-client trace, quantized matmuls
+  consumed 66.1% of GPU kernel time (stream-k fixup alone 27.9%), versus 6.9% for
+  attention. Graphs rebuilt on 64 of 68 forwards, mostly alternating one and
+  three requests. A 2 ms batch-wait trial collected more four-request batches
+  but still rebuilt most graphs. Matched, periodically flushed captures had
+  108.9/129.0 ms total kernel time for 200/2000 us waits. Instrumentation and host
+  contention prevent a throughput claim; no wait/default/kernel change shipped.
+  Measure stable graph reuse and matmul costs before attempting an attention
+  rewrite. The existing Windows CPU and Linux CUDA development services remain
+  available; profiling services shut down after their actual request journeys.
+
 Keep this file current as implementation decisions and verified evidence change.

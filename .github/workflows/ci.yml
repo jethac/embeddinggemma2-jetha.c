@@ -76,6 +76,9 @@ jobs:
         run: |
           cmake -S build-cmake/_deps/llama-src -B build-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_USE_SYSTEM_GGML=ON -DCMAKE_PREFIX_PATH="$PWD/build-installed" -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DGGML_NATIVE=OFF
           cmake --build build-llama --target llama-server -j 2
+          for plugin in "$PWD"/build-installed/bin/libggml-cpu-*.so; do
+            ln -s "$plugin" build-llama/bin/
+          done
           ldd build-llama/bin/llama-server
           ldd build-installed/bin/embeddinggemma2-jetha
       - name: Measure matched CPU requests in both engine orders
@@ -83,7 +86,6 @@ jobs:
         run: |
           lscpu
           cc --version
-          export GGML_BACKEND_PATH="$PWD/build-installed/bin"
           python perf/compare_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --token-counts 32,256,1024 --concurrency 1,4 --rounds 5 --target-seconds 8
   gemma2-macos:
     name: EmbeddingGemma 2 service (macOS ARM CPU)
