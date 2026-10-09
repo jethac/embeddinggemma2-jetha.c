@@ -206,13 +206,30 @@ than 16 remaining input columns and other ISAs retain their existing kernels.
 Each row retains the original eight-lane integer and FP32 reduction order.
 VNNI variants keep their existing dot-product implementation by default.
 `EI_CPU_Q8_PAIR_VNNI2=1` separately enables an experimental paired VNNI path;
-it has no qualified performance claim yet. The optional CI `cpu_pair_vnni`
+it remains off by default. The optional CI `cpu_pair_vnni`
 input requires actual VNNI hardware and checks exact native on/off media
 outputs before timing. Run it with
 `gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_media=true -f media_modalities=audio -f cpu_pair_vnni=true`.
 Both comparison
 harnesses clear this flag in llama.cpp's environment, even when sharing the
 same GGML library; set it only to measure the native optimization.
+
+The [VNNI audio comparison](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37998996923)
+at `3aba687` ran on AMD EPYC 9V74 with four logical CPUs and two inference
+threads, the same Q8_0 weights, caches disabled and both engine orders.
+Other CPU activity was 1.4–1.54%. Native flag-on/off outputs were exact;
+minimum cosine against llama.cpp was 0.999773 at one client and 0.999353
+at four clients, with 29 tokens per one-second audio request.
+
+| Clients | Ours emb/s, VNNI paired rows | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|
+| 1 | 6.01 | 6.47 | 0.929× |
+| 4 | 5.74 | 6.64 | 0.864× |
+
+These are measured losses. This run checked native on/off quality, but did
+not time native on/off throughput, so it does not establish whether paired
+VNNI rows improve the native kernel. Do not combine these cells with results
+from other CPU models or configurations.
 
 On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
 requests (four different tones, caches off, two CPU threads under WSL) measured
