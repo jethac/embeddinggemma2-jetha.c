@@ -181,6 +181,7 @@ def main():
         # Zero offloaded weight layers still permits GPU host-op offload.
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
+                      'packed_qkv': os.getenv('EI_QKV2') == '1',
                       'minimum_rounds': a.rounds, 'target_seconds': a.target_seconds,
                       'quiet_total_cpu_percent': a.quiet_total_cpu_percent,
                       'orders': ['ours/llama', 'llama/ours'],
@@ -196,6 +197,9 @@ def main():
                 # Each cell starts clean: no accumulated state from earlier shapes.
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                         ManagedServer(llama_cmd, llama, '/health', root / 'llama.log') as lp:
+                    packed_qkv = 'packed QKV:' in op.log_path.read_text(errors='replace')
+                    if packed_qkv != (os.getenv('EI_QKV2') == '1'):
+                        raise RuntimeError('native server did not select the requested QKV mode')
                     vectors = []
                     for endpoint in (ours, llama):
                         with ThreadPoolExecutor(max_workers=concurrency) as executor:

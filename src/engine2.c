@@ -33,6 +33,9 @@ typedef struct {
 typedef struct {
     struct ggml_context *weights;
     ggml_backend_buffer_t weight_buffer;
+    struct ggml_context *qkv_ctx;
+    ggml_backend_buffer_t qkv_buffer;
+    struct ggml_tensor *qkv[LAYERS];
     ggml_backend_t backends[2];
     int n_backends;
     graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
@@ -55,6 +58,19 @@ static double now_ms(void) {
 static bool fail(char *err, size_t n, const char *msg) {
     if (err && n) snprintf(err, n, "%s", msg);
     return false;
+}
+
+uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
+    const engine2 *s = e->gemma2;
+    if (!s->qkv_buffer) return fingerprint;
+    // Packed CUDA matmuls can change accumulation order. Keep persisted text
+    // and HTTP responses separate from the original projection path.
+    const char domain[] = "embeddinggemma2-packed-qkv-v1";
+    for (size_t i = 0; i < sizeof domain; i++) {
+        fingerprint ^= (unsigned char)domain[i];
+        fingerprint *= 1099511628211ull;
+    }
+    return fingerprint;
 }
 
 static struct ggml_tensor *weight(engine2 *s, const char *name) {
@@ -144,9 +160,20 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         int heads_kv = swa ? 2 : 1;
         float base = swa ? e->model.rope_base_swa : e->model.rope_base_full;
         struct ggml_tensor *a = norm(ctx, x, layer_weight(s, il, "attn_norm"), e->model.rms_eps);
-        struct ggml_tensor *q = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_q"), a), dim, 4, (int64_t)tokens);
-        struct ggml_tensor *k = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_k"), a), dim, heads_kv, (int64_t)tokens);
-        struct ggml_tensor *v = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_v"), a), dim, heads_kv, (int64_t)tokens);
+        struct ggml_tensor *q, *k, *v;
+        if (s->qkv[il]) {
+            struct ggml_tensor *qkv = ggml_mul_mat(ctx, s->qkv[il], a);
+            const size_t head_stride = (size_t)dim * sizeof(float);
+            const size_t q_bytes = head_stride * 4;
+            const size_t k_bytes = head_stride * (size_t)heads_kv;
+            q = ggml_view_3d(ctx, qkv, dim, 4, (int64_t)tokens, head_stride, qkv->nb[1], 0);
+            k = ggml_view_3d(ctx, qkv, dim, heads_kv, (int64_t)tokens, head_stride, qkv->nb[1], q_bytes);
+            v = ggml_view_3d(ctx, qkv, dim, heads_kv, (int64_t)tokens, head_stride, qkv->nb[1], q_bytes + k_bytes);
+        } else {
+            q = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_q"), a), dim, 4, (int64_t)tokens);
+            k = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_k"), a), dim, heads_kv, (int64_t)tokens);
+            v = ggml_reshape_3d(ctx, ggml_mul_mat(ctx, layer_weight(s, il, "attn_v"), a), dim, heads_kv, (int64_t)tokens);
+        }
         q = norm(ctx, q, layer_weight(s, il, "attn_q_norm"), e->model.rms_eps);
         k = norm(ctx, k, layer_weight(s, il, "attn_k_norm"), e->model.rms_eps);
         v = norm(ctx, v, NULL, e->model.rms_eps);
@@ -351,6 +378,44 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         }
     }
     ggml_backend_buffer_set_usage(s->weight_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    const char *qkv_flag = getenv("EI_QKV2");
+    if (qkv_flag && strcmp(qkv_flag, "1") == 0 &&
+        (s->n_backends == 1 || strncmp(e->backend_name, "CUDA", 4) == 0)) {
+        for (int il = 0; il < LAYERS; il++) {
+            struct ggml_tensor *q = layer_weight(s, il, "attn_q");
+            struct ggml_tensor *k = layer_weight(s, il, "attn_k");
+            struct ggml_tensor *v = layer_weight(s, il, "attn_v");
+            if (q->type != GGML_TYPE_Q8_0 || k->type != q->type || v->type != q->type ||
+                q->ne[0] != HIDDEN || k->ne[0] != HIDDEN || v->ne[0] != HIDDEN)
+                ei_die("EI_QKV2 requires matching Q8_0 projection weights");
+        }
+        struct ggml_init_params qkv_params = {
+            .mem_size = ggml_tensor_overhead() * LAYERS, .no_alloc = true,
+        };
+        s->qkv_ctx = ggml_init(qkv_params);
+        if (!s->qkv_ctx) ei_die("cannot allocate packed QKV metadata");
+        for (int il = 0; il < LAYERS; il++) {
+            struct ggml_tensor *q = layer_weight(s, il, "attn_q");
+            struct ggml_tensor *k = layer_weight(s, il, "attn_k");
+            struct ggml_tensor *v = layer_weight(s, il, "attn_v");
+            s->qkv[il] = ggml_new_tensor_2d(s->qkv_ctx, q->type, HIDDEN, q->ne[1] + k->ne[1] + v->ne[1]);
+        }
+        s->qkv_buffer = ggml_backend_alloc_ctx_tensors(s->qkv_ctx, s->backends[0]);
+        if (!s->qkv_buffer) ei_die("cannot allocate packed QKV weights");
+        for (int il = 0; il < LAYERS; il++) {
+            const char *suffixes[] = {"attn_q", "attn_k", "attn_v"};
+            size_t offset = 0;
+            for (int part = 0; part < 3; part++) {
+                struct ggml_tensor *w = layer_weight(s, il, suffixes[part]);
+                const ei_tensor *source = ei_gguf_tensor(&e->model.gguf, w->name, true);
+                ggml_backend_tensor_set(s->qkv[il], source->data, offset, ggml_nbytes(w));
+                offset += ggml_nbytes(w);
+            }
+        }
+        ggml_backend_buffer_set_usage(s->qkv_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        fprintf(stderr, "packed QKV: %.2f MiB additional weights\n",
+                (double)ggml_backend_buffer_get_size(s->qkv_buffer) / (1024 * 1024));
+    }
     s->graphs[0].sched = ggml_backend_sched_new(s->backends, NULL, s->n_backends, GRAPH_NODES, false, true);
     if (!s->graphs[0].sched) ei_die("cannot initialize graph scheduler");
     const char *cache = getenv("EI_GRAPH_CACHE2");
@@ -412,6 +477,8 @@ void ei_engine_free(ei_engine *e) {
             if (s->graphs[i].sched) ggml_backend_sched_free(s->graphs[i].sched);
             if (s->graphs[i].graph_ctx) ggml_free(s->graphs[i].graph_ctx);
         }
+        if (s->qkv_buffer) ggml_backend_buffer_free(s->qkv_buffer);
+        if (s->qkv_ctx) ggml_free(s->qkv_ctx);
         ggml_backend_buffer_free(s->weight_buffer);
         ggml_free(s->weights);
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);

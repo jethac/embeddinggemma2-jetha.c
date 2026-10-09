@@ -40,6 +40,9 @@ void ei_engine_load_backend(ei_engine *e, const char *model_path, const char *ba
 void ei_engine_free(ei_engine *e);
 const char *ei_engine_backend(const ei_engine *e);
 int32_t ei_engine_threads(const ei_engine *e);
+#ifdef EI_GEMMA2
+uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t model_fingerprint);
+#endif
 bool ei_engine_reserve(ei_engine *e, size_t total_tokens, size_t batch_size,
                        char *err, size_t err_len);
 

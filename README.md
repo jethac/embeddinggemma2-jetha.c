@@ -129,6 +129,18 @@ lengths, eviction, long text and all five modalities retained exactly matching
 outputs. This flag defaults off: these are graph-reuse measurements, and a
 quiet-host throughput comparison is still needed before claiming a speedup.
 
+`EI_QKV2=1` enables experimental packed Q/K/V projections for Q8_0 weights on
+CPU and CUDA. It uses 27.62 MiB of additional weights. In a fixed 106-request,
+32-token CUDA capture, quantized matmul launches fell from 22,680 to 17,640,
+combined matmul/fixup time fell from 155.5 to 130.1 ms, and total captured GPU
+kernel time fell 7.2%. These are profiling results, not end-to-end throughput.
+Ten Windows CPU checks, including all five modalities, remained bit-identical;
+the matching CUDA checks passed the 0.999 cosine gate (minimum 0.999830).
+Persistent caches distinguish packed and separate projections because CUDA
+accumulation order can change their outputs. The flag defaults off; quiet-host
+throughput and broader hardware validation remain necessary. To measure it on
+the CI runner, add `-f packed_qkv=true` to the CPU comparison command above.
+
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies

@@ -1662,6 +1662,10 @@ int main(int argc, char **argv) {
 #endif
     uint64_t cache_fingerprint = opts.persistent_cache_path
         ? ei_cache_fingerprint_file(model_path) : 0;
+#ifdef EI_GEMMA2
+    if (opts.persistent_cache_path)
+        cache_fingerprint = ei_engine_cache_fingerprint(&engine, cache_fingerprint);
+#endif
     startup_timing("backbone cache fingerprint", &startup_stage);
     free(model_path);
     char reserve_error[256];

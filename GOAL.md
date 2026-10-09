@@ -555,4 +555,21 @@ Tests and documentation support that outcome; they do not define completion.
   remains the working route. Shared-library staging and release publication are
   unfinished; this identity fix establishes no inference speedup.
 
+- Packed Q/K/V projections are retained as an opt-in experiment (`EI_QKV2=1`,
+  default off, Q8_0 CPU/CUDA). They add 27.62 MiB of weights. Ten Windows CPU
+  checks, including 1024-token text and all five modalities, matched exactly;
+  CUDA's matching checks passed cosine 0.999, with minimum 0.999830 (mixed).
+  A fixed 106-request/32-token capture reduced quantized matmul launches from
+  22,680 to 17,640, combined matmul/fixup time from 155.5 to 130.1 ms, and total
+  captured kernel time by 7.2%. The 96-token capture also had lower raw totals,
+  but missing events prevent a clean comparison. These are GPU profiling
+  results, not deployed throughput gains; quiet-host comparisons remain needed.
+  An actual CUDA restart reused a separate-projection response while packed
+  fresh inference differed. Cache identity now includes the effective packed
+  mode for native and HTTP persistence, preserving the original identity when
+  off. That regression failed before the fix and passed on CUDA and native
+  Windows CPU after it. The CI CPU comparison can request packed QKV separately
+  and verifies its actual startup log before measuring. Other accelerators and
+  broader CPU hardware remain unqualified for this experimental path.
+
 Keep this file current as implementation decisions and verified evidence change.
