@@ -1278,3 +1278,29 @@ Keep this file current as implementation decisions and verified evidence change.
   the changed cache is CUDA-only. This capacity implementation needs its own
   CI run. Hardware, cross-request media batching, quiet comparisons and the
   full release matrix remain unfinished.
+
+- 2026-10-10: Twelve irregular singleton text lengths still rebuilt CUDA graphs
+  repeatedly despite four cache slots (83.2 ms shared-host baseline median).
+  Retained optional `EI_TEXT_BUCKETS2=1`, default off and CUDA-only: singleton
+  text <=256 tokens uses 32/64/128/256-token graph shapes. Ghost tokens attend
+  only other ghosts and have zero pooling weights; real positions and pooling
+  denominators use actual lengths. Arrays, longer text and raw media bypass it.
+  Same-build fresh-key candidate medians were 34.759 -> 11.305 ms and
+  28.578 -> 15.822 ms in reverse order. Four retained compute workspaces totaled
+  47.82 MiB, excluding weights and auxiliary inputs. Boundary transitions,
+  tiny inputs, changing contents, code and Japanese passed cosine >=0.999
+  (minimum 0.999623); arrays and >256-token inputs were exact. All five
+  modalities passed, with exact raw-media outputs. The existing persistent
+  cache-isolation test now supports this numeric variant and passed on CUDA.
+  Native Windows and CUDA builds passed.
+- The CUDA service now enables text buckets with four cache slots and its
+  existing 200 us wait, inference flags and persistent-cache paths; profiling
+  remains unset. Fresh final deployed requests for all five modalities exactly
+  matched the candidate and JSON/OpenAI checks passed. Paired deployed irregular
+  text medians were 16.140 -> 6.177 ms and 20.627 -> 6.274 ms in reverse order,
+  using unique HTTP keys and changed inputs. These measurements qualify this
+  shared-host workload only, not a quiet llama.cpp or general throughput claim.
+  The flag has a separate numeric fingerprint and is default off. Windows keeps
+  its existing installed CPU service because the change is CUDA-only. This
+  implementation still needs its own CI. Native target hardware, cross-request
+  media batching, quiet comparisons and the complete release matrix remain open.

@@ -54,6 +54,7 @@ typedef struct {
     graph2 graphs[1 + MAX_GRAPH_CACHE2]; // Normal workspace plus bounded short-text shapes.
     bool graph_cache;
     int graph_cache_slots;
+    bool text_buckets;
     bool cuda_global_attn;
     bool cuda_local_attn;
     bool cuda_local_range;
@@ -93,6 +94,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
+        s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -324,7 +326,8 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
 
 static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, size_t batch) {
     engine2 *s = e->gemma2;
-    size_t n = offsets[batch];
+    size_t actual = offsets[batch];
+    size_t n = state->graph_tokens;
     size_t padded = (n + 31) / 32 * 32;
     size_t full_keys = (size_t)state->full_mask->ne[0];
     size_t local_keys = (size_t)state->local_mask->ne[0];
@@ -339,6 +342,12 @@ static void prepare_layout(ei_engine *e, graph2 *state, const size_t *offsets, s
             seq[t] = (int32_t)b;
             pool[b * n + t] = 1.0f / (float)(offsets[b + 1] - offsets[b]);
         }
+    }
+    // Padded queries need finite attention too: 0 * NaN would poison pooling.
+    // Isolate them in a separate sequence, with zero pooling weights.
+    for (size_t t = actual; t < n; t++) {
+        pos[t] = 0;
+        seq[t] = (int32_t)batch;
     }
     ggml_backend_tensor_set(state->positions, pos, 0, n * sizeof *pos);
     ggml_backend_tensor_set(state->pool, pool, 0, n * batch * sizeof *pool);
@@ -399,14 +408,26 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
                     size_t batch, float *out, char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     size_t n = offsets[batch];
-    graph2 *state = select_graph(s, n, batch, raw);
+    size_t graph_n = n;
+    if (s->text_buckets && !raw && batch == 1 && n <= 256) {
+        graph_n = 32;
+        while (graph_n < n) graph_n *= 2;
+    }
+    graph2 *state = select_graph(s, graph_n, batch, raw);
     double started = s->profile ? now_ms() : 0;
-    bool rebuilt = !state->graph || state->graph_tokens != n || state->graph_batch != batch || state->graph_raw != raw;
-    if (!build_graph(e, state, n, batch, raw, err, err_len)) return false;
+    bool rebuilt = !state->graph || state->graph_tokens != graph_n || state->graph_batch != batch || state->graph_raw != raw;
+    if (!build_graph(e, state, graph_n, batch, raw, err, err_len)) return false;
     double built = s->profile ? now_ms() : 0;
     bool reused = s->reuse_inputs && state->layout_valid &&
         memcmp(state->input_offsets, offsets, (batch + 1) * sizeof *offsets) == 0;
-    ggml_backend_tensor_set(state->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
+    int32_t padded_ids[256];
+    if (graph_n != n) {
+        memcpy(padded_ids, input, n * sizeof *padded_ids);
+        memset(padded_ids + n, 0, (graph_n - n) * sizeof *padded_ids);
+        ggml_backend_tensor_set(state->input, padded_ids, 0, graph_n * sizeof *padded_ids);
+    } else {
+        ggml_backend_tensor_set(state->input, input, 0, n * (raw ? HIDDEN * sizeof(float) : sizeof(int32_t)));
+    }
     if (s->profile && rebuilt)
         fprintf(stderr, "backbone auxiliary inputs: positions=%s full_mask=%s local_mask=%s pool=%s, %.2f MiB dedicated\n",
                 ggml_backend_buffer_name(state->positions->buffer), ggml_backend_buffer_name(state->full_mask->buffer),
@@ -590,6 +611,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         }
         fprintf(stderr, "CUDA short-text graph cache: %d shapes, at most 256 tokens\n", s->graph_cache_slots);
     }
+    const char *text_buckets = getenv("EI_TEXT_BUCKETS2");
+    s->text_buckets = text_buckets && strcmp(text_buckets, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->text_buckets) fprintf(stderr, "CUDA text buckets: single sequences up to 256 tokens\n");
     const char *global_attn = getenv("EI_CUDA_GLOBAL_ATTN2");
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;

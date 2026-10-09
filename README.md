@@ -174,6 +174,20 @@ Eviction, unequal arrays, longer text and all five modalities retained exact
 outputs. Capacity changes preserve persistent-cache identity; the development
 service uses four slots and the existing 200 µs batch wait.
 
+`EI_TEXT_BUCKETS2=1` optionally rounds singleton CUDA text graphs of at most
+256 tokens to 32/64/128/256-token shapes. Padding is isolated from real tokens
+in attention and excluded from pooling. Arrays, longer text and media bypass
+this path. With four cache slots, twelve irregular lengths retained four
+graphs instead of rebuilding repeatedly. Fresh deployed requests measured
+16.1 -> 6.2 ms and 20.6 -> 6.3 ms median latency in opposite engine orders;
+the logged compute workspace reached 47.82 MiB, excluding weights and auxiliary
+inputs. These are shared-host observations for this varied-length workload,
+not a general throughput or llama.cpp comparison. Boundary lengths, changed
+inputs, code and Japanese text passed a 0.999 cosine gate (minimum 0.999623);
+arrays, longer text and media retained exact outputs. The default is off and
+persistent caches use a separate identity because padded text can differ
+slightly. The CUDA development service enables this option.
+
 `EI_QKV2=1` enables experimental packed Q/K/V projections for Q8_0 weights on
 CPU and CUDA. It uses 27.62 MiB of additional weights. In a fixed 106-request,
 32-token CUDA capture, quantized matmul launches fell from 22,680 to 17,640,
