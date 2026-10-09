@@ -198,6 +198,25 @@ five-image and long mixed inputs remained bit-identical on CUDA. In complete
 12-forward GPU traces, kernel count fell from 12,804 to 12,228 and total kernel
 time from 2209 to 2130 ms. The flag defaults off and applies only to CUDA.
 
+`EI_MEDIA_BATCH2=1` combines short inputs in a multimodal request array into
+bounded backbone groups: at most 1024 aggregate tokens and 512 per input. Longer
+inputs retain their original single-input forward and full 8192-token context.
+Encoding remains serialized, with one decoded input at a time and at most 2 MiB
+of pending raw rows. The flag defaults off and has its own persistent-cache domain.
+On the shared RTX 5060 Ti host, eight one-second audio inputs (264 total tokens,
+six CPU threads, other CUDA flags as above, response/result caches and profiling
+off) improved from 141.5 to 125.0 ms and 139.1 to 120.9 ms in reverse order.
+Windows CPU improved from 1426 to 1319 ms and 1376 to 1289 ms on that sample;
+a single mixed-array CPU pass regressed slightly (15.36 to 15.70 seconds).
+Mixed CUDA timings varied strongly under contention, so there is no general
+throughput claim. These are comparisons with our sequential implementation,
+not llama.cpp. Larger 4096-token groups were rejected after regressions.
+Minimum batch-versus-single cosine was 0.999793 across the exercised CPU/CUDA
+samples. Changed sequence boundaries, group splits, OpenAI ordering and persistent
+cache separation passed; other accelerators remain unverified. Dev CUDA enables
+this flag; the Windows primary keeps it off. Cross-request raw batching remains
+unfinished.
+
 Dependency debug logs are suppressed by default; normal diagnostics, warnings
 and startup timings remain visible. Set `EI_DEBUG_LOG2=1` to include dependency
 debug output. Large tensor inventories can delay startup when logs are written

@@ -78,12 +78,19 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                              : json{{"embeddings", json::array()}};
         size_t total_tokens = 0;
         double total_encoder = 0, total_backbone = 0;
+        std::vector<std::vector<ei_media_part>> items(input.size());
+        std::vector<std::vector<std::vector<unsigned char>>> owned(input.size());
+        std::vector<const ei_media_part *> pointers(input.size());
+        std::vector<size_t> counts(input.size()), token_counts(input.size());
+        std::vector<float> embeddings(input.size() * 768);
         for (size_t index = 0; index < input.size(); index++) {
             const json &content = input[index].at("content");
             if (!content.is_array() || content.empty() || content.size() > 64)
                 throw std::runtime_error("content must contain 1..64 parts");
-            std::vector<ei_media_part> parts(content.size());
-            std::vector<std::vector<unsigned char>> buffers(content.size());
+            auto &parts = items[index];
+            auto &buffers = owned[index];
+            parts.resize(content.size());
+            buffers.resize(content.size());
             for (size_t i = 0; i < content.size(); i++) {
                 const json &part = content[i];
                 std::string type = part.at("type").get<std::string>();
@@ -102,11 +109,31 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                     parts[i] = {kind, buffers[i].data(), buffers[i].size(), fps};
                 }
             }
-            float embedding[768];
-            size_t tokens = 0;
-            double encoder = 0, backbone = 0;
-            if (!ei_engine_embed_parts(e, parts.data(), parts.size(), embedding, &tokens,
-                                      &encoder, &backbone, err, err_len)) return false;
+            pointers[index] = parts.data();
+            counts[index] = parts.size();
+        }
+        if (ei_engine_media_batch_enabled(e) && input.size() > 1) {
+            for (size_t index = 0; index < input.size(); index += 256) {
+                size_t count = std::min(size_t(256), input.size() - index);
+                double encoder = 0, backbone = 0;
+                if (!ei_engine_embed_parts_batch(e, pointers.data() + index, counts.data() + index,
+                    count, embeddings.data() + index * 768, token_counts.data() + index,
+                    &encoder, &backbone, err, err_len)) return false;
+                total_encoder += encoder;
+                total_backbone += backbone;
+            }
+        } else {
+            for (size_t index = 0; index < input.size(); index++) {
+                double encoder = 0, backbone = 0;
+                if (!ei_engine_embed_parts(e, pointers[index], counts[index],
+                    embeddings.data() + index * 768, &token_counts[index],
+                    &encoder, &backbone, err, err_len)) return false;
+                total_encoder += encoder;
+                total_backbone += backbone;
+            }
+        }
+        for (size_t index = 0; index < input.size(); index++) {
+            float *embedding = embeddings.data() + index * 768;
             double energy = 0;
             for (int j = 0; j < dimensions; j++) energy += (double)embedding[j] * embedding[j];
             if (!(energy > 0)) throw std::runtime_error("zero embedding after truncation");
@@ -116,8 +143,7 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
                 : json(std::vector<float>(embedding, embedding + dimensions));
             if (openai) result["data"].push_back({{"object", "embedding"}, {"index", index}, {"embedding", vector}});
             else result["embeddings"].push_back(vector);
-            total_tokens += tokens;
-            total_encoder += encoder; total_backbone += backbone;
+            total_tokens += token_counts[index];
         }
         result["usage"] = {{"prompt_tokens", total_tokens}, {"total_tokens", total_tokens}};
         fprintf(stderr, "multimodal request: %zu inputs, %zu tokens, encoder %.2f ms, backbone %.2f ms\n",

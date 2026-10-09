@@ -56,6 +56,7 @@ typedef struct {
     bool cuda_local_range;
     bool reuse_inputs;
     bool fused_geglu;
+    bool media_batch;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -86,6 +87,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
+        s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
     };
     for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
         if (!domains[d]) continue;
@@ -591,6 +593,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->fused_geglu = geglu && strcmp(geglu, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->fused_geglu) fprintf(stderr, "Fused GeGLU: FFN and layer-input GELU/multiply\n");
+    const char *media_batch = getenv("EI_MEDIA_BATCH2");
+    s->media_batch = media_batch && strcmp(media_batch, "1") == 0;
+    if (s->media_batch) fprintf(stderr, "Multimodal backbone batching: up to 1024 tokens, inputs up to 512\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 
@@ -741,9 +746,11 @@ static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, cha
     return result;
 }
 
-bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
-                           float out[EI_N_EMBD], size_t *tokens, double *encoder_ms,
-                           double *backbone_ms, char *err, size_t err_len) {
+/* Caller holds media_mutex. Only one decoded input and one bounded pending raw
+ * batch are resident; encoder contexts never execute concurrently. */
+static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
+                          float **prepared, size_t *tokens, double *encoder_ms,
+                          char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     if (!s->media) return fail(err, err_len, "media encoders are not loaded; start with --mmproj PATH");
     if (!n_parts || n_parts > 64) return fail(err, err_len, "content must contain 1..64 parts");
@@ -767,7 +774,6 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
      * token-table reads do not use the backbone's scratch buffers; text can
      * progress during decoding and encoding. Lock order is media, then backbone,
      * and text takes only the backbone lock. */
-    pthread_mutex_lock(&s->media_mutex);
     double start = now_ms();
     size_t decoded_bytes = 0;
     size_t video_frames = 0;
@@ -843,13 +849,10 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
         cursor += nt;
     }
     *encoder_ms = now_ms() - start;
-    start = now_ms();
-    size_t offsets[] = {0, count};
-    pthread_mutex_lock(&s->mutex);
-    ok = compute(e, raw, true, offsets, 1, out, err, err_len);
-    pthread_mutex_unlock(&s->mutex);
-    *backbone_ms = now_ms() - start;
     *tokens = count;
+    *prepared = raw;
+    raw = NULL;
+    ok = true;
 done:
     free(raw);
     mtmd_input_chunks_free(chunks);
@@ -858,6 +861,87 @@ done:
         if (media[i].video_ctx) mtmd_helper_video_free(media[i].video_ctx);
     }
     free(media); free(texts); free(inputs);
+    return ok;
+}
+
+static bool compute_media(ei_engine *e, const float *raw, const size_t *offsets,
+                           size_t batch, float *out, double *elapsed,
+                           char *err, size_t err_len) {
+    engine2 *s = e->gemma2;
+    double start = now_ms();
+    pthread_mutex_lock(&s->mutex);
+    bool ok = compute(e, raw, true, offsets, batch, out, err, err_len);
+    pthread_mutex_unlock(&s->mutex);
+    *elapsed += now_ms() - start;
+    return ok;
+}
+
+bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
+                           float out[EI_N_EMBD], size_t *tokens, double *encoder_ms,
+                           double *backbone_ms, char *err, size_t err_len) {
+    engine2 *s = e->gemma2;
+    float *raw = NULL;
+    *backbone_ms = 0;
+    pthread_mutex_lock(&s->media_mutex);
+    bool ok = prepare_parts(e, parts, n_parts, &raw, tokens, encoder_ms, err, err_len);
+    if (ok) {
+        size_t offsets[] = {0, *tokens};
+        ok = compute_media(e, raw, offsets, 1, out, backbone_ms, err, err_len);
+    }
+    free(raw);
     pthread_mutex_unlock(&s->media_mutex);
+    return ok;
+}
+
+bool ei_engine_media_batch_enabled(const ei_engine *e) {
+    return ((const engine2 *)e->gemma2)->media_batch;
+}
+
+bool ei_engine_embed_parts_batch(ei_engine *e, const ei_media_part *const *parts,
+                                 const size_t *n_parts, size_t batch, float *out,
+                                 size_t *tokens, double *encoder_ms, double *backbone_ms,
+                                 char *err, size_t err_len) {
+    if (!parts || !n_parts || !batch || batch > 256)
+        return fail(err, err_len, "media batch must contain 1..256 inputs");
+    engine2 *s = e->gemma2;
+    // Larger groups lose to extra masked attention work in paired CUDA trials.
+    // Keep at most 2 MiB pending rows plus the current input (at most 16 MiB).
+    // Long inputs keep the original full-context forward unchanged.
+    const size_t limit = 1024, sequence_limit = 512;
+    float *pending;
+    size_t offsets[257] = {0};
+    size_t count = 0, first = 0;
+    bool ok = true;
+    *encoder_ms = *backbone_ms = 0;
+    pthread_mutex_lock(&s->media_mutex);
+    pending = ei_xmalloc(limit * HIDDEN * sizeof *pending);
+    for (size_t i = 0; ok && i < batch; i++) {
+        float *raw = NULL;
+        double elapsed = 0;
+        ok = prepare_parts(e, parts[i], n_parts[i], &raw, &tokens[i], &elapsed, err, err_len);
+        *encoder_ms += elapsed;
+        if (!ok) { free(raw); break; }
+        if (count && (offsets[count] + tokens[i] > limit || tokens[i] > sequence_limit)) {
+            ok = compute_media(e, pending, offsets, count, out + first * EI_N_EMBD,
+                               backbone_ms, err, err_len);
+            count = 0;
+            offsets[0] = 0;
+        }
+        if (ok && tokens[i] > sequence_limit) {
+            size_t single[] = {0, tokens[i]};
+            ok = compute_media(e, raw, single, 1, out + i * EI_N_EMBD,
+                               backbone_ms, err, err_len);
+        } else if (ok) {
+            if (!count) first = i;
+            memcpy(pending + offsets[count] * HIDDEN, raw, tokens[i] * HIDDEN * sizeof *raw);
+            offsets[count + 1] = offsets[count] + tokens[i];
+            count++;
+        }
+        free(raw);
+    }
+    if (ok && count) ok = compute_media(e, pending, offsets, count, out + first * EI_N_EMBD,
+                                        backbone_ms, err, err_len);
+    pthread_mutex_unlock(&s->media_mutex);
+    free(pending);
     return ok;
 }

@@ -17,16 +17,19 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch'], default='packed-qkv')
+p.add_argument('--mmproj', type=Path)
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
 if not 4 <= a.tokens <= 8192: p.error('--tokens must be 4..8192')
+if a.mode == 'media-batch' and not a.mmproj: p.error('media-batch requires --mmproj')
 flag, marker = {
     'packed-qkv': ('EI_QKV2', 'packed QKV:'),
     'cuda-global-attn': ('EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:'),
     'cuda-local-attn': ('EI_CUDA_LOCAL_ATTN2', 'CUDA local attention:'),
     'cuda-local-range': ('EI_CUDA_LOCAL_RANGE2', 'CUDA local mask range:'),
     'geglu': ('EI_GEGLU2', 'Fused GeGLU:'),
+    'media-batch': ('EI_MEDIA_BATCH2', 'Multimodal backbone batching:'),
 }[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
@@ -37,6 +40,7 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     command = [str(a.binary.resolve()), '--backend', a.backend,
         '--model', str(a.model.resolve()), '--bind', '127.0.0.1', '--port', str(port),
         '--cache-entries', '0', '--response-cache-mb', '1', '--persistent-cache-path', str(cache)]
+    if a.mmproj: command += ['--mmproj', str(a.mmproj.resolve())]
     @contextmanager
     def server(log_path):
         with log_path.open('wb') as log:
@@ -64,6 +68,9 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
                         raise
     def request(probe=False):
         body = {'input': 'q0' + ' x' * (a.tokens - 4)}
+        if a.mode == 'media-batch':
+            body = {'input': [{'content': [{'type': 'text', 'text': 'q'+str(i)+(' '+word)*(a.tokens-4+i)}]}
+                              for i, word in enumerate(('x', 'y', 'z'))]}
         if probe: body['qkv_cache_probe'] = True
         with urllib.request.urlopen(urllib.request.Request(f'http://127.0.0.1:{port}/api/embed',
             json.dumps(body).encode(), headers={'Content-Type':'application/json'}), timeout=180) as response:

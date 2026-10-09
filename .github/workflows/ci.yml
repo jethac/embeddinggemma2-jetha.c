@@ -57,6 +57,8 @@ jobs:
           python tests/installed_service2.py --prefix build-installed
           python scripts/stage-release2.py --build build-cmake --prefix build-installed --dist build-release-assets --target linux-x86_64 --backend cpu
           python tests/installer_runtime2.py --assets build-release-assets
+          python tests/media_batch2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+          python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode media-batch
           python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
           python tests/reuse_inputs2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
           python tests/cpu_fallback2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
@@ -144,6 +146,8 @@ jobs:
           shutil.copy2('build-release-assets/embeddinggemma2-jetha-windows-x86_64-cpu.exe', prefix / 'bin/embeddinggemma2-jetha.exe')
           PY
           python tests/installed_service2.py --prefix build-packaged
+          python tests/media_batch2.py --binary build-packaged/bin/embeddinggemma2-jetha.exe --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+          python tests/qkv_cache2.py --binary build-packaged/bin/embeddinggemma2-jetha.exe --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode media-batch
           build-packaged/bin/embeddinggemma2-jetha.exe --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
           service_pid=$!
           trap 'kill "$service_pid" 2>/dev/null || true' EXIT

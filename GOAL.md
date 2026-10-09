@@ -933,3 +933,45 @@ Keep this file current as implementation decisions and verified evidence change.
   Packaging commit 791546a passed all six CI jobs (37947457519). The first native
   Windows Gemma 2 job for 3595152 passed build/staging, PowerShell 5 installation
   and all five packaged modalities; all seven CI jobs passed (37947821308).
+
+- 2026-10-10: Media arrays performed one backbone forward per input. Eight
+  audio inputs measured 246.2 ms end to end, with 57.8 ms in encoders and 144.5 ms
+  in the backbone. An opt-in EI_MEDIA_BATCH2 path now prepares inputs serially,
+  combines short raw rows with per-sequence offsets, and computes one backbone
+  forward per bounded group. It preserves output order, per-input pooling,
+  usage totals and the complete 8192-token single-input path. Pending rows are
+  allocated under the existing media mutex, so one decoded input and at most
+  2 MiB pending rows coexist with the current input (at most 16 MiB raw rows).
+  This implements request-array batching; cross-request raw batching is still
+  unfinished. Its numeric cache domain is embeddinggemma2-media-batch-v1.
+- Initial 4096-token groups regressed four 1024-token inputs by 12-15% and eight
+  512-token inputs by 5-6% in both orders. Those groups are rejected. The retained
+  path groups at most 1024 tokens, with individual inputs capped at 512 for
+  grouping; longer inputs bypass batching. Eight-audio warm paired CUDA medians
+  were 141.519 -> 125.049 ms and 139.134 -> 120.905 ms in reverse order, caches and
+  profiling off. CPU medians were 1426.413 -> 1319.185 and 1376.291 -> 1289.362 ms.
+  A single CPU mixed-array pass slightly regressed (15361.56 -> 15701.72 ms).
+  CUDA mixed-array medians were 5403.321 -> 2149.443 and 2092.105 -> 1934.734 ms;
+  concurrent CPU work heavily distorted the first order, so these do not support
+  a general speedup claim. CPU primary remains off; dev CUDA enables the flag.
+- Default-off outputs matched the accepted CUDA service exactly for all five
+  modalities and the audio array. Enabled mixed arrays, unequal inputs, changed
+  equal-total sequence boundaries, group splits, and a full 8192-token input
+  between short inputs passed; longer bypassed inputs remained exact. Minimum
+  exercised CPU/CUDA cosine was 0.999793. Raw batch=3/8 graph traces confirmed
+  actual combined forwards. Windows CPU, native Linux CPU and CUDA passed the
+  focused isolation/splitting/OpenAI-ordering check. Windows/CUDA cached and
+  fresh batched responses matched, with a distinct persistent cache identity;
+  original and batched vectors genuinely differed. Linux/Windows CI runs these
+  safety checks. Other accelerators' batching remains unverified.
+- b55577b passed all seven CI jobs (37949612556). The narrowed-lock improvement
+  and native Windows packaging checks are now terminal successes. The new
+  multimodal batching implementation still needs its own complete CI run.
+
+- Dev CUDA is running EI_MEDIA_BATCH2=1 with the accepted attention/GeGLU/input
+  reuse flags and existing persistent response cache settings. Its eight-audio
+  array exactly matched the qualified uncached candidate. Fresh text, image,
+  audio, video and mixed requests completed on both primaries; minimum CUDA
+  versus CPU cosine was 0.99983622. Windows primary keeps the accepted b55577b
+  installed binary with batching off; the new Windows build and opt-in path were
+  exercised separately. No binary release or version/tag change was made.
