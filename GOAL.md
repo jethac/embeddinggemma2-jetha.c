@@ -95,6 +95,11 @@ names or theoretical throughput alone.
   changes, bandwidth limits, core count, thread count, and sequence length.
   The local Xeon W-2135 provides hardware for AVX-512 validation; newer
   extensions such as VNNI/BF16 need hardware that actually supports them.
+- Publish measured performance comparisons against pinned llama.cpp in the
+  README, using the same weights, hardware, thread count, input tokens, output
+  dimensions and cache policy. Include losses and optimize from them. Measure
+  both engine orders; distinguish uncached inference from caching/singleflight
+  gains, and identify contention or missing modality/backend coverage.
 - Use efficient quantized kernels, persistent workspaces, fused operations
   where beneficial, and efficient matrix/attention execution on accelerators.
 - Use the user's tailnet GB10 ThinkStation PGX and Strix Halo NUC as native
@@ -375,6 +380,18 @@ Tests and documentation support that outcome; they do not define completion.
   These are FP32 graphs, totaling about 2.98 GB; BF16 NPU compilation, operator
   placement, and execution remain untested because Strix Halo access is unresolved.
   Successful CPU execution is not evidence of NPU compatibility.
+- The README now contains matched, uncached text comparisons against pinned
+  llama.cpp on the local Xeon / RTX 5060 Ti WSL host. The six-cell geometric
+  means are 1.01x on CPU AVX-512 and 1.16x on CUDA, with minimum cosine
+  0.99997 / 0.99991. The harness starts fresh servers per cell, checks concurrent
+  outputs, measures both orders for at least eight seconds and retains losses.
+  CPU baseline configuration explicitly excludes GPU devices and operation/KV
+  offload: zero GPU weight layers alone did not establish a CPU-only comparison.
+  Shared-host preliminary runs varied widely; the README uses the final full
+  matched runs and shows per-order ranges. Short concurrent CUDA text is a real
+  deficit (0.79x in the final run). Measure its graph rebuilding, scheduling and
+  compute costs before choosing the next optimization. Media, other hardware,
+  larger concurrency and wider token ranges still need comparisons.
 - Local reference sources, tool environments, models, and build outputs remain
   ignored and must not be committed.
 

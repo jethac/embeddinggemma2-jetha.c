@@ -15,7 +15,76 @@ this project's own names and an extended platform matrix.
 text, image, audio, video, and mixed requests on Windows CPU and Linux CUDA
 development services. This is experimental: full reference parity, accelerator measurements,
 broader CPU/platform coverage, media resource handling, and release integration remain
-unfinished. There are no binary releases or verified GPU/NPU performance claims.
+unfinished. There are no binary releases or verified NPU performance claims.
+
+## Performance versus llama.cpp
+
+Development measurements on a shared Xeon W-2135 / RTX 5060 Ti 16 GB host,
+Ubuntu under WSL, GCC 13.3 and CUDA 13.0 (2026-10-09). Both engines use the same
+Q8_0 backbone, six CPU threads, the same compiled AVX-512/CUDA GGML kernels,
+identical exact-token inputs, mean pooling and normalized 768-dimensional float
+output. The llama.cpp baseline is pinned to
+`de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b`. Neither engine loads media encoders
+for these text measurements. Exact-result, response and prompt caches are off.
+
+Each cell starts fresh servers, checks concurrent embedding quality, warms both
+engines and measures both orders for at least eight seconds per engine/order.
+Before each pass, the five-sample mean non-benchmark CPU load must be below
+150% (100% represents one logical core). The host remains shared: the order
+ranges below expose substantial variability in some cells and limit general
+performance claims. Throughput is the mean of the two passes; the range spans
+the two order-paired ratios. Every completed cell is retained, including losses.
+
+| Backend | Tokens | Concurrent clients | Ours embeddings/s | llama.cpp embeddings/s | Throughput ratio | Ratio by order |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU AVX-512 | 32 | 1 | 16.00 | 16.37 | 0.98x | 0.94–1.01x |
+| CPU AVX-512 | 32 | 4 | 17.53 | 17.88 | 0.98x | 0.96–1.00x |
+| CPU AVX-512 | 256 | 1 | 2.11 | 2.18 | 0.97x | 0.95–0.99x |
+| CPU AVX-512 | 256 | 4 | 2.14 | 2.13 | 1.01x | 0.94–1.08x |
+| CPU AVX-512 | 1024 | 1 | 0.45 | 0.41 | 1.09x | 1.02–1.18x |
+| CPU AVX-512 | 1024 | 4 | 0.46 | 0.45 | 1.03x | 1.03–1.03x |
+| CUDA | 32 | 1 | 100.29 | 94.69 | 1.06x | 0.96–1.17x |
+| CUDA | 32 | 4 | 70.06 | 89.01 | 0.79x | 0.77–0.80x |
+| CUDA | 256 | 1 | 120.55 | 84.45 | 1.43x | 1.43–1.43x |
+| CUDA | 256 | 4 | 87.24 | 83.11 | 1.05x | 1.03–1.07x |
+| CUDA | 1024 | 1 | 43.82 | 28.35 | 1.55x | 1.51–1.59x |
+| CUDA | 1024 | 4 | 32.61 | 25.53 | 1.28x | 1.07–1.48x |
+
+CPU's geometric mean across its six cells is **1.01x**, with small losses on
+short/medium single-client workloads. Minimum CPU cosine similarity is
+**0.99997**. CUDA's geometric mean across its six cells is **1.16x**. Minimum CUDA
+cosine similarity against llama.cpp was **0.99991**, above the 0.999 gate.
+CUDA wins five cells by mean throughput, but short concurrent text loses in both
+orders. Single-client medium/long text wins hold in both orders. Short single-client
+and long concurrent rates still vary; larger concurrency and steadier hardware
+measurements remain necessary. These figures cover
+text; image, audio, video, mixed inputs and other hardware require separate
+comparisons. Cache and singleflight savings are separate serving measurements.
+
+Reproduce with [perf/compare_llamacpp2.py](perf/compare_llamacpp2.py). Build the
+native server using the build instructions below and build `llama-server` from its pinned dependency
+checkout (`build-cmake/_deps/llama-src`) in a separate build directory. Match
+backend, compiler, CPU ISA and GGML options between builds. The measured builds
+use `GGML_NATIVE=OFF`, `GGML_AVX512=ON`, `GGML_OPENMP=OFF`, `GGML_CUDA=ON`,
+`CMAKE_CUDA_ARCHITECTURES=120a` and static libraries; the native build also uses
+`EI_CPU_DISPATCH=OFF`. This static AVX-512 configuration requires a compatible
+CPU. The llama.cpp build enables `LLAMA_BUILD_SERVER` and `LLAMA_BUILD_TOOLS`.
+
+```sh
+python3 perf/compare_llamacpp2.py \
+  --model model/embeddinggemma-2-Q8_0.gguf \
+  --embeddinggemma-bin build-cmake/bin/embeddinggemma2-jetha \
+  --llama-server build-llama/bin/llama-server \
+  --backend cuda --threads 6 --token-counts 32,256,1024 \
+  --concurrency 1,4 --target-seconds 8
+```
+
+Use `--backend cpu` for the CPU comparison. The harness prints both server
+commands, per-pass latency/throughput, host-load samples and cosine results.
+CPU comparisons explicitly disable llama.cpp GPU devices, host-operation
+offload and KV offload; zero GPU weight layers alone still permits host-operation
+offload in this pinned version.
+It uses ports 42674/42675 by default and rejects occupied ports.
 
 ## Build and run the development server
 
