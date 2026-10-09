@@ -999,3 +999,33 @@ Keep this file current as implementation decisions and verified evidence change.
   Cross-request raw batching remains unfinished, and accelerator/hardware/release
   gaps remain. Request-array batching commit 05c4e53 passed all seven CI jobs
   (37953271489); this transport fix still needs its own CI run.
+
+- 2026-10-10: Transport commit 6cddc87 passed all seven CI jobs (37956101787).
+  A cross-request prototype merged compatible queued JSON requests, with bounded
+  eight-request/8 MiB groups, error isolation and a separate numeric cache domain.
+  Its first eight-client audio waves regressed from 73-74 to about 101 ms and
+  32-client waves from 285-286 to 319-322 ms. Raw graph caching, slots by batch
+  width, and a demand-only 0.5 ms collection window still produced inconsistent
+  gains and regressions. The entire prototype was removed; no scheduler flag,
+  cache domain, extra graph slots or admission change is retained or deployed.
+  Cross-request batching remains required. The next approach must avoid repeated
+  JSON materialization and transient graph-shape overhead, rather than ship the
+  regressing prototype.
+- Changed course to media parsing. The actual decoder's alphabet search cost
+  273-310 ms for 8 MiB in an isolated paired run; a byte lookup cost 45-52 ms,
+  with identical bytes across the full alphabet, padding and data-URL samples.
+  The retained lookup preserves the original bounds and error handling and
+  introduces no numeric path or cache identity change. Real malformed padding,
+  invalid alphabet and non-ASCII input were still rejected with HTTP 400.
+- Matching 64 MiB response caches, unique keys and native Linux fresh connections
+  measured a 12,960,131-byte 1800x1800 PPM upload at 780.027 -> 610.578 ms and
+  645.479 -> 541.843 ms in reverse order (six measured warm calls per pass).
+  Body construction was outside the HTTP timer. Earlier passes during builds
+  were 951 -> 754 and 977 -> 686 ms; these shared-host observations establish
+  no general throughput claim. All large-upload vectors were identical.
+  The final CUDA primary is deployed with its existing flags and persistence;
+  all five fresh modalities exactly matched the qualified candidate, and the
+  same fresh large upload completed at a later 454.432 ms median. Native Windows,
+  Linux CPU and CUDA builds passed. Windows primary still runs its accepted
+  installed binary; the lookup implementation needs its own CI run. Hardware,
+  cross-request batching and complete release-matrix gaps remain unfinished.

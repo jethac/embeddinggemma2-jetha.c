@@ -3,6 +3,7 @@ extern "C" {
 #include "media2.h"
 }
 #include "nlohmann/json.hpp"
+#include <array>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -17,7 +18,14 @@ static std::vector<unsigned char> decode_base64(std::string text) {
         text.erase(0, split + 8);
     }
     if (text.empty() || text.size() % 4) throw std::runtime_error("invalid base64 media");
-    static const std::string alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    static const auto lookup = [] {
+        std::array<signed char, 256> table;
+        table.fill(-1);
+        const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (size_t i = 0; i < 64; i++)
+            table[static_cast<unsigned char>(alphabet[i])] = static_cast<signed char>(i);
+        return table;
+    }();
     std::vector<unsigned char> bytes;
     bytes.reserve(text.size() / 4 * 3);
     for (size_t i = 0; i < text.size(); i += 4) {
@@ -30,8 +38,8 @@ static std::vector<unsigned char> decode_base64(std::string text) {
                 ++padding;
                 value <<= 6;
             } else {
-                auto p = alphabet.find(c);
-                if (padding || p == std::string::npos) throw std::runtime_error("invalid base64 media");
+                int p = lookup[static_cast<unsigned char>(c)];
+                if (padding || p < 0) throw std::runtime_error("invalid base64 media");
                 value = (value << 6) | (unsigned)p;
             }
         }

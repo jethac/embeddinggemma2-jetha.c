@@ -427,6 +427,17 @@ time. Run it from Windows against the Linux endpoint:
 Native Linux and Windows checks cover reusable connections and error framing;
 reproducing the relay stall requires the Windows-to-WSL path.
 
+Media base64 decoding now uses a byte lookup table instead of searching the
+alphabet for every character. On the same shared host, an uncached 1800×1800
+PPM image (12,960,131-byte JSON request) measured 780 -> 611 ms and 645 -> 542 ms
+in reverse order, about 16–22% lower HTTP latency. Native Linux clients used
+fresh connections, matching 64 MiB response caches and unique keys; JSON body
+construction was outside the timer. These paired observations cover that upload,
+not general inference throughput. All five modalities remained byte-identical
+to the accepted service, including malformed-base64 rejection behavior.
+The deployed CUDA primary completed the same fresh upload at a 454 ms median
+in a later pass; that separate pass does not establish an additional speedup.
+
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
 is saved to `cache.bin.responses` on graceful shutdown, alongside the text embedding
