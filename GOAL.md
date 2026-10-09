@@ -618,6 +618,13 @@ Tests and documentation support that outcome; they do not define completion.
   on current Windows CPU and CUDA builds.
   The 2049-token request also passed with packed QKV enabled (cosine 0.999922),
   retaining one CUDA split.
+  A fresh matched CUDA comparison with packed QKV, graph caching and global
+  attention enabled reused the service's exact current static GGML archives in
+  pinned llama.cpp. Its quiet-host guard rejected the run before any measured
+  cell: Windows CPU stayed around 1179–1200% for five minutes. No new llama.cpp
+  throughput result was published, and the experimental flags remain off by
+  default. Comparison metadata now records the graph-cache flag and checks its
+  actual startup marker alongside the other numeric modes.
 
 - CI 37902823700 hit its 120-second Metal readiness deadline while the service
   was still initializing the embedded library. The workflow now observes the
