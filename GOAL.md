@@ -465,5 +465,10 @@ Tests and documentation support that outcome; they do not define completion.
   explicit-Metal CI journey reproduced the bug before the fix; its rerun must
   pass before claiming Metal execution. A virtual GPU is not evidence of physical
   Apple Silicon performance.
+- The relocated Linux source install also completed the uncached text journey
+  under `qemu-x86_64 -cpu qemu64` with AVX unavailable and all CPU plugins present.
+  The baseline plugin was selected, and the response contained 768 finite
+  normalized dimensions. The existing CI fallback journeys now use the installed
+  executable, covering deployment dependencies as well as build-tree dispatch.
 
 Keep this file current as implementation decisions and verified evidence change.

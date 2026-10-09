@@ -45,8 +45,8 @@ jobs:
           python scripts/download-model2.py
           cmake --install build-cmake --prefix "$PWD/build-installed"
           python tests/installed_service2.py --prefix build-installed
-          python tests/cpu_fallback2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
-          python tests/cpu_fallback2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --emulator /usr/bin/qemu-x86_64
+          python tests/cpu_fallback2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
+          python tests/cpu_fallback2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --emulator /usr/bin/qemu-x86_64
           build-installed/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
           service_pid=$!
           trap 'kill "$service_pid" 2>/dev/null || true' EXIT
