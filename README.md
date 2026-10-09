@@ -183,8 +183,9 @@ guest cannot qualify a saturated Windows host. Set `EI_PROFILE_BACKBONE2=1` on
 the native server to log graph construction, input preparation, synchronized
 execution and output processing times; leave it unset for throughput measurements.
 `EI_PROFILE_MEDIA2=1` splits decoding, preprocessing and encoder/assembly time;
-for video it also separates lazy frame-read waits from remaining preprocessing.
-leave it unset for normal serving.
+it also logs encoder graph construction, allocation, input preparation and compute.
+For video it separates lazy frame-read waits from remaining preprocessing.
+Leave it unset for normal serving.
 
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup

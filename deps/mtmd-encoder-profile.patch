@@ -1,0 +1,43 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -4551,13 +4551,19 @@
+         ctx->rng.seed(params->seed == UINT32_MAX ? std::random_device{}() : params->seed);
+     }
+ 
++    const bool phase_profile = std::getenv("EI_PROFILE_MEDIA2") != nullptr;
++    const int64_t graph_start = phase_profile ? ggml_time_us() : 0;
++
+     // build the inference graph
+     ggml_backend_sched_reset(ctx->sched.get());
+     ggml_cgraph * gf = clip_get_graph_builder(ctx, imgs, params)->build();
++    const int64_t graph_built = phase_profile ? ggml_time_us() : 0;
+     if (!ggml_backend_sched_alloc_graph(ctx->sched.get(), gf)) {
+         LOG_ERR("%s: failed to allocate compute graph\n", __func__);
+         return false;
+     }
++
++    const int64_t graph_allocated = phase_profile ? ggml_time_us() : 0;
+ 
+     // set inputs
+     const auto & model   = ctx->model;
+@@ -5874,10 +5880,20 @@
+         }
+     }
+ 
++    const int64_t inputs_ready = phase_profile ? ggml_time_us() : 0;
+     auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
++    const int64_t compute_done = phase_profile ? ggml_time_us() : 0;
+     if (status != GGML_STATUS_SUCCESS) {
+         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
+         return false;
++    }
++
++    if (phase_profile) {
++        LOG_INF("encoder phases: build=%.3f alloc=%.3f inputs=%.3f compute=%.3f ms\n",
++            (graph_built - graph_start) / 1000.0,
++            (graph_allocated - graph_built) / 1000.0,
++            (inputs_ready - graph_allocated) / 1000.0,
++            (compute_done - inputs_ready) / 1000.0);
+     }
+ 
+     // the last node is the embedding tensor, code2wav has no out_embd
