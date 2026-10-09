@@ -78,6 +78,22 @@ def validate(endpoint, body):
     return vector, result['usage']['prompt_tokens']
 
 
+def diagnose_quality(kind, inputs, endpoints, concurrent):
+    # A failed concurrent gate must distinguish serving/batch drift from a
+    # model discrepancy. These calls are outside timing and never relax it.
+    for i, pair in enumerate(inputs):
+        serial = [validate(endpoint, pair[engine])
+                  for engine, endpoint in enumerate(endpoints)]
+        print(json.dumps({'quality_failure': kind, 'client': i,
+                          'tokens': [concurrent[0][i][1], concurrent[1][i][1],
+                                     serial[0][1], serial[1][1]],
+                          'concurrent_cross_cosine': cosine_similarity(concurrent[0][i][0], concurrent[1][i][0]),
+                          'serial_cross_cosine': cosine_similarity(serial[0][0], serial[1][0]),
+                          'ours_concurrent_vs_serial': cosine_similarity(concurrent[0][i][0], serial[0][0]),
+                          'llama_concurrent_vs_serial': cosine_similarity(concurrent[1][i][0], serial[1][0])}),
+              flush=True)
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', type=Path, required=True)
@@ -155,7 +171,9 @@ def main():
                     if tokens != [v[1] for v in quality[1]]:
                         raise RuntimeError(f'{kind} token counts differ: {tokens} vs {[v[1] for v in quality[1]]}')
                     minimum = min(cosine_similarity(x[0], y[0]) for x, y in zip(*quality))
-                    if minimum < .999: raise RuntimeError(f'{kind} output mismatch: cosine {minimum:.8f}')
+                    if minimum < .999:
+                        diagnose_quality(kind, inputs[:concurrency], (ours, llama), quality)
+                        raise RuntimeError(f'{kind} output mismatch: cosine {minimum:.8f}')
                     row = {'modality': kind, 'concurrency': concurrency, 'tokens': tokens,
                            'minimum_cosine': minimum}
                     print(json.dumps(row), flush=True)

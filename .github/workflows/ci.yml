@@ -14,6 +14,14 @@ on:
         description: Compare uncached image, audio, video and mixed CPU requests with pinned llama.cpp
         type: boolean
         default: false
+      media_modalities:
+        description: Modalities for the matched media comparison
+        type: string
+        default: 'image,audio,video,mixed'
+      media_validate_only:
+        description: Check matched media outputs without throughput timing
+        type: boolean
+        default: false
       packed_qkv:
         description: Enable experimental packed QKV in the CPU comparison
         type: boolean
@@ -121,10 +129,14 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
         env:
           EI_QKV2: ${{ inputs.packed_qkv && '1' || '0' }}
+          MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
+          MEDIA_VALIDATE_ONLY: ${{ inputs.media_validate_only && '1' || '0' }}
         run: |
           lscpu
           cc --version
-          python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --concurrency 1,4 --rounds 5 --target-seconds 8
+          args=()
+          if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
+          python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
