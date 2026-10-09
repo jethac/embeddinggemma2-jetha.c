@@ -63,12 +63,15 @@ typedef struct {
     bool reuse_inputs;
     bool fused_geglu;
     bool media_batch;
+    bool media_pipeline;
     bool jpeg_turbo;
     uint64_t graph_clock;
     int threads;
     bool profile;
     pthread_mutex_t mutex;
     pthread_mutex_t media_mutex;
+    pthread_cond_t media_slot;
+    size_t media_inflight;
     struct llama_model *vocab_model;
     mtmd_context *media;
 } engine2;
@@ -477,6 +480,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->profile = getenv("EI_PROFILE_BACKBONE2") != NULL;
     pthread_mutex_init(&s->mutex, NULL);
     pthread_mutex_init(&s->media_mutex, NULL);
+    pthread_cond_init(&s->media_slot, NULL);
     s->threads = 6;
     const char *threads = getenv("EI_THREADS");
     if (threads) {
@@ -649,6 +653,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *media_batch = getenv("EI_MEDIA_BATCH2");
     s->media_batch = media_batch && strcmp(media_batch, "1") == 0;
     if (s->media_batch) fprintf(stderr, "Multimodal backbone batching: up to 1024 tokens, inputs up to 512\n");
+    const char *media_pipeline = getenv("EI_MEDIA_PIPELINE2");
+    s->media_pipeline = media_pipeline && strcmp(media_pipeline, "1") == 0;
+    if (s->media_pipeline) fprintf(stderr, "Multimodal pipeline: up to two singleton raw inputs\n");
     const char *jpeg_turbo = getenv("EI_JPEG_TURBO2");
     s->jpeg_turbo = jpeg_turbo && strcmp(jpeg_turbo, "1") == 0;
     if (s->jpeg_turbo) fprintf(stderr, "JPEG decoding: libjpeg-turbo 3.2.0\n");
@@ -716,6 +723,7 @@ void ei_engine_free(ei_engine *e) {
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);
         pthread_mutex_destroy(&s->mutex);
         pthread_mutex_destroy(&s->media_mutex);
+        pthread_cond_destroy(&s->media_slot);
         free(s);
     }
     ei_tokenizer_free(&e->tokenizer);
@@ -975,12 +983,26 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     float *raw = NULL;
     *backbone_ms = 0;
     pthread_mutex_lock(&s->media_mutex);
+    if (s->media_pipeline) {
+        // Reserve before decoding. Two owned raw inputs cost at most 32 MiB;
+        // request-array batching retains its own bounded 18 MiB workspace.
+        // Only one input's decoded media is resident under media_mutex.
+        while (s->media_inflight == 2)
+            pthread_cond_wait(&s->media_slot, &s->media_mutex);
+        s->media_inflight++;
+    }
     bool ok = prepare_parts(e, parts, n_parts, &raw, tokens, encoder_ms, err, err_len);
+    if (s->media_pipeline) pthread_mutex_unlock(&s->media_mutex);
     if (ok) {
         size_t offsets[] = {0, *tokens};
         ok = compute_media(e, raw, offsets, 1, out, backbone_ms, err, err_len);
     }
     free(raw);
+    if (s->media_pipeline) {
+        pthread_mutex_lock(&s->media_mutex);
+        s->media_inflight--;
+        pthread_cond_signal(&s->media_slot);
+    }
     pthread_mutex_unlock(&s->media_mutex);
     return ok;
 }
