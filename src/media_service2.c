@@ -3,6 +3,7 @@
  * executes the request. Unique leaders use the engine's media mutex; backbone
  * execution shares the text mutex. Raw backbone batching is separate work. */
 #include "media_service2.h"
+#include "request_hash2.h"
 #include <pthread.h>
 
 typedef struct media_job media_job;
@@ -33,12 +34,7 @@ static size_t job_bytes(const media_job *job) {
 }
 
 static uint64_t request_hash(const char *body, size_t len, bool openai) {
-    uint64_t h = (1469598103934665603ull ^ (openai ? 3u : 2u)) * 1099511628211ull;
-    for (size_t i = 0; i < len; i++) {
-        h ^= (unsigned char)body[i];
-        h *= 1099511628211ull;
-    }
-    return h;
+    return ei_request_hash2(body, len, openai ? 3u : 2u);
 }
 
 static media_job **find_job(ei_media_service *s, uint64_t hash,

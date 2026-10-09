@@ -461,6 +461,15 @@ The original parser remains a fallback for parser limits and unusual numbers,
 and malformed JSON remains rejected. simdjson's MIT notice ships with runtime
 packages; the project's license remains MIT.
 
+In-memory media admission and response-cache indexing use the already-vendored
+xxHash, retaining full-key equality checks and the existing snapshot checksum.
+The same fresh upload measured 292 -> 261 ms and 293 -> 253 ms in reverse order,
+about 11–14% lower HTTP latency, with identical embeddings. Cached-upload timing
+was inconsistent, so no cache-hit speedup is established. Both development
+primaries restored an old response snapshot and served an exact cached response
+without inference. These shared-host observations establish no general
+throughput or Windows inference speedup.
+
 To reuse exact media results after a restart, add `--persistent-cache-path cache.bin`
 and keep `--response-cache-mb` nonzero (default 64). A bounded HTTP response snapshot
 is saved to `cache.bin.responses` on graceful shutdown, alongside the text embedding

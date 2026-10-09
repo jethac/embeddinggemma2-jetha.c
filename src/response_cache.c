@@ -4,6 +4,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #include "windows_compat.h"
+#ifdef EI_GEMMA2
+#include "request_hash2.h"
+#endif
 
 typedef struct response_cache_entry response_cache_entry;
 
@@ -35,6 +38,14 @@ static uint64_t hash_bytes(const char *data, size_t len) {
         hash *= 1099511628211ull;
     }
     return hash;
+}
+
+static uint64_t lookup_hash(const char *data, size_t len) {
+#ifdef EI_GEMMA2
+    return ei_request_hash2(data, len, 0);
+#else
+    return hash_bytes(data, len);
+#endif
 }
 
 static size_t next_power_of_two(size_t value) {
@@ -130,7 +141,7 @@ bool ei_response_cache_acquire(ei_response_cache *cache,
                                const char *key, size_t key_len,
                                ei_response_cache_value *value) {
     if (!cache || !key || !value) return false;
-    uint64_t hash = hash_bytes(key, key_len);
+    uint64_t hash = lookup_hash(key, key_len);
     pthread_mutex_lock(&cache->mutex);
     response_cache_entry *entry = *entry_slot(cache, hash, key, key_len);
     if (!entry) {
@@ -167,7 +178,7 @@ void ei_response_cache_insert(ei_response_cache *cache,
     if (bytes > cache->max_bytes) return;
 
     response_cache_entry *candidate = ei_xcalloc(1, bytes);
-    candidate->hash = hash_bytes(key, key_len);
+    candidate->hash = lookup_hash(key, key_len);
     candidate->key_len = key_len;
     candidate->value_len = value_len;
     memcpy(candidate->data, key, key_len);

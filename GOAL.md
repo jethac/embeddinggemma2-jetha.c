@@ -1106,3 +1106,31 @@ Keep this file current as implementation decisions and verified evidence change.
   dimensions/order and malformed-input rejection, and is included in native CI.
   This parser implementation needs its own CI run. Hardware, cross-request
   batching, quiet llama.cpp comparisons and the full release matrix remain open.
+
+- 2026-10-10: Actual full-body hashing of a 12,960,131-byte request measured
+  12.45/12.50 ms per FNV pass versus 1.37/1.38 ms with the already-vendored
+  xxHash. Fresh media requests perform three indexing passes. The retained
+  EmbeddingGemma 2 path uses xxHash for admission and response-cache lookup,
+  preserving full-key/API equality, bounded admission and the original FNV
+  snapshot checksum. Legacy 300M lookup retains its original hash; its response
+  cache check passed without the new header dependency. No inference kernels,
+  numeric cache identities or persistence format change.
+- Matching cache settings, unique keys and native Linux fresh connections
+  measured the same upload at 292.196 -> 260.758 ms and 292.827 -> 253.065 ms
+  in reverse order (six warm calls per pass), with identical embeddings. Cached
+  upload comparisons were inconsistent (58.3/47.2 then 27.5/48.3 ms), so no
+  cache-hit gain is claimed. Native Windows and CUDA builds, admission safety,
+  persistence corruption/budget/identity checks and JSON safety passed. All five
+  fresh candidate vectors exactly matched the old services.
+- Both primaries are deployed with their existing settings. Each loaded a
+  snapshot written by the old service and returned an exact known response
+  without a new inference log entry, exercising checksum compatibility and
+  rebuilding the in-memory index. Fresh deployed CUDA vectors exactly matched
+  its candidate; the installed Windows primary completed all five modalities
+  and JSON/OpenAI checks. Windows runtime DLLs load from the installed prefix.
+  The Windows executable/runtime was staged and installed with PowerShell 5
+  local download fixtures and loads outside the build tree. No Windows inference
+  speedup or general throughput gain is claimed. This change needs its own CI;
+  parser commit 91b5fc9 still has two native jobs running as of the last check.
+  Hardware, cross-request batching, quiet comparisons and the complete release
+  matrix remain unfinished.
