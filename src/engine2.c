@@ -20,6 +20,7 @@
 #define FF 2048
 #define LAYERS 24
 #define GRAPH_NODES 4096
+#define MAX_GRAPH_CACHE2 4
 
 static void dependency_log(enum ggml_log_level level, const char *text, void *debug) {
     // Tensor inventories and graph-reuse messages can make synchronous log
@@ -50,8 +51,9 @@ typedef struct {
     struct ggml_tensor *qkv[LAYERS];
     ggml_backend_t backends[2];
     int n_backends;
-    graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
+    graph2 graphs[1 + MAX_GRAPH_CACHE2]; // Normal workspace plus bounded short-text shapes.
     bool graph_cache;
+    int graph_cache_slots;
     bool cuda_global_attn;
     bool cuda_local_attn;
     bool cuda_local_range;
@@ -123,7 +125,7 @@ static struct ggml_tensor *norm(struct ggml_context *ctx, struct ggml_tensor *x,
 static graph2 *select_graph(engine2 *s, size_t tokens, size_t batch, bool raw) {
     if (!s->graph_cache || raw || tokens > 256) return &s->graphs[0];
     graph2 *chosen = &s->graphs[1];
-    for (int i = 1; i <= 2; i++) {
+    for (int i = 1; i <= s->graph_cache_slots; i++) {
         graph2 *state = &s->graphs[i];
         if (state->graph && state->graph_tokens == tokens &&
             state->graph_batch == batch && state->graph_raw == raw) {
@@ -308,7 +310,7 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
     state->graph_raw = raw;
     if (s->graph_cache && state != &s->graphs[0]) {
         size_t workspace = 0;
-        for (int slot = 1; slot <= 2; slot++) {
+        for (int slot = 1; slot <= s->graph_cache_slots; slot++) {
             if (!s->graphs[slot].sched) continue;
             for (int backend = 0; backend < s->n_backends; backend++)
                 workspace += ggml_backend_sched_get_buffer_size(s->graphs[slot].sched,
@@ -576,7 +578,18 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     if (!s->graphs[0].sched) ei_die("cannot initialize graph scheduler");
     const char *cache = getenv("EI_GRAPH_CACHE2");
     s->graph_cache = cache && strcmp(cache, "1") == 0 && strncmp(e->backend_name, "CUDA", 4) == 0;
-    if (s->graph_cache) fprintf(stderr, "CUDA short-text graph cache: two shapes, at most 256 tokens\n");
+    s->graph_cache_slots = 2;
+    if (s->graph_cache) {
+        const char *slots = getenv("EI_GRAPH_CACHE_SLOTS2");
+        if (slots) {
+            char *end = NULL;
+            long count = strtol(slots, &end, 10);
+            if (end == slots || *end || count < 2 || count > MAX_GRAPH_CACHE2)
+                ei_die("EI_GRAPH_CACHE_SLOTS2 must be 2..%d", MAX_GRAPH_CACHE2);
+            s->graph_cache_slots = (int)count;
+        }
+        fprintf(stderr, "CUDA short-text graph cache: %d shapes, at most 256 tokens\n", s->graph_cache_slots);
+    }
     const char *global_attn = getenv("EI_CUDA_GLOBAL_ATTN2");
     s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
@@ -654,7 +667,7 @@ void ei_engine_free(ei_engine *e) {
     engine2 *s = e->gemma2;
     if (s) {
         if (s->media) mtmd_free(s->media);
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i <= MAX_GRAPH_CACHE2; i++) {
             if (s->graphs[i].sched) ggml_backend_sched_free(s->graphs[i].sched);
             if (s->graphs[i].graph_ctx) ggml_free(s->graphs[i].graph_ctx);
             free_static_inputs(&s->graphs[i]);

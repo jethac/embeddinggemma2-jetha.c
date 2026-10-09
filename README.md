@@ -162,6 +162,18 @@ lengths, eviction, long text and all five modalities retained exactly matching
 outputs. This flag defaults off: these are graph-reuse measurements, and a
 quiet-host throughput comparison is still needed before claiming a speedup.
 
+With this cache enabled, `EI_GRAPH_CACHE_SLOTS2=3` or `4` retains more shapes;
+the default remains two and the hard limit is four. On the CUDA development
+service, cycling through 32/48/64/96-token requests with changed input and unique
+HTTP keys measured 16.5 -> 5.0 ms and 25.5 -> 5.1 ms median latency in reverse
+order. Logged compute workspace grew from 15.94 to 23.91 MiB. Deployed pairs
+under heavier contention were 49.5 -> 5.2 ms and 89.0 -> 8.6 ms, with exactly
+matching embeddings. These are shared-host observations for avoiding repeated
+graph rebuilds, not a llama.cpp comparison or general throughput result.
+Eviction, unequal arrays, longer text and all five modalities retained exact
+outputs. Capacity changes preserve persistent-cache identity; the development
+service uses four slots and the existing 200 µs batch wait.
+
 `EI_QKV2=1` enables experimental packed Q/K/V projections for Q8_0 weights on
 CPU and CUDA. It uses 27.62 MiB of additional weights. In a fixed 106-request,
 32-token CUDA capture, quantized matmul launches fell from 22,680 to 17,640,

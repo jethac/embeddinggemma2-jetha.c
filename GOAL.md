@@ -1249,3 +1249,32 @@ Keep this file current as implementation decisions and verified evidence change.
   a direct native compile/link against the built pinned library. This decoder
   implementation needs its own CI run. Hardware, batching, quiet comparisons
   and the complete release matrix remain open.
+
+- 2026-10-10: The final Linux CMake JPEG safety target completed successfully.
+  JPEG commit abfcc8b has six successful CI jobs and its Linux model job still
+  running as of the latest check. The host remains saturated, so no new quiet
+  llama.cpp comparison is qualified. A short-text profile at 200 us showed
+  stable 32/96-token one/three-item waves without rebuilds. Increasing the wait
+  to 2 ms introduced other shapes and rebuilds; actual C4 medians worsened from
+  16.4/16.6 to 17.6/18.9 ms and tails worsened. The deployed wait stays 200 us.
+- Cycling four short-text lengths rebuilt every request with two graph slots.
+  Retained `EI_GRAPH_CACHE_SLOTS2=3..4` raises capacity only when the existing
+  CUDA graph cache is enabled; the default remains two, with a hard limit of
+  four and unchanged <=256-token eligibility. Four slots measured 16.534 ->
+  4.955 ms and 25.475 -> 5.078 ms in reverse order for unique-key, changed-input
+  32/48/64/96-token requests. Embeddings were exact. Logged compute workspaces
+  were 15.94/23.91 MiB for two/four slots, excluding model weights and auxiliary
+  inputs. Native Windows and CUDA builds passed.
+- Eviction beyond four shapes, changed same-shape inputs, unequal arrays,
+  >256-token bypass and all five fresh modalities exactly matched the two-slot
+  service. CUDA is deployed with four slots, profiling unset, its existing
+  200 us wait and other inference/persistence settings. It restored an old
+  response snapshot and returned an exact known response without inference;
+  no numeric cache identity changes. Fresh deployed modalities matched the
+  candidate and JSON/OpenAI checks passed. Deployed varied-length pairs were
+  49.468 -> 5.186 ms and 88.980 -> 8.610 ms under heavier host contention.
+  These observations support this specific workload, not a general throughput
+  or llama.cpp claim. Windows retains its existing installed CPU service;
+  the changed cache is CUDA-only. This capacity implementation needs its own
+  CI run. Hardware, cross-request media batching, quiet comparisons and the
+  full release matrix remain unfinished.
