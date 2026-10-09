@@ -1,0 +1,36 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -4680,7 +4680,9 @@
+         for (const auto & img : imgs.entries) {
+             nelem += img.nx() * img.ny() * 3;
+         }
++        const int64_t pixel_start = phase_profile ? ggml_time_us() : 0;
+         std::vector<float> inp_raw(nelem);
++        const int64_t pixel_allocated = phase_profile ? ggml_time_us() : 0;
+ 
+         // layout of data (note: the channel dim is unrolled to better visualize the layout):
+         //
+@@ -4715,7 +4717,12 @@
+                 }
+             }
+         }
++        const int64_t pixel_copied = phase_profile ? ggml_time_us() : 0;
+         set_input_f32("inp_raw", inp_raw);
++        if (phase_profile) LOG_INF("pixel phases: alloc=%.3f copy=%.3f upload=%.3f ms\n",
++            (pixel_allocated - pixel_start) / 1000.0,
++            (pixel_copied - pixel_allocated) / 1000.0,
++            (ggml_time_us() - pixel_copied) / 1000.0);
+ 
+     } else if (params->gen_process != CLIP_GEN_PROCESS_GEN_WAV) {
+         // audio input. GEN_WAV is not here: it takes codes or feats, set in the switch below
+@@ -5342,8 +5349,10 @@
+                     pos_x[i] = i % n_cols;
+                     pos_y[i] = i / n_cols;
+                 }
++                const int64_t position_start = phase_profile ? ggml_time_us() : 0;
+                 set_input_i32("pos_x", pos_x);
+                 set_input_i32("pos_y", pos_y);
++                if (phase_profile) LOG_INF("position uploads: %.3f ms\n", (ggml_time_us() - position_start) / 1000.0);
+             } break;
+         case PROJECTOR_TYPE_DEEPSEEKOCR:
+         case PROJECTOR_TYPE_DEEPSEEKOCR2:

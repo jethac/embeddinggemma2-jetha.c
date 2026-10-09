@@ -1,0 +1,59 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -151,6 +151,8 @@
+     ggml_context_ptr ctx_data;
+ 
+     std::vector<uint8_t> buf_compute_meta;
++    std::unique_ptr<float[]> pixel_buffer;
++    size_t pixel_buffer_size = 0;
+     ggml_context_ptr audio_graph_ctx;
+     ggml_cgraph * audio_graph = nullptr;
+     int audio_graph_nx = 0, audio_graph_ny = 0;
+@@ -4681,7 +4683,22 @@
+             nelem += img.nx() * img.ny() * 3;
+         }
+         const int64_t pixel_start = phase_profile ? ggml_time_us() : 0;
+-        std::vector<float> inp_raw(nelem);
++        const char * pixel_flag = std::getenv("EI_PIXEL_REUSE2");
++        const bool reuse_pixels = pixel_flag && strcmp(pixel_flag, "1") == 0 &&
++            ctx->proj_type() == PROJECTOR_TYPE_GEMMA4V && nelem <= 4u * 1024u * 1024u;
++        std::vector<float> inp_raw;
++        float * pixel_data;
++        if (reuse_pixels) {
++            // At most 16 MiB retained. Every element is overwritten below.
++            if (ctx->pixel_buffer_size < nelem) {
++                ctx->pixel_buffer.reset(new float[nelem]);
++                ctx->pixel_buffer_size = nelem;
++            }
++            pixel_data = ctx->pixel_buffer.get();
++        } else {
++            inp_raw.resize(nelem);
++            pixel_data = inp_raw.data();
++        }
+         const int64_t pixel_allocated = phase_profile ? ggml_time_us() : 0;
+ 
+         // layout of data (note: the channel dim is unrolled to better visualize the layout):
+@@ -4705,7 +4722,7 @@
+             for (int b = 0; b < n_batch_cur; b++) {
+                 LOG_DBG("%s: copying image %d/%d to input buffer (nx=%d, ny=%d)\n", __func__, b+1, n_batch_cur, nx, ny);
+                 const auto & buf = imgs.entries[b].get_ro_buf();
+-                float * batch_entry = inp_raw.data() + b * (3*n);
++                float * batch_entry = pixel_data + b * (3*n);
+                 for (int y = 0; y < ny; y++) {
+                     for (int x = 0; x < nx; x++) {
+                         size_t base_src = 3*(y * nx + x);
+@@ -4718,7 +4735,13 @@
+             }
+         }
+         const int64_t pixel_copied = phase_profile ? ggml_time_us() : 0;
+-        set_input_f32("inp_raw", inp_raw);
++        if (reuse_pixels) {
++            ggml_tensor * inp = get_inp_tensor("inp_raw");
++            GGML_ASSERT(inp->type == GGML_TYPE_F32 && ggml_nelements(inp) == (int64_t)nelem);
++            ggml_backend_tensor_set(inp, pixel_data, 0, ggml_nbytes(inp));
++        } else {
++            set_input_f32("inp_raw", inp_raw);
++        }
+         if (phase_profile) LOG_INF("pixel phases: alloc=%.3f copy=%.3f upload=%.3f ms\n",
+             (pixel_allocated - pixel_start) / 1000.0,
+             (pixel_copied - pixel_allocated) / 1000.0,
