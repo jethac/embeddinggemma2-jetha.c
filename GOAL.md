@@ -832,4 +832,28 @@ Tests and documentation support that outcome; they do not define completion.
   the existing Linux/macOS full-encoder jobs now also invoke its focused log
   regression. These results do not yet validate this GeGLU commit.
 
+- CI run 37937705376 passed all six jobs for the deployed GeGLU change.
+  A keep-alive receive-buffer release/heap-trimming experiment is discarded.
+  Four completed 12 MiB requests left a 96 MiB RSS increase in the original
+  probe; releasing receive capacity reduced that observation to 72 MiB.
+  Adding glibc heap trimming still produced 35-83 MiB increases across revised
+  CUDA/CPU probes. Runtime logging confirmed that 16 MiB receive capacities
+  shrank to 43 bytes and that trimming executed, but those facts did not prove
+  a repeatable total-memory benefit or qualify allocator-wide trimming costs.
+  The unshipped code and unreliable RSS regression are removed. Both binaries
+  are rebuilt from the retained implementation; the deployed services were
+  unchanged throughout this experiment. Total resource handling remains open.
+
+- Packed QKV with GeGLU was measured at 8191 tokens before changing deployment.
+  Warm HTTP medians were 220.777/202.257 ms (unpacked/packed) in one order and
+  213.802/213.411 ms in reverse (20 measured requests after six warmups, the
+  existing CUDA flags on, result caches/profiling off). Cosine was 0.999954.
+  A complete 12-forward capture retained all 240 local and 48 global attention
+  calls plus 576 GeGLU calls. Kernel count fell from 12,228 to 10,500, but total
+  kernel time only fell from 2130.040 to 2115.030 ms (0.7%). Matrix time stayed
+  near 425 ms despite fewer calls; activation quantization fell from 139.352 to
+  112.914 ms, while normalization/rope grew slightly. The reverse HTTP order
+  was effectively flat, so the dev service keeps QKV off. Fewer launches alone
+  do not establish a useful improvement on this captured CUDA workload.
+
 Keep this file current as implementation decisions and verified evidence change.
