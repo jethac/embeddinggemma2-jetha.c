@@ -1,4 +1,4 @@
-"""A stalled probe must end and release uncached text inference on the service."""
+"""A stalled probe must expire without blocking uncached text inference."""
 import argparse
 import base64
 from concurrent.futures import ThreadPoolExecutor
@@ -88,7 +88,10 @@ with tempfile.TemporaryDirectory(prefix='decoder-deadline-') as tmp:
                 time.sleep(.01)
             child = int(pid_file.read_text())
             text = pool.submit(request, {'input': 'task: search result | query: decoder lock probe ' + str(time.time_ns())})
-            v = video.result(timeout=16); t = text.result(timeout=16)
+            t = text.result(timeout=16)
+            print('Uncached text during stalled probe:', t[0], round(t[2], 1), 'ms', flush=True)
+            assert owned_child(child, root / ('ffprobe' + suffix)), 'text waited for the stalled decoder'
+            v = video.result(timeout=16)
             print('Stalled probe video/text status and ms:', v[0], round(v[2], 1), t[0], round(t[2], 1), flush=True)
             assert v[0] == 400 and v[2] < 12000
             assert t[0] == 200 and t[2] < 14000

@@ -34,6 +34,7 @@ typedef struct {
     int threads;
     bool profile;
     pthread_mutex_t mutex;
+    pthread_mutex_t media_mutex;
     struct llama_model *vocab_model;
     mtmd_context *media;
 } engine2;
@@ -224,6 +225,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     engine2 *s = e->gemma2 = ei_xcalloc(1, sizeof *s);
     s->profile = getenv("EI_PROFILE_BACKBONE2") != NULL;
     pthread_mutex_init(&s->mutex, NULL);
+    pthread_mutex_init(&s->media_mutex, NULL);
     s->threads = 6;
     const char *threads = getenv("EI_THREADS");
     if (threads) {
@@ -349,6 +351,7 @@ void ei_engine_free(ei_engine *e) {
         ggml_free(s->weights);
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);
         pthread_mutex_destroy(&s->mutex);
+        pthread_mutex_destroy(&s->media_mutex);
         free(s);
     }
     ei_tokenizer_free(&e->tokenizer);
@@ -456,7 +459,12 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     mtmd_input_chunks *chunks = mtmd_input_chunks_init();
     float *raw = NULL;
     bool ok = false;
-    pthread_mutex_lock(&s->mutex);
+    bool engine_locked = false;
+    /* Keep one media request's decoded/preprocessed buffers resident at a time.
+     * Decoders and CPU preprocessing do not use the backbone graph; text can
+     * progress during an external probe or frame read. Lock order is media,
+     * then backbone, and text takes only the backbone lock. */
+    pthread_mutex_lock(&s->media_mutex);
     double start = now_ms();
     size_t decoded_bytes = 0;
     size_t video_frames = 0;
@@ -512,6 +520,8 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     }
     size_t count = mtmd_helper_get_n_tokens(chunks);
     if (!count || count > EI_N_CTX) { fail(err, err_len, "multimodal input exceeds 8192-token context"); goto done; }
+    pthread_mutex_lock(&s->mutex);
+    engine_locked = true;
     raw = ei_xmalloc(count * HIDDEN * sizeof *raw);
     size_t cursor = 0;
     for (size_t i = 0; i < mtmd_input_chunks_size(chunks); i++) {
@@ -545,6 +555,7 @@ done:
         if (media[i].video_ctx) mtmd_helper_video_free(media[i].video_ctx);
     }
     free(media); free(texts); free(inputs);
-    pthread_mutex_unlock(&s->mutex);
+    if (engine_locked) pthread_mutex_unlock(&s->mutex);
+    pthread_mutex_unlock(&s->media_mutex);
     return ok;
 }

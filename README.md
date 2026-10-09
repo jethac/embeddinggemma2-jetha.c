@@ -180,6 +180,13 @@ a 30-second deadline starting at its first frame read and covering subsequent
 reads. Expired subprocesses are terminated and reaped; a timeout rejects the
 input even after complete frames were decoded. These are subprocess limits,
 not a deadline for the whole request or model inference.
+Media decoding and preprocessing use a separate lock, allowing text inference
+to progress while an external probe or decoder waits. Media processing remains
+serialized; encoder and backbone execution share the inference lock. In the
+uncached stalled-probe regression, CUDA text latency fell from 10.60 s to
+0.40 s, finishing before the probe's 10-second deadline. Windows CPU text
+completed in 0.47 s under the same check. These are serving-stall measurements,
+separate from the llama.cpp throughput comparison above.
 Audio is capped at 5,242,880 mono samples after resampling to 16 kHz (327.68 seconds).
 Decoded images, PCM and resident video frame buffers share a 128 MiB input budget;
 decoder copies, preprocessing and inference workspaces require additional memory.

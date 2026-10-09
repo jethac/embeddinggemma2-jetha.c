@@ -421,5 +421,16 @@ Tests and documentation support that outcome; they do not define completion.
   CUDA versus pinned Q8 llama.cpp cosine was 0.99998452, and Windows AVX-512
   CPU versus CUDA cosine was 0.99992663. This fixes misleading client guidance;
   it does not change inference speed or increase the existing context limit.
+- Media probing, decoding and preprocessing no longer hold the backbone mutex.
+  A separate media mutex preserves one media request's decoded/preprocessed
+  buffers at a time; encoding and backbone execution still use the shared
+  inference lock. The stalled-probe regression now requires uncached text to
+  complete while the probe is alive. It failed before the fix at 10,599 ms;
+  after the fix text completed in 397 ms on CUDA and 471 ms on Windows CPU,
+  while the probe timed out and was reaped at about ten seconds. Both development
+  services were redeployed, and all five fresh-input journeys passed. Fresh
+  CUDA outputs matched the pre-change vectors exactly; duplicate singleflight
+  and decoded-media budget checks passed on both services. This fixes decoder
+  head-of-line blocking; it does not establish a llama.cpp throughput speedup.
 
 Keep this file current as implementation decisions and verified evidence change.

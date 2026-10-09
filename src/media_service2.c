@@ -1,7 +1,7 @@
 /* Bounded media admission and duplicate singleflight. MIT.
  * Keep decoded media out of waiting duplicates: the leader alone parses and
- * executes the request. Unique leaders use the engine's existing mutex; raw
- * backbone batching will be integrated separately with the text scheduler. */
+ * executes the request. Unique leaders use the engine's media mutex; backbone
+ * execution shares the text mutex. Raw backbone batching is separate work. */
 #include "media_service2.h"
 #include <pthread.h>
 
