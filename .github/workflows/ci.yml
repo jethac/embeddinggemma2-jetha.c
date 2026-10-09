@@ -167,14 +167,17 @@ jobs:
           "$binary" --bind 127.0.0.1 --port 42668 --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/metal.stdout.log 2> build-cmake/metal.stderr.log &
           metal_pid=$!
           trap 'status=$?; if [ "$status" -ne 0 ]; then tail -n 120 build-cmake/metal.stderr.log; fi; kill "$cpu_pid" "$metal_pid" 2>/dev/null || true; exit "$status"' EXIT
+          startup_started=$SECONDS
+          startup_deadline=$((SECONDS + 300))
           for port in 42667 42668; do
             ready=0
-            for attempt in $(seq 1 120); do
-              if curl -fsS "http://127.0.0.1:$port/healthz"; then ready=1; break; fi
+            while [ "$SECONDS" -lt "$startup_deadline" ]; do
+              if curl -fsS --max-time 2 "http://127.0.0.1:$port/healthz" 2>/dev/null; then ready=1; break; fi
               if ! kill -0 "$cpu_pid" 2>/dev/null || ! kill -0 "$metal_pid" 2>/dev/null; then break; fi
               sleep 1
             done
             if [ "$ready" != 1 ]; then cat build-cmake/metal.stderr.log build-cmake/cpu.stderr.log; exit 1; fi
+            echo "Service on port $port ready after $((SECONDS - startup_started)) seconds"
           done
           grep 'EmbeddingGemma 2: MTL' build-cmake/metal.stderr.log
           grep 'CLIP using MTL' build-cmake/metal.stderr.log
