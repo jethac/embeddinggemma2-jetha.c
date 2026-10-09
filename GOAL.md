@@ -856,4 +856,17 @@ Tests and documentation support that outcome; they do not define completion.
   was effectively flat, so the dev service keeps QKV off. Fewer launches alone
   do not establish a useful improvement on this captured CUDA workload.
 
+- A contiguous GeGLU indexing specialization was also rejected. All 18 CUDA
+  cases remained bit-identical, but paired 8191-token HTTP medians changed from
+  235.928 to 222.825 ms in one order and from 201.857 to 208.483 ms in reverse.
+  The complete capture confirmed 288 contiguous and 288 strided GeGLU calls,
+  all 240 local/48 global attention calls and 12,228 kernels overall. GeGLU
+  time was 164.356 ms versus 165.713 ms; total kernel time was 2128.923 versus
+  2130.040 ms, effectively flat. Removing row division did not expose a useful
+  speedup. Its source patch and build plumbing are removed, and the retained
+  CUDA binary is rebuilt. The existing trace also confirms 11 CUDA graph
+  launches after the initial forward; long requests already reuse CUDA graphs.
+  No deployed user-visible improvement resulted from these rejected trials.
+  The next direction is the unfinished release packaging/fresh-install journey.
+
 Keep this file current as implementation decisions and verified evidence change.
