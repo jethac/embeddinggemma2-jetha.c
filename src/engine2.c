@@ -40,6 +40,7 @@ typedef struct {
     int n_backends;
     graph2 graphs[3]; // Normal workspace plus two opt-in short-text shapes.
     bool graph_cache;
+    bool cuda_global_attn;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -62,13 +63,18 @@ static bool fail(char *err, size_t n, const char *msg) {
 
 uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     const engine2 *s = e->gemma2;
-    if (!s->qkv_buffer) return fingerprint;
-    // Packed CUDA matmuls can change accumulation order. Keep persisted text
-    // and HTTP responses separate from the original projection path.
-    const char domain[] = "embeddinggemma2-packed-qkv-v1";
-    for (size_t i = 0; i < sizeof domain; i++) {
-        fingerprint ^= (unsigned char)domain[i];
-        fingerprint *= 1099511628211ull;
+    // Numeric variants can change accumulation order. Keep persisted text
+    // and HTTP responses separate from the original path and each other.
+    const char *domains[] = {
+        s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
+        s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v1" : NULL,
+    };
+    for (size_t d = 0; d < sizeof domains / sizeof domains[0]; d++) {
+        if (!domains[d]) continue;
+        for (size_t i = 0; i <= strlen(domains[d]); i++) {
+            fingerprint ^= (unsigned char)domains[d][i];
+            fingerprint *= 1099511628211ull;
+        }
     }
     return fingerprint;
 }
@@ -186,6 +192,18 @@ static bool build_graph(ei_engine *e, graph2 *state, size_t tokens, size_t batch
         v = ggml_cast(ctx, ggml_permute(ctx, v, 0, 2, 1, 3), GGML_TYPE_F16);
         a = ggml_flash_attn_ext(ctx, q, k, v, swa ? local : full, 1.0f, 0, 0);
         ggml_prec_set_acc(a, GGML_PREC_F32);
+        if (!swa && s->cuda_global_attn && tokens <= 2048 &&
+            !ggml_backend_supports_op(s->backends[0], a)) {
+            // CUDA's 512-wide flash kernel requires aligned K/V lengths.
+            // Bound the explicit four-head score matrix to 64 MiB, and keep
+            // larger batches on the existing streaming attention path.
+            struct ggml_tensor *scores = ggml_mul_mat(ctx, k, q);
+            ggml_prec_set_acc(scores, GGML_PREC_F32);
+            scores = ggml_soft_max_ext_inplace(ctx, scores, state->full_mask, 1.0f, 0);
+            a = ggml_mul_mat(ctx, ggml_cont(ctx, ggml_transpose(ctx, v)), scores);
+            ggml_prec_set_acc(a, GGML_PREC_F32);
+            a = ggml_cont(ctx, ggml_permute(ctx, a, 0, 2, 1, 3));
+        }
         a = ggml_reshape_2d(ctx, a, dim * 4, (int64_t)tokens);
         a = ggml_mul_mat(ctx, layer_weight(s, il, "attn_output"), a);
         x = ggml_add(ctx, x, norm(ctx, a, layer_weight(s, il, "post_attention_norm"), e->model.rms_eps));
@@ -421,6 +439,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *cache = getenv("EI_GRAPH_CACHE2");
     s->graph_cache = cache && strcmp(cache, "1") == 0 && strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->graph_cache) fprintf(stderr, "CUDA short-text graph cache: two shapes, at most 256 tokens\n");
+    const char *global_attn = getenv("EI_CUDA_GLOBAL_ATTN2");
+    s->cuda_global_attn = global_attn && strcmp(global_attn, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->cuda_global_attn) fprintf(stderr, "CUDA global attention fallback: explicit scores for at most 2048 aggregate tokens\n");
     fprintf(stderr, "EmbeddingGemma 2: %s, %d CPU threads\n", e->backend_name, s->threads);
 }
 

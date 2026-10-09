@@ -1,4 +1,4 @@
-"""Packed QKV must not reuse persistent responses from separate projections."""
+"""Numeric variants must not reuse persistent responses from the original path."""
 import argparse
 from contextlib import contextmanager
 import json
@@ -17,7 +17,10 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn'], default='packed-qkv')
 a = p.parse_args()
+flag, marker = ('EI_QKV2', 'packed QKV:') if a.mode == 'packed-qkv' else (
+    'EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:')
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
     cache = work / 'cache'
@@ -59,17 +62,18 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
             json.dumps(body).encode(), headers={'Content-Type':'application/json'}), timeout=180) as response:
             return json.load(response)
     os.environ['EI_QKV2'] = '0'
+    os.environ['EI_CUDA_GLOBAL_ATTN2'] = '0'
     with server(work/'off.log'):
         separate = request()
     identity_before = struct.unpack('<Q', Path(str(cache)+'.responses').read_bytes()[8:16])[0]
-    os.environ['EI_QKV2'] = '1'
+    os.environ[flag] = '1'
     with server(work/'on.log'):
         cached = request()
         fresh = request(True)
-        assert 'packed QKV:' in (work/'on.log').read_text(errors='replace')
-        print('Packed cached/fresh identical:', cached == fresh,
-              'separate/packed identical:', separate == fresh, flush=True)
-        assert cached == fresh, 'packed QKV reused a response from separate projections'
+        assert marker in (work/'on.log').read_text(errors='replace')
+        print(a.mode, 'cached/fresh identical:', cached == fresh,
+              'original/variant identical:', separate == fresh, flush=True)
+        assert cached == fresh, f'{a.mode} reused a response from the original path'
     identity_after = struct.unpack('<Q', Path(str(cache)+'.responses').read_bytes()[8:16])[0]
-    assert identity_before != identity_after, 'persistent cache identity did not distinguish packed QKV'
-print('Packed QKV persistent cache isolation passed')
+    assert identity_before != identity_after, f'persistent cache identity did not distinguish {a.mode}'
+print(a.mode, 'persistent cache isolation passed')

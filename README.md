@@ -84,6 +84,25 @@ The geometric mean is **1.003x**, effectively parity, with minimum cosine
 **0.999970**. The small losses remain visible; this is not an established CPU
 speed advantage.
 
+A separate [packed-QKV CI comparison](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37899814743)
+used `EI_QKV2=1` on an AMD EPYC 7763 runner (four logical CPUs, two inference
+threads), with the same Ubuntu/GCC, installed shared kernels, Q8 weights, cache
+policy and both engine orders. Observed non-benchmark CPU load was 1.6–2.3%.
+
+| Tokens | Clients | Packed ours embeddings/s | llama.cpp embeddings/s | Ratio | Ratio by order |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1 | 11.73 | 11.82 | 0.993x | 0.949–1.036x |
+| 32 | 4 | 12.30 | 12.20 | 1.007x | 1.004–1.011x |
+| 256 | 1 | 1.48 | 1.48 | 0.999x | 0.989–1.008x |
+| 256 | 4 | 1.47 | 1.46 | 1.006x | 1.006–1.006x |
+| 1024 | 1 | 0.30 | 0.28 | 1.040x | 1.039–1.041x |
+| 1024 | 4 | 0.28 | 0.28 | 1.029x | 1.026–1.031x |
+
+Its geometric mean was **1.012x**, with minimum cosine **0.999927**. Different
+runner CPUs prevent attributing the difference from the earlier run to packing;
+this compares packed inference with llama.cpp on the EPYC 7763 only. Packed QKV
+remains opt-in.
+
 Reproduce the CI comparison with
 `gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_cpu=true`.
 The opt-in steps build pinned llama.cpp against the service's installed shared
@@ -140,6 +159,22 @@ Persistent caches distinguish packed and separate projections because CUDA
 accumulation order can change their outputs. The flag defaults off; quiet-host
 throughput and broader hardware validation remain necessary. To measure it on
 the CI runner, add `-f packed_qkv=true` to the CPU comparison command above.
+
+`EI_CUDA_GLOBAL_ATTN2=1` enables an experimental CUDA fallback for global
+attention when GGML's flash kernel cannot handle the input shape. It uses
+matrix multiplication and masked softmax for at most 2048 aggregate tokens,
+bounding the four-head score matrix to 64 MiB. Larger inputs and shapes with
+native CUDA flash support keep the original path. For a 32-token request,
+actual scheduler placement changed from nine alternating GPU/CPU splits to
+one GPU split. With text and HTTP caches disabled, graph caching enabled and
+packed QKV disabled, paired warm HTTP medians on the contended RTX 5060 Ti host
+fell from 11.6 to 5.0 ms and from 12.9 to 5.0 ms in the reverse order (100
+measured requests per pass). These are latency observations under contention,
+not a quiet throughput comparison against llama.cpp. All five modalities
+passed cosine 0.999 (minimum 0.999848); combined with packed QKV, the minimum
+was 0.999824. Unequal batches and lengths around native flash alignment and
+the fallback limit also passed. Persistent caches distinguish this numeric
+mode. The flag defaults off pending broader hardware and quiet-host validation.
 
 ## Build and run the development server
 

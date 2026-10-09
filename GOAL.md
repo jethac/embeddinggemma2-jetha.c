@@ -572,4 +572,33 @@ Tests and documentation support that outcome; they do not define completion.
   and verifies its actual startup log before measuring. Other accelerators and
   broader CPU hardware remain unqualified for this experimental path.
 
+- The packed-QKV CPU comparison completed in CI run 37899814743 on an EPYC
+  7763 runner (four logical CPUs, two inference threads, Ubuntu 24.04/GCC 13.3,
+  same installed shared kernels and Q8 weights, caches off, both orders).
+  Geometric mean against llama.cpp was 1.012x; minimum cosine was 0.999927.
+  Ratios for 32/256/1024 tokens with one/four clients were 0.993/1.007,
+  0.999/1.006 and 1.040/1.029. Non-benchmark CPU load was 1.6–2.3%. README
+  includes every cell and order range. This runner differs from the earlier
+  EPYC 9V74, so these results do not isolate the effect of packing.
+
+- An opt-in CUDA global-attention fallback (`EI_CUDA_GLOBAL_ATTN2=1`, default
+  off) removes observed CPU attention splits when the pinned CUDA flash kernel
+  rejects an input shape. Explicit masked attention is limited to 2048 aggregate
+  tokens (64 MiB maximum four-head scores); supported flash shapes and larger
+  requests retain the original path. Actual 32-token placement changed from nine
+  GPU/CPU splits to one CUDA split. In both orders, 100-request warm HTTP medians
+  on the contended local RTX 5060 Ti improved from 11.6 to 5.0 ms and 12.9 to
+  5.0 ms, with graph caching on, packed QKV off and both result caches off.
+  These are end-to-end latency observations, not quiet llama.cpp throughput.
+  All five modalities passed cosine 0.999 (minimum 0.999848); enabling packed
+  QKV too passed at minimum 0.999824. Unequal-batch isolation and lengths
+  255/256/257, 1023, 2047/2048/2049 passed; supported aligned lengths and requests
+  above the limit matched exactly with packed QKV off. The existing persistent
+  numeric-mode regression also passes for this mode: cached results match fresh
+  inference after a mode change. Quiet-host and broader hardware comparisons
+  remain necessary before enabling this path by default.
+  Current CUDA and Windows CPU builds with both numeric flags off retained
+  exactly matching outputs for all five modalities. Both persistent numeric-mode
+  regressions pass on CUDA after the cache-fingerprint refactor.
+
 Keep this file current as implementation decisions and verified evidence change.
