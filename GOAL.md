@@ -898,3 +898,10 @@ Keep this file current as implementation decisions and verified evidence change.
   Linux ARM64 CUDA for GB10. Linux CI exercises actual package installation.
   No version/tag/release was created. Complete same-commit native qualification,
   accelerator hardware access and final GitHub installation remain unfinished.
+
+- Windows now has a separate Gemma 2 native CI job using MinGW64, rather than
+  relying on the legacy 300M job. It stages actual executable/runtime assets,
+  exercises the installer under Windows PowerShell 5, then runs all five
+  modalities and existing media/API safety checks from the extracted package.
+  The job is added for real package coverage; its first run is pending and does
+  not establish new hardware support or a service performance improvement.

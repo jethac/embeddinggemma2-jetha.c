@@ -99,6 +99,64 @@ jobs:
           lscpu
           cc --version
           python perf/compare_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --token-counts 32,256,1024 --concurrency 1,4 --rounds 5 --target-seconds 8
+  gemma2-windows:
+    name: EmbeddingGemma 2 service (Windows x86_64 CPU)
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Set up the native MinGW64 toolchain
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: git mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-python mingw-w64-x86_64-ffmpeg
+      - name: Build and stage the current portable CPU service
+        run: |
+          cmake -S . -B build-cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DEI_CPU_DISPATCH=ON -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF
+          cmake --build build-cmake --target embeddinggemma2-jetha cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 media-admission-check2 response-persistence-check2 -j 3
+          build-cmake/bin/cpu-dispatch-scalar-check2.exe
+          build-cmake/bin/cpu-dispatch-avx-check2.exe
+          build-cmake/bin/cpu-dispatch-avx512-check2.exe
+          build-cmake/bin/media-admission-check2.exe
+          build-cmake/bin/response-persistence-check2.exe
+          cmake --install build-cmake --prefix "$(cygpath -m "$PWD/build-installed")" --strip
+          python tests/installed_service2.py --prefix build-installed
+          python scripts/stage-release2.py --build build-cmake --prefix build-installed --dist build-release-assets --target windows-x86_64 --backend cpu
+      - name: Exercise the Windows runtime installer
+        shell: powershell
+        run: ./tests/installer_runtime2.ps1 -AssetsDir ./build-release-assets
+      - name: Run all five modalities from the packaged application
+        env:
+          EI_THREADS: '3'
+        run: |
+          python scripts/download-model2.py
+          python - <<'PY'
+          from pathlib import Path
+          import shutil, zipfile
+          prefix = Path('build-packaged')
+          with zipfile.ZipFile('build-release-assets/embeddinggemma2-jetha-windows-x86_64-cpu.runtime.zip') as archive:
+              archive.extractall(prefix)
+          shutil.copy2('build-release-assets/embeddinggemma2-jetha-windows-x86_64-cpu.exe', prefix / 'bin/embeddinggemma2-jetha.exe')
+          PY
+          python tests/installed_service2.py --prefix build-packaged
+          build-packaged/bin/embeddinggemma2-jetha.exe --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:42667/healthz; then ready=1; break; fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
+          python tests/dependency_logs2.py --log build-cmake/dev.stderr.log
+          python examples/journey2.py
+          python tests/media_bounds2.py
+          python tests/openai_media_model2.py
   gemma2-macos:
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15

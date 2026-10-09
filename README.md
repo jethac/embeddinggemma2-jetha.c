@@ -411,6 +411,7 @@ See [RELEASE.md](RELEASE.md) for native staging and the complete release matrix.
 
 The inherited Makefile, `scripts/stage-release.sh`, and [CONTRIBUTING.md](CONTRIBUTING.md)
 still describe the 300M implementation. Use the CMake commands above for this
-port; adaptation of those workflows is unfinished. CI has a new Linux service
-job; the retained platform matrix still exercises the legacy model. Model weights, local
+port; adaptation of those workflows is unfinished. Separate Gemma 2 CI jobs
+build and exercise Linux, macOS and Windows services; the retained legacy matrix
+still exercises the original model. Model weights, local
 reference checkouts, and generated artifacts are excluded from Git.
