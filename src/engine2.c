@@ -466,6 +466,8 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
             opt.max_audio_samples = (size_t)EI_N_CTX * 640;
             opt.max_decoded_bytes = decoded_limit - decoded_bytes;
             opt.video_params.max_frame_bytes = opt.max_decoded_bytes;
+            opt.video_params.probe_timeout_ms = 10000;
+            opt.video_params.decode_timeout_ms = 30000;
             opt.video_params.fps_target = parts[i].fps > 0 ? parts[i].fps : 1.0f;
             opt.video_params.timestamp_interval_ms = 0;
             if (parts[i].type == EI_PART_VIDEO) {

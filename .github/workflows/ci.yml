@@ -18,14 +18,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build current model implementation
         run: |
+          python tests/dependency_patches2.py
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha -j 2
-          cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 media-admission-check2 response-persistence-check2 -j 2
+          cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 media-admission-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 2
           build-cmake/bin/cpu-dispatch-scalar-check2
           build-cmake/bin/cpu-dispatch-avx-check2
           build-cmake/bin/cpu-dispatch-avx512-check2
           build-cmake/bin/media-admission-check2
           build-cmake/bin/response-persistence-check2
+          mkdir -p build-cmake/decoder-stubs
+          cp build-cmake/bin/decoder-stall2 build-cmake/decoder-stubs/ffprobe
+          cp build-cmake/bin/decoder-stall2 build-cmake/decoder-stubs/ffmpeg
+          build-cmake/bin/decoder-deadline-check2 "$PWD/build-cmake/decoder-stubs"
       - name: Exercise disabled AVX on an emulated older CPU
         run: |
           sudo apt-get update -qq
@@ -54,6 +59,7 @@ jobs:
           python tests/video_container2.py
           python tests/media_singleflight2.py --log build-cmake/dev.stderr.log
           python tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+          python tests/media_decoder_deadline2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --stub build-cmake/bin/decoder-stall2
           python examples/embed.py --text 'task: search result | query: what powers the cell'
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:

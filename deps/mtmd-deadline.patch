@@ -1,0 +1,186 @@
+--- a/tools/mtmd/mtmd-helper.cpp
++++ b/tools/mtmd/mtmd-helper.cpp
+@@ -44,6 +44,10 @@
+ #ifdef MTMD_VIDEO
+ #include "sheredom/subprocess.h"
+ #include <thread>
++#include <atomic>
++#include <chrono>
++#include <condition_variable>
++#include <mutex>
+ #ifndef _WIN32
+ #include <csignal>
+ #include <fcntl.h>
+@@ -547,6 +551,7 @@
+ struct mtmd_helper_video {
+     const mtmd_context * mctx;
+     size_t max_frame_bytes = 0;
++    uint32_t probe_timeout_ms = 0, decode_timeout_ms = 0;
+     std::string path;
+     std::vector<uint8_t> input_buf; // non-empty when initialized from buffer
+     std::string ffmpeg_bin;
+@@ -561,6 +566,29 @@
+         bool created = false; // process exists and must be cleaned up
+         bool alive   = false; // process can still give us data
+         std::thread feeder;
++        std::thread watchdog;
++        std::mutex deadline_mutex;
++        std::condition_variable deadline_done;
++        bool cancelled = false;
++        bool failed = false;
++        std::atomic<bool> timed_out{false};
++
++        void start_deadline(uint32_t ms, const char *operation) {
++            if (!ms) return;
++            watchdog = std::thread([this, ms, operation]() {
++                std::unique_lock<std::mutex> lock(deadline_mutex);
++                if (!deadline_done.wait_for(lock, std::chrono::milliseconds(ms), [this]() { return cancelled; })) {
++                    timed_out = true;
++                    subprocess_terminate(&proc);
++                    LOG_ERR("%s subprocess deadline exceeded after %u ms\n", operation, ms);
++                }
++            });
++        }
++        void cancel_deadline() {
++            { std::lock_guard<std::mutex> lock(deadline_mutex); cancelled = true; }
++            deadline_done.notify_one();
++            if (watchdog.joinable()) watchdog.join();
++        }
+ 
+         subprocess_handle() = default;
+         subprocess_handle(const subprocess_handle &) = delete;
+@@ -572,6 +600,7 @@
+             if (!created) {
+                 return;
+             }
++            cancel_deadline(); // the timer must not access a destroyed/reused process handle
+             subprocess_terminate(&proc);
+ #ifdef _WIN32
+             // no SIGPIPE on windows: a blocked feeder only gets a broken pipe once we close our read end of the child stdin
+@@ -622,6 +651,7 @@
+ 
+     subprocess_handle sp;
+     int32_t current_frame = 0;
++    bool decode_deadline_started = false;
+ 
+     std::string prompt_start         = "Video:";
+     int32_t     timestamp_interval_ms = 5000; // emit a timestamp text every N ms (0 = disabled)
+@@ -664,6 +694,7 @@
+         }
+         probe_sp.created = true;
+         probe_sp.alive   = true;
++        probe_sp.start_deadline(probe_timeout_ms, "ffprobe");
+ 
+         if (is_buf_input()) {
+             probe_sp.start_feeder(input_buf);
+@@ -706,6 +737,8 @@
+         }
+ 
+         probe_sp.stop();
++
++        if (probe_sp.timed_out) return false;
+ 
+         if (width == 0 || height == 0 || orig_fps <= 0.0f ||
+             (uint64_t)width * height > 16777216 ||
+@@ -795,6 +828,10 @@
+ 
+         sp.created = (ret == 0);
+         sp.alive   = (ret == 0);
++        sp.cancelled = false;
++        sp.timed_out = false;
++        sp.failed = false;
++        decode_deadline_started = false;
+         LOG_DBG("%s: subprocess_create ret=%d proc_alive=%d\n", __func__, ret, (int)sp.alive);
+ 
+         if (sp.alive && is_buf_input()) {
+@@ -811,6 +848,10 @@
+ 
+     mtmd_bitmap * read_next_frame() {
+         if (!sp.alive) return nullptr;
++        if (!decode_deadline_started) {
++            sp.start_deadline(decode_timeout_ms, "ffmpeg");
++            decode_deadline_started = true;
++        }
+ 
+         FILE * fp = sp.stdout_pipe();
+         const size_t frame_size = (size_t)info.width * info.height * 3;
+@@ -825,9 +866,15 @@
+                 LOG_DBG("%s: fread returned 0 after %zu/%zu bytes (ferror=%d)\n",
+                         __func__, total_read, frame_size, ferror(fp));
+                 sp.alive = false;
++                sp.failed = total_read != 0 || ferror(fp) || sp.timed_out;
++                sp.cancel_deadline();
+                 return nullptr;
+             }
+             total_read += n;
++        }
++
++        if (sp.timed_out) {
++            sp.alive = false; sp.failed = true; sp.cancel_deadline(); return nullptr;
+         }
+ 
+         LOG_DBG("%s: frame %d read OK\n", __func__, current_frame);
+@@ -856,6 +903,7 @@
+                 __func__, (int)sp.alive, (int)start_emitted, current_frame);
+ 
+         if (!sp.alive) {
++            if (sp.failed || sp.timed_out) return -2;
+             return (current_frame == 0) ? -2 : -1;
+         }
+ 
+@@ -868,7 +916,7 @@
+         }
+ 
+         mtmd_bitmap * frame = read_next_frame();
+-        if (!frame) return -1;
++        if (!frame) return sp.failed || sp.timed_out ? -2 : -1;
+         *out_bitmap = frame;
+ 
+         if (timestamp_interval_ms > 0) {
+@@ -908,6 +956,8 @@
+         /* ffmpeg_bin_dir         */ nullptr,
+         /* timestamp_interval_ms  */ 5000,
+         /* max_frame_bytes        */ 0,
++        /* probe_timeout_ms       */ 0,
++        /* decode_timeout_ms      */ 0,
+     };
+ }
+ 
+@@ -950,6 +1000,8 @@
+     mtmd_helper_video vctx;
+     vctx.mctx        = mctx;
+     vctx.max_frame_bytes = params.max_frame_bytes;
++    vctx.probe_timeout_ms = params.probe_timeout_ms;
++    vctx.decode_timeout_ms = params.decode_timeout_ms;
+     vctx.input_buf.assign(buf, buf + len);
+     vctx.ffmpeg_bin  = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     vctx.ffprobe_bin = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+@@ -981,6 +1033,8 @@
+ 
+     ctx->mctx                 = mctx;
+     ctx->max_frame_bytes = params.max_frame_bytes;
++    ctx->probe_timeout_ms = params.probe_timeout_ms;
++    ctx->decode_timeout_ms = params.decode_timeout_ms;
+     ctx->path                 = path;
+     ctx->ffmpeg_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     ctx->ffprobe_bin          = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+@@ -1017,6 +1071,8 @@
+ 
+     ctx->mctx                  = mctx;
+     ctx->max_frame_bytes = params.max_frame_bytes;
++    ctx->probe_timeout_ms = params.probe_timeout_ms;
++    ctx->decode_timeout_ms = params.decode_timeout_ms;
+     ctx->input_buf.assign(buf, buf + len);
+     ctx->ffmpeg_bin            = video_resolve_bin(params.ffmpeg_bin_dir, "ffmpeg");
+     ctx->ffprobe_bin           = video_resolve_bin(params.ffmpeg_bin_dir, "ffprobe");
+--- a/tools/mtmd/mtmd-helper.h
++++ b/tools/mtmd/mtmd-helper.h
+@@ -28,6 +28,8 @@
+     const char * ffmpeg_bin_dir; // directory containing ffmpeg/ffprobe binaries; NULL means search PATH
+     int64_t timestamp_interval_ms; // interval for adding timestamp as text chunk (example: "[10m50.5s]"); <= 0 means no timestamp, defaulted to 5000ms
+     size_t max_frame_bytes; // decoded RGB bytes; 0 means unlimited
++    uint32_t probe_timeout_ms;  // 0 means no subprocess deadline
++    uint32_t decode_timeout_ms; // starts at first frame read; 0 means no deadline
+     // TODO @ngxson : allow "placeholder" bitmap output for counting tokens
+ };
+ 

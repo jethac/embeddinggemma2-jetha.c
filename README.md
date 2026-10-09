@@ -20,8 +20,9 @@ unfinished. There are no binary releases or verified GPU/NPU performance claims.
 ## Build and run the development server
 
 CMake fetches a pinned MIT-licensed llama.cpp/GGML/libmtmd dependency and applies
-the small media preprocessing fixes in `deps/`. Python is used for model
-download and the sample client; inference runs inside the native executable.
+the small media preprocessing fixes in `deps/`. Python 3.9 or newer is required
+for dependency patching, model download and the sample client; inference runs
+inside the native executable.
 
 ```sh
 python scripts/download-model2.py
@@ -79,6 +80,11 @@ video frames across an input. Images and video frames are limited to 16 megapixe
 Video probing uses stream duration when available, with container duration as a
 fallback for formats such as WebM/Matroska. Buffered MP4 inputs with metadata at
 the end are probed through a seekable cache wrapper.
+Each external video probe has a 10-second deadline. Each video/WebP decoder has
+a 30-second deadline starting at its first frame read and covering subsequent
+reads. Expired subprocesses are terminated and reaped; a timeout rejects the
+input even after complete frames were decoded. These are subprocess limits,
+not a deadline for the whole request or model inference.
 Audio is capped at 5,242,880 mono samples after resampling to 16 kHz (327.68 seconds).
 Decoded images, PCM and resident video frame buffers share a 128 MiB input budget;
 decoder copies, preprocessing and inference workspaces require additional memory.

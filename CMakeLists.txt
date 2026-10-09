@@ -43,18 +43,18 @@ FetchContent_MakeAvailable(llama)
 # Keep media fixes and CPU/OS dispatch guards as separate, adoptable patches
 # against the pinned dependency.
 find_package(Git REQUIRED)
-foreach(EI_PATCH_NAME mtmd-gemma2 ggml-cpu-dispatch mtmd-video-container)
-    set(EI_DEP_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/deps/${EI_PATCH_NAME}.patch")
-    execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --reverse --check --ignore-space-change "${EI_DEP_PATCH}"
-        RESULT_VARIABLE EI_PATCH_PRESENT OUTPUT_QUIET ERROR_QUIET)
-    if(NOT EI_PATCH_PRESENT EQUAL 0)
-        execute_process(COMMAND "${GIT_EXECUTABLE}" -C "${llama_SOURCE_DIR}" apply --ignore-space-change "${EI_DEP_PATCH}"
-            RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
-        if(NOT EI_PATCH_RESULT EQUAL 0)
-            message(FATAL_ERROR "Cannot apply pinned ${EI_PATCH_NAME} patch: ${EI_PATCH_ERROR}")
-        endif()
-    endif()
-endforeach()
+find_package(Python3 3.9 REQUIRED COMPONENTS Interpreter)
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/apply-dependency-patches2.py"
+    --source "${llama_SOURCE_DIR}"
+    --git "${GIT_EXECUTABLE}" --base de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-dispatch.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-container.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-deadline.patch"
+    RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
+if(NOT EI_PATCH_RESULT EQUAL 0)
+    message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
+endif()
 if(NOT TARGET mtmd)
     add_subdirectory("${llama_SOURCE_DIR}/tools/mtmd" "${llama_BINARY_DIR}/tools/mtmd" EXCLUDE_FROM_ALL)
 endif()
@@ -77,6 +77,9 @@ if(NOT MSVC)
     target_link_libraries(embeddinggemma2-jetha PRIVATE m)
 endif()
 install(TARGETS embeddinggemma2-jetha RUNTIME DESTINATION bin)
+add_executable(decoder-stall2 EXCLUDE_FROM_ALL tests/decoder_stall2.c)
+add_executable(decoder-deadline-check2 EXCLUDE_FROM_ALL tests/decoder_deadline2.cpp)
+target_link_libraries(decoder-deadline-check2 PRIVATE mtmd)
 add_executable(media-admission-check2 EXCLUDE_FROM_ALL tests/media_admission2.c src/media_service2.c)
 target_include_directories(media-admission-check2 PRIVATE src)
 target_compile_definitions(media-admission-check2 PRIVATE EI_GEMMA2)

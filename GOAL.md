@@ -273,9 +273,21 @@ Tests and documentation support that outcome; they do not define completion.
   and Matroska journeys complete with 248 tokens; cache-disabled first requests
   took 7.22/7.75 s on the busy Windows CPU and 443/498 ms on CUDA. Existing
   modality samples and a lossless WebP/PPM pair remain bit-identical. The previous
-  persistent-cache CI run passed; the new container regression is added to CI.
-  Decoder deadlines, broader resource handling and unknown-duration inputs
-  remain unfinished.
+  persistent-cache and container CI runs passed. Broader resource handling and
+  unknown-duration inputs remain unfinished.
+- External video/WebP subprocesses now have deadlines: 10 seconds for each
+  probe and 30 seconds for each decoder, starting at its first frame read.
+  The observed stalled-probe regression exceeded its 15-second HTTP timeout
+  before the fix. With caching disabled, it now returns HTTP 400 in 10.18 s
+  on native Windows and 10.07 s on Linux CUDA; uncached text waiting behind
+  it completes in 11.42/11.48 s, respectively. The timed-out child is reaped.
+  Model-free checks on both platforms reject a decoder timeout both before
+  its first frame and after one complete frame; partial video cannot silently
+  produce an embedding. Normal EOF still succeeds. All five matching native
+  Windows/CUDA modality outputs remain identical. These are subprocess limits,
+  not an overall request or inference deadline. Patch application now compares
+  expected source prefixes, allowing overlapping dependency patches to upgrade
+  and reconfigure without rewriting already-patched files or losing local edits.
 - README describes the current dev commands. A new Linux CPU CI job builds
   the CMake implementation and runs the image regression on its service;
   its first remote run passed. The inherited CI matrix validates
