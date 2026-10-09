@@ -465,6 +465,10 @@ Tests and documentation support that outcome; they do not define completion.
   explicit-Metal CI journey reproduced the bug before the fix; its rerun must
   pass before claiming Metal execution. A virtual GPU is not evidence of physical
   Apple Silicon performance.
+  The corrected selector starts the Metal service and both media encoders as
+  `MTL0`, but its first text request aborts the process. The CI failure trap now
+  prints the actual service stderr so the next run can identify the assertion
+  or unsupported operation; startup alone does not qualify Metal execution.
 - The relocated Linux source install also completed the uncached text journey
   under `qemu-x86_64 -cpu qemu64` with AVX unavailable and all CPU plugins present.
   The baseline plugin was selected, and the response contained 768 finite

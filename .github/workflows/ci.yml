@@ -137,7 +137,7 @@ jobs:
           cpu_pid=$!
           "$binary" --bind 127.0.0.1 --port 42668 --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/metal.stdout.log 2> build-cmake/metal.stderr.log &
           metal_pid=$!
-          trap 'kill "$cpu_pid" "$metal_pid" 2>/dev/null || true' EXIT
+          trap 'status=$?; if [ "$status" -ne 0 ]; then tail -n 120 build-cmake/metal.stderr.log; fi; kill "$cpu_pid" "$metal_pid" 2>/dev/null || true; exit "$status"' EXIT
           for port in 42667 42668; do
             ready=0
             for attempt in $(seq 1 120); do
