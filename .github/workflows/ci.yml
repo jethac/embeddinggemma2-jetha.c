@@ -70,7 +70,7 @@ jobs:
       - name: Build the current model for native macOS CPU
         run: |
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
-          cmake --build build-cmake --target embeddinggemma2-jetha media-admission-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 3
+          cmake --build build-cmake --target embeddinggemma2-jetha reference2 media-admission-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 3
           build-cmake/bin/media-admission-check2
           build-cmake/bin/response-persistence-check2
           mkdir -p build-cmake/decoder-stubs
@@ -94,6 +94,21 @@ jobs:
           done
           if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
           python3 examples/journey2.py
+          python3 - <<'PY'
+          import json, math, subprocess, urllib.request
+          text = 'task: search result | query: what powers the cell'
+          reference = json.loads(subprocess.check_output(['build-cmake/bin/reference2',
+              'model/embeddinggemma-2-Q8_0.gguf', text]))
+          request = urllib.request.Request('http://127.0.0.1:42667/api/embed',
+              json.dumps({'input': text}).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=180) as response:
+              actual = json.load(response)['embeddings'][0]
+          assert len(reference) == len(actual) == 768
+          cosine = sum(x*y for x,y in zip(reference, actual)) / math.sqrt(
+              sum(x*x for x in reference) * sum(x*x for x in actual))
+          print(f'macOS text versus pinned native Q8 reference cosine: {cosine:.8f}')
+          assert cosine > 0.999, 'native macOS text differs from the pinned reference'
+          PY
           python3 tests/media_budget2.py
           python3 tests/media_bounds2.py
           python3 tests/openai_media_model2.py
