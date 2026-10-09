@@ -20,10 +20,11 @@ jobs:
         run: |
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha -j 2
-          cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 -j 2
+          cmake --build build-cmake --target cpu-dispatch-scalar-check2 cpu-dispatch-avx-check2 cpu-dispatch-avx512-check2 media-admission-check2 -j 2
           build-cmake/bin/cpu-dispatch-scalar-check2
           build-cmake/bin/cpu-dispatch-avx-check2
           build-cmake/bin/cpu-dispatch-avx512-check2
+          build-cmake/bin/media-admission-check2
       - name: Exercise disabled AVX on an emulated older CPU
         run: |
           sudo apt-get update -qq
@@ -49,6 +50,7 @@ jobs:
           python tests/media_budget2.py
           python tests/media_bounds2.py
           python tests/openai_media_model2.py
+          python tests/media_singleflight2.py --log build-cmake/dev.stderr.log
           python examples/embed.py --text 'task: search result | query: what powers the cell'
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:

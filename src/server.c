@@ -7,6 +7,7 @@
 #include "response_cache.h"
 #ifdef EI_GEMMA2
 #include "media2.h"
+#include "media_service2.h"
 #endif
 
 #include <ctype.h>
@@ -136,7 +137,7 @@ typedef struct {
 #ifdef EI_GEMMA2
     const char *mmproj_path;
     const char *media_encoders;
-    ei_engine *engine;
+    ei_media_service *media_service;
 #endif
 } server_opts;
 
@@ -821,13 +822,17 @@ static void handle_embed(ei_socket fd, ei_inference_service *service,
             http_response_raw(fd, 200, "OK", "application/json; charset=utf-8",
                               cached.data, cached.len, keep_alive);
             ei_response_cache_release(response_cache, &cached);
-        } else if (ei_multimodal_request(opts->engine, body, body_len,
-                    api == EMBEDDING_API_OPENAI, opts->max_client_batch_size,
-                    &response, err, sizeof err)) {
-            ei_response_cache_insert(response_cache, key, body_len + 1, response, strlen(response));
-            http_response(fd, 200, "OK", response, keep_alive);
         } else {
-            embedding_http_error(fd, api, 400, "Bad Request", err, "input", keep_alive);
+            ei_media_result result = ei_media_service_submit(opts->media_service,
+                body, body_len, api == EMBEDDING_API_OPENAI, &response, err, sizeof err);
+            if (result == EI_MEDIA_OK) {
+                ei_response_cache_insert(response_cache, key, body_len + 1, response, strlen(response));
+                http_response(fd, 200, "OK", response, keep_alive);
+            } else {
+                embedding_http_error(fd, api, result == EI_MEDIA_BUSY ? 503 : 400,
+                    result == EI_MEDIA_BUSY ? "Service Unavailable" : "Bad Request",
+                    err, result == EI_MEDIA_BUSY ? NULL : "input", keep_alive);
+            }
         }
         free(key); free(response);
         free(model.s);
@@ -1412,7 +1417,6 @@ static bool parse_args(int argc, char **argv, server_opts *opts) {
 #ifdef EI_GEMMA2
     opts->mmproj_path = NULL;
     opts->media_encoders = "all";
-    opts->engine = NULL;
 #endif
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--bind") == 0 && i + 1 < argc) {
@@ -1647,7 +1651,6 @@ int main(int argc, char **argv) {
     ei_engine engine;
     ei_engine_load_backend(&engine, model_path, opts.backend);
 #ifdef EI_GEMMA2
-    opts.engine = &engine;
     if (opts.mmproj_path) {
         char media_error[256];
         if (!ei_engine_load_media(&engine, model_path, opts.mmproj_path,
@@ -1655,6 +1658,9 @@ int main(int argc, char **argv) {
                                   strcmp(opts.media_encoders, "vision") != 0,
                                   media_error, sizeof media_error)) ei_die("%s", media_error);
     }
+    opts.media_service = ei_media_service_create(&engine, opts.max_client_batch_size,
+                                                 64, 128u * 1024u * 1024u);
+    if (!opts.media_service) ei_die("cannot initialize media service");
 #endif
     uint64_t cache_fingerprint = opts.persistent_cache_path
         ? model_fingerprint(model_path) : 0;

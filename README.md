@@ -85,8 +85,13 @@ vectors are normalized after truncation to 128, 256, 512, or 768 dimensions.
 `encoding_format` accepts `float` or `base64` (float32 bytes).
 
 Native media responses contain `embeddings` and token `usage`; the OpenAI-shaped
-route returns an embedding `data` list and `usage`. Media processing currently
-runs serially and needs further queue, batching, and decoded-allocation work.
+route returns an embedding `data` list and `usage`. Concurrent media requests with
+identical HTTP bodies on the same route share one inference, even when caching
+is disabled. Unique pending work is capped at 64 requests and 128 MiB of encoded
+request keys plus entry bookkeeping; excess work returns HTTP 503. Decoded inputs,
+responses and inference workspaces consume additional memory. Unique media
+inferences still run serially; cross-request batching and resource handling need
+further work.
 Treat this as a development service while those limits are being completed.
 
 ## Foundation and attribution

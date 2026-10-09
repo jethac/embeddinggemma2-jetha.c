@@ -213,8 +213,16 @@ Tests and documentation support that outcome; they do not define completion.
   An encoder batching experiment was rejected on this CPU: the cache-disabled
   two-frame video warm median rose from 4050.7 to 4280.9 ms despite identical
   output. Revisit batching on accelerators using actual measurements.
-- Complete media resource handling and multimodal queue/batching/singleflight are
+- Complete media resource handling and cross-request multimodal batching are
   unfinished. Remote hardware access remains unresolved; NPU support is absent.
+  Concurrent identical media HTTP bodies now share one in-flight inference,
+  independently of completed-response caching, with native/OpenAI isolation.
+  Unique pending work is limited to 64 entries and 128 MiB of encoded keys plus
+  bookkeeping; excess work returns HTTP 503. This is not a total-memory bound.
+  With caches disabled, the observed four-request CPU duplication regression
+  ran four inferences before the fix (slowest caller 21.8 s), versus one after
+  the fix (all callers 5.66 s; a later busy-host round took 8.24 s).
+  Admission limits, error propagation and API isolation pass on Windows/Linux.
 - Decoded media input now has bounds checked before image/PCM allocation:
   16 megapixels per image/frame, 5,242,880 audio samples, and 128 MiB of retained
   decoded input/frame buffers across parts. Video frames are capped at 32 across
@@ -255,9 +263,14 @@ Tests and documentation support that outcome; they do not define completion.
   matching modality samples were bit-identical to the previous static build.
   A mixed latency outlier did not reproduce: subsequent alternating calls were
   5.20/5.21 s (dispatch) versus 5.03/5.09 s (static) on the busy host. This is
-  not a quiet-host performance comparison. Linux dispatch build and the full
-  emulated older-CPU service journey remain in progress; ARM dispatch, physical
-  older/newer CPU coverage, AVX2-versus-AVX-512 benchmarking, and release packaging
+  not a quiet-host performance comparison. Linux dispatch and native/emulated
+  baseline service journeys now pass, including CI. All 14 CPU plugins load
+  under QEMU without AVX; only the baseline is admitted. An alternating AVX2/
+  AVX-512 experiment on the busy Xeon favored AVX-512 for long text (1721/1477 ms)
+  and mixed input (7088/5970 ms); short text/audio were noisy. Both text variants
+  exceed cosine 0.999 against FP32. These results retain the current selection,
+  without establishing quiet-host or measured-frequency performance. ARM dispatch,
+  physical older/newer CPU coverage and release packaging
   remain unfinished. The dev build requires its shared libraries and plugins;
   adapting the inherited executable installation/release flow to acquire these
   matching dependencies remains unfinished.
