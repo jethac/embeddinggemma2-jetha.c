@@ -639,9 +639,11 @@ Tests and documentation support that outcome; they do not define completion.
   service reached readiness. GGML's registry eagerly creates Metal devices even
   for CPU selection. The server now disables Metal device enumeration before
   initializing an explicitly selected CPU engine on macOS. The native journey
-  checks reject any Metal shader initialization in that CPU process. Native
-  macOS job 113759883337 in run 37912238090 passed, including the CPU shader
-  exclusion check and all five CPU/Metal modality comparisons.
+  checks reject any Metal shader initialization in that CPU process. Run
+  37912238090 passed all six jobs: macOS CPU became ready in 2 seconds and
+  Metal in 22 seconds; all five CPU/Metal comparisons passed (minimum cosine
+  0.999506). This removes the unnecessary shader dependency from explicit CPU
+  startup; it does not establish physical Apple GPU throughput.
 
 - Static auxiliary input reuse (`EI_REUSE_INPUTS2=1`, default off) addresses
   measured 8191-token preparation costs of 388–524 ms per warm forward. Positions,
@@ -665,5 +667,10 @@ Tests and documentation support that outcome; they do not define completion.
   outputs. Comparison metadata checks the requested input-reuse startup mode.
   Other accelerator backends remain unverified. Linux installed-service CI
   now exercises the focused sequence-boundary and graph-lifetime safety check.
+  The CUDA dev service on port 42669 now runs this path with global attention
+  and short-text graph caching enabled, QKV off. Its deployed text, image,
+  audio, video and mixed journeys passed against the existing Windows CPU
+  service (minimum cosine 0.999498). HTTP response caching remains available
+  on that dev service; the latency measurements above disabled it.
 
 Keep this file current as implementation decisions and verified evidence change.
