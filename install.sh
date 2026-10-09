@@ -2,28 +2,28 @@
 
 set -eu
 
-repo="QuixiAI/embeddinggemma.c"
-version=${EMBEDDINGGEMMA_VERSION:-latest}
-variant=${EMBEDDINGGEMMA_VARIANT:-auto}
-install_dir=${EMBEDDINGGEMMA_INSTALL_DIR:-}
+repo="jethac/embeddinggemma2-jetha.c"
+version=${EMBEDDINGGEMMA2_VERSION:-latest}
+variant=${EMBEDDINGGEMMA2_VARIANT:-auto}
+install_dir=${EMBEDDINGGEMMA2_INSTALL_DIR:-}
 
 usage() {
     cat <<'EOF'
 Usage: install.sh [--version VERSION] [--variant auto|cpu|metal|cuda|rocm|xpu]
                   [--install-dir DIRECTORY]
 
-Downloads an embeddinggemma release binary and installs it as
-~/.local/bin/embeddinggemma by default.
+Downloads an embeddinggemma2-jetha release binary and installs it as
+~/.local/bin/embeddinggemma2-jetha by default.
 
 Environment overrides:
-  EMBEDDINGGEMMA_VERSION       Release tag, or latest (default: latest)
-  EMBEDDINGGEMMA_VARIANT       auto, cpu, metal, cuda, rocm, or xpu (default: auto)
-  EMBEDDINGGEMMA_INSTALL_DIR   Installation directory (default: ~/.local/bin)
+  EMBEDDINGGEMMA2_VERSION       Release tag, or latest (default: latest)
+  EMBEDDINGGEMMA2_VARIANT       auto, cpu, metal, cuda, rocm, or xpu (default: auto)
+  EMBEDDINGGEMMA2_INSTALL_DIR   Installation directory (default: ~/.local/bin)
 EOF
 }
 
 die() {
-    printf 'embeddinggemma installer: %s\n' "$*" >&2
+    printf 'embeddinggemma2-jetha installer: %s\n' "$*" >&2
     exit 1
 }
 
@@ -156,7 +156,7 @@ sha256_file() {
     fi
 }
 
-tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/embeddinggemma.XXXXXX") ||
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/embeddinggemma2-jetha.XXXXXX") ||
     die 'could not create a temporary directory'
 staged=
 cleanup() {
@@ -168,7 +168,8 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 checksums=$tmpdir/SHA256SUMS
-download "$release_url/SHA256SUMS" "$checksums"
+download "$release_url/SHA256SUMS" "$checksums" ||
+    die "could not download this project's release checksums; use the README's CMake source installation"
 
 verify_asset() {
     asset=$1
@@ -180,7 +181,7 @@ verify_asset() {
     [ "$actual" = "$expected" ] || die "checksum verification failed for $asset"
 }
 
-asset="embeddinggemma-$platform-$architecture-$variant"
+asset="embeddinggemma2-jetha-$platform-$architecture-$variant"
 printf 'Selecting %s (%s/%s, %s)\n' "$asset" "$platform" "$architecture" "$variant"
 verify_asset "$asset"
 
@@ -194,7 +195,7 @@ if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1; then
             printf '%s\n' \
                 "$variant runtime dependencies are missing; falling back to the CPU binary." >&2
             variant=cpu
-            asset="embeddinggemma-$platform-$architecture-$variant"
+            asset="embeddinggemma2-jetha-$platform-$architecture-$variant"
             verify_asset "$asset"
             ldd_output=$(ldd "$tmpdir/$asset" 2>&1 || true)
         fi
@@ -206,15 +207,15 @@ if [ "$platform" = linux ] && command -v ldd >/dev/null 2>&1; then
 fi
 
 mkdir -p "$install_dir"
-staged=$(mktemp "$install_dir/.embeddinggemma.XXXXXX") ||
+staged=$(mktemp "$install_dir/.embeddinggemma2-jetha.XXXXXX") ||
     die "could not create a temporary file in $install_dir"
 cp "$tmpdir/$asset" "$staged"
 chmod 0755 "$staged"
-mv -f "$staged" "$install_dir/embeddinggemma"
+mv -f "$staged" "$install_dir/embeddinggemma2-jetha"
 staged=
 
-printf 'Installed %s as %s/embeddinggemma\n' "$asset" "$install_dir"
+printf 'Installed %s as %s/embeddinggemma2-jetha\n' "$asset" "$install_dir"
 case ":${PATH:-}:" in
     *":$install_dir:"*) ;;
-    *) printf 'Add %s to PATH to run embeddinggemma directly.\n' "$install_dir" ;;
+    *) printf 'Add %s to PATH to run embeddinggemma2-jetha directly.\n' "$install_dir" ;;
 esac

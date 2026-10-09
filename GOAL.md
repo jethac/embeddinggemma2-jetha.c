@@ -523,4 +523,12 @@ Tests and documentation support that outcome; they do not define completion.
   The graph topology and numerical kernels are unchanged. Quiet-host matched
   throughput is still required before a speed claim or default promotion.
 
+- The inherited installer actually requested QuixiAI's 300M release checksums.
+  It now targets this repository, its own asset/executable prefix, and
+  `EMBEDDINGGEMMA2_*` overrides. A mocked-download regression reproduced the
+  wrong URL before the fix and now verifies the correct URL and no installation
+  after download failure. No binary releases exist; CMake source installation
+  remains the working route. Shared-library staging and release publication are
+  unfinished; this identity fix establishes no inference speedup.
+
 Keep this file current as implementation decisions and verified evidence change.

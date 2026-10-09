@@ -261,7 +261,12 @@ The original QuixiAI copyright notice is preserved.
 and benchmark claims for the original 300M model. They do not establish
 EmbeddingGemma 2 results for this project.
 
-The inherited Makefile, release scripts, and [CONTRIBUTING.md](CONTRIBUTING.md)
+`install.sh` targets this repository's future releases and the
+`embeddinggemma2-jetha` executable, using `EMBEDDINGGEMMA2_*` environment
+overrides. No binary releases exist yet; use the CMake source installation above.
+It does not download upstream's 300M server or replace its executable.
+
+The inherited Makefile, staging scripts, and [CONTRIBUTING.md](CONTRIBUTING.md)
 still describe the 300M implementation. Use the CMake commands above for this
 port; adaptation of those workflows is unfinished. CI has a new Linux service
 job; the retained platform matrix still exercises the legacy model. Model weights, local
