@@ -15,6 +15,7 @@ import wave
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--url', default='http://127.0.0.1:42667')
 p.add_argument('--compare-url', help='Compare each embedding with another running service')
+p.add_argument('--check-prefixes', action='store_true', help='Check all output sizes and repeated responses')
 a = p.parse_args()
 
 def part(kind, data):
@@ -53,6 +54,22 @@ with tempfile.TemporaryDirectory(prefix='embeddinggemma2-example-') as tmp:
         tokens = '' if name == 'text' else f"{result['usage']['total_tokens']} tokens; "
         print(name, f'{(time.perf_counter() - start) * 1000:.1f} ms;',
               tokens + '768 finite normalized dimensions', flush=True)
+        if a.check_prefixes:
+            for dimensions in (128, 256, 512):
+                prefix_request = urllib.request.Request(a.url.rstrip('/') + '/api/embed',
+                    json.dumps({'input': value, 'dimensions': dimensions}).encode(),
+                    headers={'Content-Type': 'application/json'})
+                with urllib.request.urlopen(prefix_request, timeout=300) as response:
+                    prefix_result = json.load(response)
+                prefix = prefix_result['embeddings'][0]
+                assert len(prefix) == dimensions and all(math.isfinite(x) for x in prefix)
+                assert abs(sum(x*x for x in prefix) - 1) < 1e-5
+                prefix_norm = math.sqrt(sum(x*x for x in vector[:dimensions]))
+                assert max(abs(x-y/prefix_norm) for x,y in zip(prefix, vector)) < 1e-6
+                assert prefix_result['usage'] == result['usage']
+            with urllib.request.urlopen(request, timeout=300) as response:
+                assert json.load(response) == result, 'repeated response changed: ' + name
+            print(name, '128/256/512 normalized prefixes and repeated response passed', flush=True)
         if a.compare_url:
             reference_request = urllib.request.Request(a.compare_url.rstrip('/') + '/api/embed',
                 request.data, headers={'Content-Type': 'application/json'})

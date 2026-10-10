@@ -17,12 +17,12 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--binary', required=True, type=Path)
 p.add_argument('--model', required=True, type=Path)
 p.add_argument('--backend', default='cpu')
-p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch', 'jpeg-turbo', 'text-buckets', 'text-batch-buckets', 'vision-clip-metadata'], default='packed-qkv')
+p.add_argument('--mode', choices=['packed-qkv', 'cuda-global-attn', 'cuda-local-attn', 'cuda-local-range', 'geglu', 'media-batch', 'jpeg-turbo', 'text-buckets', 'text-batch-buckets', 'vision-clip-metadata', 'cpu-audio-f16'], default='packed-qkv')
 p.add_argument('--mmproj', type=Path)
 p.add_argument('--tokens', type=int, default=32)
 a = p.parse_args()
 if not 4 <= a.tokens <= 8192: p.error('--tokens must be 4..8192')
-if a.mode in ('media-batch', 'vision-clip-metadata') and not a.mmproj: p.error(f'{a.mode} requires --mmproj')
+if a.mode in ('media-batch', 'vision-clip-metadata', 'cpu-audio-f16') and not a.mmproj: p.error(f'{a.mode} requires --mmproj')
 flag, marker = {
     'packed-qkv': ('EI_QKV2', 'packed QKV:'),
     'cuda-global-attn': ('EI_CUDA_GLOBAL_ATTN2', 'CUDA global attention fallback:'),
@@ -34,6 +34,7 @@ flag, marker = {
     'text-buckets': ('EI_TEXT_BUCKETS2', 'CUDA text buckets:'),
     'text-batch-buckets': ('EI_TEXT_BATCH_BUCKETS2', 'CUDA text batch buckets:'),
     'vision-clip-metadata': ('EI_VISION_CLIP_METADATA2', 'Vision clipping: explicit metadata only'),
+    'cpu-audio-f16': ('EI_CPU_AUDIO_F16_2', 'CPU audio F16 active: 132 Conformer matrices'),
 }[a.mode]
 with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
     work = Path(directory)
@@ -72,6 +73,15 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
                         raise
     def request(probe=False):
         body = {'input': 'q0' + ' x' * (a.tokens - 4)}
+        if a.mode == 'cpu-audio-f16':
+            import base64, io, math, wave
+            buffer = io.BytesIO()
+            with wave.open(buffer, 'wb') as wav:
+                wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                wav.writeframes(b''.join(struct.pack('<h', round(4000 * math.sin(
+                    2 * math.pi * 660 * i / 16000))) for i in range(16000)))
+            body = {'input': {'content': [{'type': 'audio', 'data':
+                    base64.b64encode(buffer.getvalue()).decode()}]}}
         if a.mode == 'text-batch-buckets':
             body = {'input': ['q'+str(i)+(' '+word)*(a.tokens-4+i)
                               for i, word in enumerate(('x', 'y', 'z'))]}
@@ -98,4 +108,10 @@ with tempfile.TemporaryDirectory(prefix='qkv-cache2-') as directory:
         assert cached == fresh, f'{a.mode} reused a response from the original path'
     identity_after = struct.unpack('<Q', Path(str(cache)+'.responses').read_bytes()[8:16])[0]
     assert identity_before != identity_after, f'persistent cache identity did not distinguish {a.mode}'
+    if a.mode == 'cpu-audio-f16':
+        with server(work/'restart.log'):
+            assert request() == fresh, 'F16 restart response changed'
+            assert marker in (work/'restart.log').read_text(errors='replace')
+            assert 'multimodal request:' not in (work/'restart.log').read_text(errors='replace')
+        print('CPU audio F16 restart response is exact with no inference', flush=True)
 print(a.mode, 'persistent cache isolation passed')

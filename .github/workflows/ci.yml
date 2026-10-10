@@ -398,6 +398,36 @@ jobs:
           uname -m
           test "$(uname -m)" = arm64
           python3 tests/audio_f16_reference2.py --binary build-packaged/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+      - name: Run the native CPU F16 modality, prefix and cache journeys
+        if: github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16
+        env:
+          EI_THREADS: '3'
+          EI_CPU_AUDIO_F16_2: '1'
+        run: |
+          binary="$PWD/build-packaged/bin/embeddinggemma2-jetha"
+          "$binary" --bind 127.0.0.1 --port 42670 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 16 > build-cmake/f16-journey.stdout.log 2> build-cmake/f16-journey.stderr.log &
+          service_pid=$!
+          trap 'status=$?; if [ "$status" -ne 0 ]; then tail -n 120 build-cmake/f16-journey.stderr.log; fi; kill "$service_pid" 2>/dev/null || true; exit "$status"' EXIT
+          ready=0
+          for attempt in $(seq 1 180); do
+            if curl -fsS --max-time 2 http://127.0.0.1:42670/healthz; then ready=1; break; fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          grep 'CPU audio F16 active: 132 Conformer matrices' build-cmake/f16-journey.stderr.log
+          if grep -q 'ggml_metal_library_init' build-cmake/f16-journey.stderr.log; then exit 1; fi
+          python3 examples/journey2.py --url http://127.0.0.1:42670 --check-prefixes
+          python3 - <<'PY'
+          from pathlib import Path
+          calls = Path('build-cmake/f16-journey.stderr.log').read_text().count('multimodal request:')
+          print('F16 modality/prefix journey: media inference calls=', calls)
+          assert calls == 16, 'repeated requests missed the response cache'
+          PY
+          kill "$service_pid"
+          wait "$service_pid"
+          trap - EXIT
+          python3 tests/qkv_cache2.py --binary "$binary" --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode cpu-audio-f16
       - name: Run Metal and compare all five modalities with CPU
         if: steps.metal.outputs.available == 'ON'
         env:
