@@ -3733,3 +3733,30 @@ used an EPYC 7763, two threads, and OpenMP. One warm 18-token graph took
 Both engines used mapped Q8/BF16 weights. Pool creation/free took 1/1 microsecond;
 pool reuse is not the next optimization. This single profile is not a paired
 throughput result and does not test Xeon AMX or VNNI.
+
+### Native Windows CUDA audio accuracy (2026-10-10)
+
+On RTX 5060 Ti with CUDA 13.2, `EI_CUDA_AUDIO_F16_2=1` converts the 132
+Conformer matrices to F16 and retains FP32 GEMM accumulation/output. The
+original FP32 660 Hz cosine improved from 0.998766/0.998786 to
+0.999257/0.999294 at 1/5 seconds. Default OFF remained byte-identical for
+all five inputs. Both cache layers recomputed on mode changes and reused
+byte-identical results after matching restarts; an older CUDA plugin was
+rejected when the option was enabled.
+
+The deployed Windows CUDA listener on port 42671 passed the README client
+for all five inputs, including combined text/image/audio/video, with normalized
+128/256/512/768-dimensional output. Mixed 8192-token requests passed; both
+API routes rejected 8193 tokens. Shared-host, serial, both-order medians were
+35.306→35.284 ms for 1-second audio and 37.968→37.126 ms for 2 seconds.
+This is accuracy-fix cost, not a quiet-host speed claim. Encoder startup rose
+from 0.34 to 4.00 seconds; added weight storage is 270 MiB.
+
+### I8MM candidate rejected (2026-10-10)
+
+[Run 38049027256](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38049027256)
+fixed the observed single-row and tail GEMV error and passed the direct Q8
+oracle and original FP32 audio checks. Text throughput was unchanged
+(23.964 versus 23.991 emb/s). Audio fell from 2.071 to 0.827 emb/s, and
+four-client audio cosine failed at 0.998895. The candidate remains outside
+main. All completed quiet windows had zero other CPU load.

@@ -39,6 +39,7 @@ local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
 ```
 
 For Windows/macOS CPU audio, set `EI_CPU_AUDIO_F16_2=1` (+270 MiB).
+For CUDA audio, set `EI_CUDA_AUDIO_F16_2=1` (+270 MiB; see the plugin requirement below).
 For Linux ARM64 portable dispatch, build with `-DEI_CPU_DISPATCH=ON` and
 `-DGGML_CPU_ARM_PORTABLE=ON`, then set both `EI_CPU_AUDIO_F16_2=1` and
 `EI_ARM_FP16_ACC_F32=1` for the guarded DOTPROD/FP16 module. Both numeric

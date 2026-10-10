@@ -175,7 +175,7 @@ def main():
     p.add_argument('--cooldown', type=float, default=2)
     p.add_argument('--port', type=int, default=42674)
     p.add_argument('--audio-reference', type=Path, action='append', default=[],
-                   help='Check both CPU engines against original FP32 SDPA audio before timing')
+                   help='Check both engines against original FP32 SDPA audio before timing')
     p.add_argument('--validate-only', action='store_true', help='Check journeys and quality without timing')
     a = p.parse_args()
     modalities = a.modalities.split(',')
@@ -183,6 +183,11 @@ def main():
         p.error('modalities must be text,image,audio,video,mixed or a subset')
     if a.backend == 'cpu' and any(k in modalities for k in ('audio', 'mixed')) and os.getenv('EI_CPU_AUDIO_F16_2') != '1':
         p.error('CPU audio/mixed comparisons require EI_CPU_AUDIO_F16_2=1 for both encoders')
+    if a.backend == 'cuda' and any(k in modalities for k in ('audio', 'mixed')):
+        if os.getenv('EI_CUDA_AUDIO_F16_2') != '1' or not a.audio_reference:
+            p.error('CUDA audio/mixed comparisons require EI_CUDA_AUDIO_F16_2=1 and --audio-reference')
+    if a.backend == 'cuda' and os.getenv('GGML_CUDA_CUBLAS_COMPUTE_TYPE') is not None:
+        p.error('unset GGML_CUDA_CUBLAS_COMPUTE_TYPE before comparing CUDA engines')
     if (a.threads < 1 or min(a.concurrency) < 1 or max(a.concurrency) > 32 or
             a.rounds < 3 or a.target_seconds <= 0 or a.cooldown < 0 or a.quiet_total_cpu_percent <= 0):
         p.error('invalid threads, concurrency, rounds or measurement duration')
@@ -227,17 +232,20 @@ def main():
                  '--ctx-size', '16384', '--kv-unified', '--batch-size', '16384', '--ubatch-size', '16384',
                  '--flash-attn', 'on', '--no-cache-prompt', '--cache-ram', '0',
                  '--no-cache-idle-slots', '--no-webui', '--log-disable']
-    # Keep native experiments isolated. The CPU audio quality fix belongs
+    # Keep native experiments isolated. The audio quality fix belongs
     # to the shared encoder loader and must be enabled in both engines.
     llama_env = {k: v for k, v in os.environ.items() if not k.startswith('EI_')}
     cpu_audio_f16 = a.backend == 'cpu' and os.getenv('EI_CPU_AUDIO_F16_2') == '1'
     if cpu_audio_f16:
         llama_env['EI_CPU_AUDIO_F16_2'] = '1'
+    cuda_audio_f16 = a.backend == 'cuda' and os.getenv('EI_CUDA_AUDIO_F16_2') == '1'
+    if cuda_audio_f16:
+        llama_env['EI_CUDA_AUDIO_F16_2'] = '1'
     arm_precise = a.backend == 'cpu' and os.getenv('EI_ARM_FP16_ACC_F32') == '1'
     if arm_precise:
         llama_env['EI_ARM_FP16_ACC_F32'] = '1'
-    if a.audio_reference and not cpu_audio_f16:
-        p.error('audio references require the matched CPU audio F16 loader')
+    if a.audio_reference and not (cpu_audio_f16 or cuda_audio_f16):
+        p.error('audio references require the matched audio F16 loader')
     if a.profile_phases:
         # The patched encoder's diagnostic timer is shared by both engines.
         # Keep optimization flags isolated even during a profiled comparison.
@@ -279,11 +287,12 @@ def main():
                         if not marker or int(marker[1]) == 0:
                             raise RuntimeError('native CPU Q8 repack did not activate')
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
-                    if cpu_audio_f16:
-                        marker = 'CPU audio F16 active: 132 Conformer matrices'
+                    if cpu_audio_f16 or cuda_audio_f16:
+                        encoder_backend = 'CPU' if cpu_audio_f16 else 'CUDA'
+                        marker = f'{encoder_backend} audio F16 active: 132 Conformer matrices'
                         for name, process in (('native', op), ('llama.cpp', lp)):
                             if marker not in process.log_path.read_text(errors='replace'):
-                                raise RuntimeError(f'{name} did not enable the matched CPU audio F16 loader')
+                                raise RuntimeError(f'{name} did not enable the matched {encoder_backend} audio F16 loader')
                     if arm_precise:
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')

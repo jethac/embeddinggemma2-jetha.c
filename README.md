@@ -4,7 +4,7 @@ EmbeddingGemma 2 server in C.
 
 - Inputs: text, image, audio, video, mixed.
 - Output: 128, 256, 512, or 768 dimensions. Limit: 8192 tokens.
-- Tested: Windows CPU, WSL CPU/CUDA, Linux ARM CPU, macOS CI CPU/Metal.
+- Tested: Windows CPU/CUDA, WSL CPU/CUDA, Linux ARM CPU, macOS CI CPU/Metal.
 - Unverified: ROCm, XPU, GB10, Strix Halo. No NPU support or binary releases.
 - Some accelerator operations use CPU fallback.
 
