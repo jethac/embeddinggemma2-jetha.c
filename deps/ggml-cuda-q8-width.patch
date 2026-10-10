@@ -1,0 +1,25 @@
+--- a/ggml/src/ggml-cuda/mmq.cu
++++ b/ggml/src/ggml-cuda/mmq.cu
+@@ -224,5 +224,22 @@
+         }
+     }
++    static const bool ei_q8_width2 = [] {
++        const char * value = getenv("EI_CUDA_Q8_WIDTH2");
++        return value && strcmp(value, "1") == 0;
++    }();
++    if (ei_q8_width2 && cc == GGML_CUDA_CC_BLACKWELL && src0->type == GGML_TYPE_Q8_0 &&
++        prec_src1 == GGML_PREC_Q8 && !fallback && !ids && ne02 == 1 && ne03 == 1 && ne12 == 1 && ne13 == 1 &&
++        ne00 <= 2048 && ne01 <= 2048 && ne11 > 32 && ne11 <= 128 && J_best > 32) {
++        const auto old_config = ggml_cuda_mmq_get_config(src0->type, J_best, fallback, cc, prec_src1);
++        const auto narrow = ggml_cuda_mmq_get_config(src0->type, 32, fallback, cc, prec_src1);
++        const int old_tiles = ((ne01 + old_config.I - 1) / old_config.I) * ((ne11 + old_config.J - 1) / old_config.J);
++        // Use more output tiles when the current grid has fewer tiles than SMs.
++        if (old_tiles < ggml_cuda_info().devices[id].nsm && narrow.type != GGML_TYPE_COUNT &&
++            mmq_get_nbytes_shared(narrow, cc) <= smpbo) {
++            J_best = 32;
++            nthreads_best = narrow.nthreads;
++        }
++    }
+     GGML_ASSERT(J_best > 0);
+ 
+     // A tile of size J can read in at most J - 1 extra columns.

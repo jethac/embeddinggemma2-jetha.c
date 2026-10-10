@@ -60,6 +60,7 @@ typedef struct {
     bool cuda_global_attn;
     bool cuda_local_attn;
     bool cuda_local_range;
+    bool cuda_q8_width;
     bool reuse_inputs;
     bool fused_geglu;
     bool media_batch;
@@ -99,6 +100,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
+        s->cuda_q8_width ? "embeddinggemma2-cuda-q8-width-v1" : NULL,
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->vision_clip_metadata ? "embeddinggemma2-vision-clip-metadata-v1" : NULL,
@@ -654,6 +656,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->cuda_local_range = local_range && strcmp(local_range, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
     if (s->cuda_local_range) fprintf(stderr, "CUDA local mask range: skip fully masked leading key tiles from 1024 tokens\n");
+    const char *q8_width = getenv("EI_CUDA_Q8_WIDTH2");
+    s->cuda_q8_width = q8_width && strcmp(q8_width, "1") == 0 &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
     const char *reuse_inputs = getenv("EI_REUSE_INPUTS2");
     s->reuse_inputs = reuse_inputs && strcmp(reuse_inputs, "1") == 0;
     if (s->reuse_inputs) fprintf(stderr, "Backbone static input reuse: dedicated FP16 masks, matching sequence boundaries\n");

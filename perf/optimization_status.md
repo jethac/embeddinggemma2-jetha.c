@@ -3286,3 +3286,29 @@ These measurements do not establish quiet-host latency or tail improvement.
 The one-second aggregate ratio was 0.760x (loss); maximum latency was
 5.050/5.088 seconds OFF/ON. The two-second aggregate ratio was 1.021x;
 both orders and all four blocks improved. Its maximum was 278.135/253.272 ms.
+
+## CUDA Q8 tile width
+
+`EI_CUDA_Q8_WIDTH2=1` selects 32-column MMQ tiles for small singleton Q8
+projections on SM120 when the existing output grid has fewer tiles than SMs.
+Stream-K remains enabled. The default is OFF. Persisted text and media
+caches use a separate numeric identity.
+
+On RTX 5060 Ti, 32 warmed HTTP pairs in both orders used eight backbone
+cache slots, two audio slots, and no input or response caches. Adjacent raw
+lengths were 25, 27, 29, 31, 69, 71, 73, and 75 tokens. OFF/ON medians were
+14.538/13.961 ms; median paired ratio was 1.046x, with 26/32 ON wins.
+The 1.268x aggregate ratio includes large host outliers and is not a stable
+speed estimate. No graph rebuilt during measurement.
+
+An eight-request device trace measured backbone kernel sums of
+24.666/22.705 ms and encoder sums of 24.685/24.402 ms. Long-audio backbone
+kernel time fell from about 3.623 to 3.124 ms per request. Fixup time fell;
+kernel counts and stream-K block counts stayed the same. The compiler
+overlapped this trace, so it does not establish host latency.
+
+Changed inputs, unequal arrays, eviction and reentry, normalized prefixes,
+and 8192/8193-token limits passed. Minimum changed-input cosine was 0.999589.
+Reduced-dimension text and audio cosine remained above 0.999. OFF matched
+the dev service byte for byte. Actual persisted caches restored with the
+same flag and rejected the other numeric identity.
