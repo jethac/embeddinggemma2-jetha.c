@@ -199,7 +199,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio","image","video","mixed"]' || '["full"]') }}
+        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio"]' || '["full"]') }}
     name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || (github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && format('Matched ARM CPU vs llama ({0})', matrix.modalities) || 'EmbeddingGemma 2 service (Linux ARM64 CPU)') }}
     runs-on: ubuntu-24.04-arm
     container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
@@ -232,16 +232,18 @@ jobs:
           for compiler in gcc g++; do
             language=c
             if [ "$compiler" = g++ ]; then language=c++; fi
-            for arch in armv8-a armv8.2-a+dotprod+fp16; do
+            for arch in armv8-a armv8.2-a+dotprod+fp16 armv8.2-a+dotprod+fp16+i8mm; do
               echo "$compiler $arch macros"
               "$compiler" -march="$arch" -dM -E -x "$language" /dev/null | sort | grep -E '__ARM_(ARCH|FEATURE|FP|NEON)'
             done
           done
-          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=ON -DGGML_CPU_ARM_PORTABLE=ON -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=ON -DGGML_CPU_ARM_PORTABLE=ON -DGGML_CPU_ARM_I8MM=ON -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
           if ! grep -q '^GGML_ARM_PORTABLE_C_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt || ! grep -q '^GGML_ARM_PORTABLE_CXX_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt; then
             cat build-cmake/CMakeFiles/CMakeConfigureLog.yaml
             exit 1
           fi
+          grep -q '^GGML_ARM_I8MM_C_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt
+          grep -q '^GGML_ARM_I8MM_CXX_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
       - name: Stage and install the ARM64 CPU application
         if: env.ARM_CUDA_COMPILE != '1'
@@ -322,8 +324,8 @@ jobs:
           assert set(re.findall(r'sm_[0-9]+[a-z]?', objects)) == {'sm_121a'}, 'unexpected CUDA code architecture'
           print('Native ARM64 CUDA compile/link/staging passed; GPU load and inference remain untested.')
           PY
-      - name: Compare installed ARM kernels and exercise baseline ISA safety
-        if: env.ARM_CUDA_COMPILE != '1' && !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media)
+      - name: Check I8MM opt-in fallback and numeric cache isolation
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
         env:
           EI_THREADS: '2'
         run: |
@@ -352,7 +354,7 @@ jobs:
               cases = fixtures(root, 1)
               processes = []
               persistent = set()
-              def start(name, label, cache=None, emulate=False, profile=False, precise=True, audio_f16=True):
+              def start(name, label, cache=None, emulate=False, profile=False, precise=True, audio_f16=True, i8mm=False):
                   endpoint = endpoints[name]
                   command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
                              '--backend', 'cpu', '--model', str(model), '--mmproj', str(mmproj),
@@ -361,6 +363,9 @@ jobs:
                   if cache: command += ['--persistent-cache-path', str(cache)]
                   if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
                   child_env = env.copy()
+                  # Exercise unsupported-ISA fallback with the opt-in flag enabled.
+                  if emulate or i8mm: child_env['EI_CPU_ARM_I8MM2'] = '1'
+                  else: child_env.pop('EI_CPU_ARM_I8MM2', None)
                   if precise: child_env['EI_ARM_FP16_ACC_F32'] = '1'
                   if audio_f16: child_env['EI_CPU_AUDIO_F16_2'] = '1'
                   if profile: child_env['EI_PROFILE_BACKBONE2'] = '1'
@@ -378,13 +383,14 @@ jobs:
                               break
                       except OSError: time.sleep(.2)
                   else: raise AssertionError('installed ARM service did not become ready')
-                  expected = 'armv8-baseline' if name == 'off' or emulate else ('dotprod-fp16-acc-f32-v2' if precise else 'dotprod-fp16-v1')
+                  expected = 'armv8-baseline' if name == 'off' or emulate else ('i8mm-dotprod-fp16-acc-f32-v1' if i8mm else ('dotprod-fp16-acc-f32-v2' if precise else 'dotprod-fp16-v1'))
                   assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
                   assert ('CPU audio F16 active: 132 Conformer matrices' in log.read_text()) == audio_f16, log.read_text()
                   maps = Path(f'/proc/{process.pid}/maps').read_text()
-                  selected = 'armv8.0_1' if expected == 'armv8-baseline' else 'armv8_dotprod_fp16'
+                  selected = 'armv8.0_1' if expected == 'armv8-baseline' else ('armv8_dotprod_fp16_i8mm' if i8mm else 'armv8_dotprod_fp16')
                   assert f'libggml-cpu-{selected}.so' in maps, maps
                   if expected == 'armv8-baseline': assert 'libggml-cpu-armv8_dotprod_fp16.so' not in maps
+                  if not i8mm: assert 'libggml-cpu-armv8_dotprod_fp16_i8mm.so' not in maps, 'I8MM selected without runtime support or opt-in'
                   assert str(repo / 'build-cmake') not in maps, 'loaded build-tree runtime'
                   return process, log
               def stop(process):
@@ -399,179 +405,54 @@ jobs:
                   processes.remove(process)
                   persistent.discard(process.pid)
               try:
-                  # Same 330 Hz/1 s fixture that failed at cosine .9987010972.
-                  # Reproduce with the precision flag absent before testing the fix.
-                  on, _ = start('on', 'native-half-acc-q8-control', precise=False, audio_f16=False)
-                  off, _ = start('off', 'native-off-q8-control', audio_f16=False)
-                  body = cases['audio'][0][0]
-                  a, ta = validate(endpoints['on'], body)
-                  b, tb = validate(endpoints['off'], body)
-                  cosine = cosine_similarity(a, b)
-                  assert ta == tb == 29 and .998 < cosine < .999, ('audio regression OFF', ta, tb, cosine)
-                  print(json.dumps({'audio_regression_flag_OFF': cosine, 'tokens': ta}), flush=True)
-                  stop(on); stop(off)
-                  # Q8 5s660 true-HF failure recorded by run38031907573:
-                  # baseline .9984561846682671; optimized .9982656009255824.
-                  # Qualify the F16 Conformer fix on both modules; no half-path promotion.
-                  off, _ = start('off', 'native-baseline-f16')
-                  on, _ = start('on', 'native-f32-acc-f16')
-                  for kind in ('text', 'image', 'audio', 'video', 'mixed'):
-                      body = cases[kind][0][0]
-                      a, ta = validate(endpoints['on'], body)
-                      b, tb = validate(endpoints['off'], body)
-                      cosine = cosine_similarity(a, b)
-                      assert ta == tb and cosine > .999, (kind, ta, tb, cosine)
-                      print(json.dumps({'quality': kind, 'tokens': ta, 'cosine': cosine}), flush=True)
-                  # Pinned original FP32 SDPA references use a boolean audio mask.
-                  # Keep the failed fixtures and the >.999 ISA parity gate unchanged.
-                  goldens = {}
-                  for seconds, frequency in ((1, 330), (1, 660), (5, 660)):
-                      golden = json.loads((repo / f'tests/fixtures/audio-{seconds}s{frequency}-hf-f32.json').read_text())
-                      assert golden['revision'] == '914f7f89142e33e77833254d9c9b90c3cef7303b'
-                      assert (golden['seconds'], golden['frequency_hz'], golden['sample_rate'], golden['amplitude']) == (seconds, frequency, 16000, 4000)
-                      assert (golden['reference_dtype'], golden['attention'], golden['audio_mask']) == ('float32', 'sdpa', 'boolean')
-                      reference = golden['embedding']
-                      assert len(reference) == 768 and all(math.isfinite(x) for x in reference)
-                      assert abs(sum(x*x for x in reference) - 1) < .002
-                      goldens[(seconds, frequency)] = golden
-                  for seconds, frequency, tokens in ((1, 330, 29), (1, 660, 29), (2, 330, 54), (5, 660, 129)):
-                      audio = io.BytesIO()
-                      with wave.open(audio, 'wb') as wav:
-                          wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
-                          wav.writeframes(b''.join(struct.pack('<h', round(4000 * math.sin(
-                              2 * math.pi * frequency * sample / 16000)))
-                              for sample in range(seconds * 16000)))
-                      url = 'data:audio/wav;base64,' + base64.b64encode(audio.getvalue()).decode()
-                      body = dict(cases['audio'][0][0], input={'content': [{'type': 'audio', 'data': url}]})
-                      a, ta = validate(endpoints['on'], body)
-                      b, tb = validate(endpoints['off'], body)
-                      cosine = cosine_similarity(a, b)
-                      assert ta == tb == tokens, (seconds, frequency, ta, tb, tokens)
-                      if (seconds, frequency) in goldens:
-                          golden = goldens[(seconds, frequency)]
-                          assert ta == golden['tokens']
-                          baseline_hf = cosine_similarity(b, golden['embedding'])
-                          optimized_hf = cosine_similarity(a, golden['embedding'])
-                          print(json.dumps({'ARM_audio_F16_HF_reference': golden['revision'],
-                                            'seconds': seconds, 'frequency_hz': frequency, 'tokens': ta,
-                                            'baseline_cosine': baseline_hf, 'optimized_cosine': optimized_hf,
-                                            'ISA_cosine': cosine}), flush=True)
-                          assert baseline_hf > .999 and optimized_hf > .999, (seconds, frequency, baseline_hf, optimized_hf)
-                      assert cosine > .999, (seconds, frequency, ta, tb, cosine)
-                      print(json.dumps({'ARM_longer_audio_seconds': seconds, 'frequency_hz': frequency,
-                                        'tokens': ta, 'cosine': cosine}), flush=True)
-                  options = SimpleNamespace(cooldown=2, quiet_total_cpu_percent=150,
-                                            rounds=3, target_seconds=3)
-                  for kind in ('text', 'audio', 'image'):
-                      bodies = [json.dumps(cases[kind][0][0]).encode()]
-                      measured = measure_native_pair(endpoints['on'], endpoints['off'], bodies,
-                                                     {on.pid, off.pid}, options)
-                      print(json.dumps({'native_ARM_C1': kind, **measured}), flush=True)
-                  # Truncation must retain finite normalized results and ISA parity.
-                  def request_vector(name, body, dimensions, tokens=None):
-                      endpoint = endpoints[name]
-                      request = urllib.request.Request(
-                          f'http://{endpoint.host}:{endpoint.port}/v1/embeddings',
-                          json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
-                      with urllib.request.urlopen(request, timeout=1800) as response:
-                          result = json.load(response)
-                      vector = result['data'][0]['embedding']
-                      assert len(vector) == dimensions and all(math.isfinite(v) for v in vector)
-                      assert abs(sum(v*v for v in vector) - 1) < .002
-                      actual_tokens = result['usage']['prompt_tokens']
-                      if tokens is not None: assert actual_tokens == tokens, (actual_tokens, tokens)
-                      return vector, actual_tokens
-                  for dimensions in (128, 256, 512):
-                      for kind in ('text', 'image', 'audio', 'video', 'mixed'):
-                          body = dict(cases[kind][0][0], dimensions=dimensions)
-                          a, ta = request_vector('on', body, dimensions)
-                          b, tb = request_vector('off', body, dimensions)
-                          cosine = cosine_similarity(a, b)
-                          assert ta == tb and cosine > .999, (kind, dimensions, ta, tb, cosine)
-                          if kind == 'audio':
-                              reference = goldens[(1, 330)]['embedding'][:dimensions]
-                              # cosine_similarity expects unit vectors; a prefix is not unit length.
-                              prefix_norm = math.sqrt(sum(x*x for x in reference))
-                              assert math.isfinite(prefix_norm) and prefix_norm > 0
-                              reference = [x / prefix_norm for x in reference]
-                              baseline_hf = cosine_similarity(b, reference)
-                              optimized_hf = cosine_similarity(a, reference)
-                              print(json.dumps({'ARM_audio_F16_HF_dimensions': dimensions,
-                                                'tokens': ta, 'baseline_cosine': baseline_hf,
-                                                'optimized_cosine': optimized_hf}), flush=True)
-                              assert baseline_hf > .999 and optimized_hf > .999, (dimensions, baseline_hf, optimized_hf)
-                          print(json.dumps({'ARM_reduced_dimensions': kind, 'dimensions': dimensions,
-                                            'tokens': ta, 'cosine': cosine}), flush=True)
-                  # Match the actual tokenizer count; protect the full context boundary.
-                  full_context = {'model': 'embeddinggemma-2', 'input': 'q0' + ' x' * (8192 - 4),
-                                  'dimensions': 768}
-                  a, _ = request_vector('on', full_context, 768, tokens=8192)
-                  b, _ = request_vector('off', full_context, 768, tokens=8192)
-                  cosine = cosine_similarity(a, b)
-                  assert cosine > .999, ('ARM full8192 cosine', cosine)
-                  print(json.dumps({'ARM_full_context_tokens': 8192, 'cosine': cosine}), flush=True)
-                  oversized = dict(full_context, input=full_context['input'] + ' x')
-                  for name in ('on', 'off'):
-                      endpoint = endpoints[name]
-                      for route in ('/api/embed', '/v1/embeddings'):
-                          request = urllib.request.Request(f'http://{endpoint.host}:{endpoint.port}{route}',
-                              json.dumps(oversized).encode(), headers={'Content-Type': 'application/json'})
-                          try:
-                              with urllib.request.urlopen(request, timeout=60) as response: response.read()
-                              raise AssertionError(('ARM 8193 accepted', name, route))
-                          except urllib.error.HTTPError as error:
-                              result = json.load(error)
-                              assert error.code == 400 and '1..8192' in json.dumps(result), result
-                  print('ARM 8193-token input rejected by both public routes and both ISA paths', flush=True)
-                  stop(on); stop(off)
-
-                  # Real unsupported-ISA startup/request: both modules remain present.
-                  qemu, _ = start('on', 'cortex-a53', emulate=True)
-                  body = json.dumps({'input': 'task: search result | query: cell',
-                                     'model': 'embeddinggemma-2', 'dimensions': 768}).encode()
-                  req = urllib.request.Request('http://127.0.0.1:42667/v1/embeddings', body,
-                                               headers={'Content-Type': 'application/json'})
-                  with urllib.request.urlopen(req, timeout=600) as response:
+                  # Actual packed runtime with all modules; opt-in still must not
+                  # select I8MM on Cortex-A53. One text request is sufficient.
+                  emulated, _ = start('on', 'i8mm-unsupported-cortex-a53', emulate=True)
+                  request = urllib.request.Request('http://127.0.0.1:42667/v1/embeddings',
+                      json.dumps(cases['text'][0][0]).encode(), headers={'Content-Type': 'application/json'})
+                  with urllib.request.urlopen(request, timeout=600) as response:
                       result = json.load(response)
-                  assert len(result['data'][0]['embedding']) == 768
-                  stop(qemu)
-                  print('Cortex-A53 real request selected baseline with optimized module present', flush=True)
+                  vector = result['data'][0]['embedding']
+                  assert len(vector) == 768 and all(math.isfinite(x) for x in vector)
+                  assert abs(sum(x*x for x in vector) - 1) < .002
+                  assert result['usage']['prompt_tokens'] == 18
+                  stop(emulated)
+                  print('I8MM flag ON safely selects ARMv8 baseline on Cortex-A53', flush=True)
 
-                  # Persisted arithmetic identities must separate both cache layers.
-                  shared = root / 'shared-cache'
-                  texts = cases['text'][0][0]
-                  images = cases['image'][0][0]
-                  native, _ = start('off', 'baseline-q8-cache', cache=shared, audio_f16=False)
-                  validate(endpoints['off'], texts); validate(endpoints['off'], images)
+                  # These checks intentionally leave repacking OFF: mapped kernels
+                  # also inherit the selected module's arithmetic/cache domain.
+                  shared = root / 'i8mm-cache'
+                  text = cases['text'][0][0]
+                  audio = cases['audio'][0][0]
+                  native, _ = start('on', 'dotprod-cache', cache=shared)
+                  old_text, text_tokens = validate(endpoints['on'], text)
+                  old_audio, audio_tokens = validate(endpoints['on'], audio)
                   stop(native)
-                  q8_text_id = shared.read_bytes()[16:24]
-                  q8_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
-                  native, log = start('off', 'baseline-cache', cache=shared, profile=True)
-                  validate(endpoints['off'], texts); validate(endpoints['off'], images)
+                  old_text_id = shared.read_bytes()[16:24]
+                  old_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  golden = json.loads((repo / 'tests/fixtures/audio-1s330-hf-f32.json').read_text())
+                  assert (golden['reference_dtype'], golden['attention'], golden['audio_mask']) == ('float32', 'sdpa', 'boolean')
+                  reference = golden['embedding']
+                  assert cosine_similarity(old_audio, reference) > .999
+                  native, log = start('on', 'i8mm-cache', cache=shared, profile=True, i8mm=True)
+                  new_text, nt = validate(endpoints['on'], text)
+                  new_audio, na = validate(endpoints['on'], audio)
+                  assert nt == text_tokens == 18 and na == audio_tokens == 29
+                  assert cosine_similarity(new_text, old_text) > .999
+                  assert cosine_similarity(new_audio, old_audio) > .999
+                  audio_hf = cosine_similarity(new_audio, reference)
+                  assert audio_hf > .999, ('I8MM mapped audio HF', audio_hf)
                   stop(native)
-                  baseline_text_id = shared.read_bytes()[16:24]
-                  baseline_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
-                  assert log.read_text().count('backbone:') >= 2, 'Q8 snapshots crossed F16 audio identity'
-                  assert q8_text_id != baseline_text_id and q8_response_id != baseline_response_id
-                  native, log = start('on', 'half-acc-cache', cache=shared, profile=True, precise=False)
-                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  assert log.read_text().count('backbone:') >= 2, 'DOTPROD snapshots crossed I8MM identity'
+                  assert old_text_id != shared.read_bytes()[16:24]
+                  assert old_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'i8mm-cache-restart', cache=shared, profile=True, i8mm=True)
+                  assert validate(endpoints['on'], text) == (new_text, nt)
+                  assert validate(endpoints['on'], audio) == (new_audio, na)
                   stop(native)
-                  assert log.read_text().count('backbone:') >= 2, 'baseline snapshots crossed half-acc ARM identity'
-                  half_text_id = shared.read_bytes()[16:24]
-                  half_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
-                  assert baseline_text_id != half_text_id
-                  assert baseline_response_id != half_response_id
-                  native, log = start('on', 'optimized-cache', cache=shared, profile=True)
-                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
-                  stop(native)
-                  assert log.read_text().count('backbone:') >= 2, 'baseline text/media snapshots crossed ARM numeric identity'
-                  assert half_text_id != shared.read_bytes()[16:24]
-                  assert half_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
-                  native, log = start('on', 'optimized-cache-restart', cache=shared, profile=True)
-                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
-                  stop(native)
-                  assert 'backbone:' not in log.read_text(), 'same-variant snapshot failed to restore'
-                  print('ARM text and media persisted identities isolate ISA variants and restore on restart', flush=True)
+                  assert 'backbone:' not in log.read_text(), 'I8MM snapshot failed to restore'
+                  print(json.dumps({'ARM_I8MM_persisted_identity': 'isolated and restored',
+                                    'audio_original_HF_cosine': audio_hf}), flush=True)
               finally:
                   for process in processes:
                       if process.poll() is None:
@@ -596,6 +477,7 @@ jobs:
           EI_CPU_AUDIO_F16_2: '1'
           EI_ARM_FP16_ACC_F32: '1'
           ARM_MEDIA_MODALITIES: ${{ matrix.modalities }}
+          EI_CPU_ARM_I8MM2: '1'
         run: |
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH

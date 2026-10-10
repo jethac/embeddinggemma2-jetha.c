@@ -190,13 +190,14 @@ def main():
         p.error('unset profiling flags before timing')
     for path in (a.model, a.mmproj, a.embeddinggemma_bin, a.llama_server):
         if not path.is_file(): p.error(f'not found: {path}')
+    i8mm_probe = a.backend == 'cpu' and os.getenv('EI_CPU_ARM_I8MM2') == '1'
     vnni_probe = os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1'
-    if sum((vnni_probe, a.vision_clip_metadata, a.metal_media_flash_attn)) > 1:
+    if sum((i8mm_probe, vnni_probe, a.vision_clip_metadata, a.metal_media_flash_attn)) > 1:
         p.error('select one native on/off experiment at a time')
-    native_probe = vnni_probe or a.vision_clip_metadata or a.metal_media_flash_attn
-    probe_name = ('VNNI paired rows' if vnni_probe else 'Metal encoder flash attention'
+    native_probe = i8mm_probe or vnni_probe or a.vision_clip_metadata or a.metal_media_flash_attn
+    probe_name = ('ARM I8MM' if i8mm_probe else 'VNNI paired rows' if vnni_probe else 'Metal encoder flash attention'
                   if a.metal_media_flash_attn else 'vision metadata clipping')
-    off_flags = (('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
+    off_flags = (('EI_CPU_ARM_I8MM2',) if i8mm_probe else ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
                  else ('EI_METAL_MEDIA_FLASH_ATTN2',) if a.metal_media_flash_attn
                  else ('EI_VISION_CLIP_METADATA2',))
     if a.vision_clip_metadata:
@@ -236,6 +237,9 @@ def main():
     arm_precise = a.backend == 'cpu' and os.getenv('EI_ARM_FP16_ACC_F32') == '1'
     if arm_precise:
         llama_env['EI_ARM_FP16_ACC_F32'] = '1'
+    if i8mm_probe:
+        if not arm_precise: p.error('I8MM comparison requires the qualified ARM FP32 accumulation flag')
+        llama_env['EI_CPU_ARM_I8MM2'] = '1'
     if a.audio_reference and not cpu_audio_f16:
         p.error('audio references require the matched CPU audio F16 loader')
     if a.profile_phases:
@@ -287,22 +291,26 @@ def main():
                     if arm_precise:
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')
-                        if 'ARM CPU numeric variant: dotprod-fp16-acc-f32-v2' not in native_log:
+                        variant = 'i8mm-dotprod-fp16-acc-f32-v1' if i8mm_probe else 'dotprod-fp16-acc-f32-v2'
+                        module = 'armv8_dotprod_fp16_i8mm' if i8mm_probe else 'armv8_dotprod_fp16'
+                        if f'ARM CPU numeric variant: {variant}' not in native_log:
                             raise RuntimeError('native ARM precise numeric variant did not activate')
-                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32'):
+                        if i8mm_probe and 'ARM CPU I8MM selected: MATMUL_INT8=1' not in native_log:
+                            raise RuntimeError('native I8MM MATMUL_INT8 feature did not activate')
+                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32') + (('MATMUL_INT8',) if i8mm_probe else ()):
                             if not re.search(rf'\b{feature}\s*=\s*1\b', llama_log):
                                 raise RuntimeError(f'llama.cpp ARM feature did not activate: {feature}')
                         modules = []
                         for process in (op, lp):
                             maps = Path(f'/proc/{process.process.pid}/maps').read_text()
                             loaded = {Path(line.split()[-1]).resolve() for line in maps.splitlines()
-                                      if 'libggml-cpu-armv8_dotprod_fp16.so' in line}
+                                      if f'libggml-cpu-{module}.so' in line}
                             if len(loaded) != 1:
                                 raise RuntimeError('ARM comparison did not load exactly one optimized module')
                             modules.append(loaded.pop())
                         if modules[0] != modules[1]:
                             raise RuntimeError(f'ARM comparison loaded different GGML modules: {modules}')
-                        print(json.dumps({'matched_arm_precision': 'dotprod-fp16-acc-f32-v2',
+                        print(json.dumps({'matched_arm_precision': variant,
                                           'shared_module': str(modules[0])}), flush=True)
                     if os.environ.get('EI_CPU_BF16_F32_2') == '1':
                         if 'CPU projection F32 active:' not in op.log_path.read_text():
@@ -378,6 +386,13 @@ def main():
                                 off_log = off_process.log_path.read_text(errors='replace')
                                 if f'EmbeddingGemma 2: {device}' not in off_log or f'CLIP using {device}' not in off_log:
                                     raise RuntimeError(f'native {a.backend} off comparison fell back to CPU')
+                            if i8mm_probe:
+                                off_log = off_process.log_path.read_text(errors='replace')
+                                off_maps = Path(f'/proc/{off_process.process.pid}/maps').read_text()
+                                if ('ARM CPU numeric variant: dotprod-fp16-acc-f32-v2' not in off_log or
+                                        'libggml-cpu-armv8_dotprod_fp16.so' not in off_maps or
+                                        'libggml-cpu-armv8_dotprod_fp16_i8mm.so' in off_maps):
+                                    raise RuntimeError('I8MM OFF control did not select the qualified DOTPROD module')
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
                                                           inputs[:concurrency]))
@@ -397,11 +412,18 @@ def main():
                                     'encoder_flash_attention': {name: [line for line in process.log_path.read_text(errors='replace').splitlines()
                                         if 'flash attention' in line.lower()]
                                         for name, process in (('on', op), ('auto', off_process))}}), flush=True)
+                            elif i8mm_probe:
+                                minimum_pair = min(cosine_similarity(on[0], baseline[0])
+                                    for on, baseline in zip(quality[0], unchanged))
+                                if [v[1] for v in unchanged] != tokens or minimum_pair < .999:
+                                    raise RuntimeError(f'{kind}: I8MM ON/OFF quality mismatch: {minimum_pair:.8f}')
+                                print(json.dumps({'modality': kind, 'concurrency': concurrency,
+                                    'native_i8mm_on_off_minimum_cosine': minimum_pair}), flush=True)
                             elif unchanged != quality[0]:
                                 raise RuntimeError(f'{kind}: {probe_name} changed native outputs')
                             else:
                                 print(f'{probe_name}: exact native on/off outputs', flush=True)
-                            if not a.validate_only:
+                            if not a.validate_only and (not i8mm_probe or concurrency == 1):
                                 native_bodies = [json.dumps(pair[0], separators=(',', ':')).encode()
                                                  for pair in inputs[:concurrency]]
                                 native_pair = measure_native_pair(ours, off, native_bodies,

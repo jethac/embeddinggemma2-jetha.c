@@ -74,6 +74,7 @@ typedef struct {
     bool audio_multishape_graph;
     bool cpu_audio_f16;
     bool jpeg_turbo;
+    bool arm_i8mm;
     bool arm_dotprod_fp16;
     bool arm_fp16_acc_f32;
     uint64_t graph_clock;
@@ -106,6 +107,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
         s->cpu_projection_buffer ? "embeddinggemma2-cpu-projection-f32-v1" : NULL,
+        s->arm_i8mm ? "embeddinggemma2-arm-i8mm-v1" : NULL,
         s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cpu_repack_count ? "embeddinggemma2-cpu-q8-repack-v1" : NULL,
@@ -561,6 +563,11 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     mtmd_helper_log_set(dependency_log, log_debug);
     memset(e, 0, sizeof *e);
     ei_model_load(&e->model, path);
+#ifdef EI_ARM_PORTABLE_DISPATCH2
+    const char * i8mm_flag = getenv("EI_CPU_ARM_I8MM2");
+    if (i8mm_flag && strcmp(i8mm_flag, "0") != 0 && strcmp(i8mm_flag, "1") != 0)
+        ei_die("EI_CPU_ARM_I8MM2 must be 0 or 1");
+#endif
     ggml_backend_load_all();
     ei_tokenizer_init(&e->tokenizer, &e->model);
     engine2 *s = e->gemma2 = ei_xcalloc(1, sizeof *s);
@@ -615,12 +622,15 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     bool dotprod = false, fp16 = false;
     for (struct ggml_backend_feature *f = get_features(cpu_reg); f && f->name; f++) {
         if (strcmp(f->name, "DOTPROD") == 0) dotprod = strcmp(f->value, "1") == 0;
+        if (strcmp(f->name, "MATMUL_INT8") == 0) s->arm_i8mm = strcmp(f->value, "1") == 0;
         if (strcmp(f->name, "FP16_VA") == 0) fp16 = strcmp(f->value, "1") == 0;
         if (strcmp(f->name, "ARM_FP16_ACC_F32") == 0) s->arm_fp16_acc_f32 = strcmp(f->value, "1") == 0;
     }
-    if (dotprod != fp16) ei_die("unexpected partial ARM numeric variant");
+    if (dotprod != fp16 || (s->arm_i8mm && !(dotprod && fp16))) ei_die("unexpected partial ARM numeric variant");
     s->arm_dotprod_fp16 = dotprod && fp16;
+    if (s->arm_i8mm) fprintf(stderr, "ARM CPU I8MM selected: MATMUL_INT8=1 DOTPROD=1 FP16_VA=1\n");
     fprintf(stderr, "ARM CPU numeric variant: %s\n",
+            s->arm_i8mm ? (s->arm_fp16_acc_f32 ? "i8mm-dotprod-fp16-acc-f32-v1" : "i8mm-dotprod-fp16-v1") :
             s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "dotprod-fp16-acc-f32-v2" : "dotprod-fp16-v1") : "armv8-baseline");
 #endif
     ggml_backend_set_n_threads_t set_threads = (ggml_backend_set_n_threads_t)
