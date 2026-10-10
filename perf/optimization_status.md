@@ -3933,3 +3933,21 @@ without changing weight bytes or metadata. Quality and token counts passed.
 Image HTTP median changed 55.761 to 55.468 ms, only 19/32 paired wins. Video
 gains reversed by order. A separate phase probe increased image encoder compute
 from 37.056 to 40.544 ms. No converter, model or deployment change was retained.
+
+
+### Vertical image resize parallelism rejected (2026-10-10)
+
+Phase timing identified the serial vertical pass as the largest image preparation
+cost. A private output-row parallel candidate kept the integer operation order
+and used the existing six-thread setting. Changed image/video outputs were exact;
+image vertical time fell 3.890 to 2.067 ms, preparation 9.510 to 6.695 ms.
+
+Unprofiled HTTP OFF/ON/ON/OFF used the same raw graph cache, startup prime and
+video helper settings. Image medians were 55.762/57.062/53.786/56.114 ms;
+mixed 67.617/71.718/63.126/65.688 ms. Both regressed in the first order.
+Aggregate image gain was only 2.06%; video's 4.80% gain did not justify changing
+the shared resize path. All outliers were retained. No public patch or service
+change was retained. GPU residency was unchanged, private memory within 4 MiB.
+
+The deployed video companion also rejected malformed video with HTTP 400 in
+96 ms; following text and video requests succeeded with normalized outputs.
