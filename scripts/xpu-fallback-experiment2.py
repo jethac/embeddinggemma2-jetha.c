@@ -73,6 +73,12 @@ def elf(path):
         return source.read(4) == b'\x7fELF'
 
 
+def sycl_plugin(prefix):
+    paths = list(prefix.rglob('libggml-sycl.so'))
+    assert len(paths) == 1, ('expected one installed SYCL plugin', paths)
+    return paths[0]
+
+
 def close_runtime():
     # The existing private staging recipe: copy only SDK runtime dependencies
     # plus MKL's dynamically opened ISA/VML siblings, retaining their notices.
@@ -146,7 +152,7 @@ def installed_journey(package, clean_env):
     reference = WORK / 'native-reference'
     shutil.copytree(package, reference, symlinks=True)
     # Same app/CPU/math; omit just the SYCL plugin from this reference process.
-    (reference / 'lib/libggml-sycl.so').unlink()
+    sycl_plugin(reference).unlink()
     cases_dir = WORK / 'fixtures'
     cases_dir.mkdir()
     cases = fixtures(cases_dir, 1)
@@ -170,7 +176,7 @@ def installed_journey(package, clean_env):
             port = probe.getsockname()[1]
         endpoint = Endpoint('127.0.0.1', port, '/v1/embeddings', 'openai')
         log = LOGS / (name + '.log')
-        command = [str(prefix / 'bin/embeddinggemma2-jetha'), '--backend', 'cpu',
+        command = [str(prefix / 'bin/embeddinggemma2-jetha'), '--backend', 'auto',
                    '--bind', '127.0.0.1', '--port', str(port), '--model',
                    str(ROOT / 'model/embeddinggemma-2-Q8_0.gguf'), '--mmproj',
                    str(ROOT / 'model/mmproj-embeddinggemma-2-Q8_0.gguf'),
@@ -195,11 +201,12 @@ def installed_journey(package, clean_env):
                 if any(n in line for n in ('libggml', 'libllama', 'libmtmd')):
                     assert str(prefix) in line, ('non-package model runtime', line)
             assert 'CPU audio F16 active: 132 Conformer matrices' in log.read_text()
+            assert 'EmbeddingGemma 2: CPU,' in log.read_text(), 'AUTO did not select native CPU'
             if name == 'xpu-fallback':
                 assert 'no visible SYCL GPU devices; skipping backend' in log.read_text()
                 # Registry rejects nullptr and may unload the declined plugin;
                 # the actual registration marker proves its enumeration ran.
-                assert (prefix / 'lib/libggml-sycl.so').is_file()
+                assert sycl_plugin(prefix).is_file()
     for kind in cases:
         assert results[0][kind] == results[1][kind], ('CPU fallback drift', kind)
         print('INSTALLED_CPU_FALLBACK_BYTEEXACT', kind, flush=True)
@@ -231,6 +238,8 @@ def main():
     run([compiler, '--version'], env=env)
     cmake_path = ROOT / 'CMakeLists.txt'
     final_cmake = cmake_path.read_text()
+    patch_count = len(re.findall(r'"\$\{CMAKE_CURRENT_SOURCE_DIR\}/deps/[^"\n]+\.patch"', final_cmake))
+    assert patch_count == 24, patch_count
     last_patch = '    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-sycl-no-device.patch"\n'
     assert final_cmake.count(last_patch) == 1
     cmake_path.write_text(final_cmake.replace(last_patch, ''))
@@ -252,15 +261,15 @@ def main():
                   PREFIX / 'bin/embeddinggemma2-jetha', '--model',
                   ROOT / 'model/embeddinggemma-2-Q8_0.gguf']
     original = subprocess.run(list(map(str, regression)), capture_output=True, text=True)
-    (LOGS / 'original21.log').write_text(original.stdout + original.stderr)
+    (LOGS / 'original23.log').write_text(original.stdout + original.stderr)
     assert original.returncode != 0 and 'No device of requested type available' in original.stderr, original
-    print('ORIGINAL21_SPECIFIC_NO_DEVICE_FAIL_REPRODUCED', flush=True)
+    print('ORIGINAL23_SPECIFIC_NO_DEVICE_FAIL_REPRODUCED', flush=True)
     cmake_path.write_text(final_cmake)
     run(configure, env=env)
     run(['cmake', '--build', BUILD, '--target', 'embeddinggemma2-jetha', '-j', '2'], env=env)
     run(['cmake', '--install', BUILD, '--prefix', PREFIX, '--strip'], env=env)
     # The closure/notice files already copied are untouched by CMake install.
-    sections = subprocess.check_output(['readelf', '-SW', str(PREFIX / 'lib/libggml-sycl.so')], text=True)
+    sections = subprocess.check_output(['readelf', '-SW', str(sycl_plugin(PREFIX))], text=True)
     assert '__CLANG_OFFLOAD_BUNDLE__sycl-spir64' in sections
     run([sys.executable, ROOT / 'scripts/stage-release2.py', '--build', BUILD,
          '--prefix', PREFIX, '--dist', WORK / 'dist', '--target', 'linux-x86_64', '--backend', 'xpu'])
@@ -293,7 +302,7 @@ def main():
          ROOT / 'model/embeddinggemma-2-Q8_0.gguf', '--mmproj',
          ROOT / 'model/mmproj-embeddinggemma-2-Q8_0.gguf', '--threads', '2',
          '--log-dir', LOGS], env=clean_env)
-    print('XPU22_INSTALLED_CPU_FALLBACK_ALL5_TERMINAL0 noIntelGPUqualification', flush=True)
+    print('XPU24_INSTALLED_AUTO_CPU_FALLBACK_ALL5_TERMINAL0 noIntelGPUqualification', flush=True)
 
 
 if __name__ == '__main__':
