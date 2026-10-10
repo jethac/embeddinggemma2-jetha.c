@@ -366,6 +366,44 @@ A pre-restart cached image restored byte-for-byte without inference. These
 shared-host observations are not quiet llama.cpp comparisons or a CPU speedup
 claim.
 
+`EI_VISION_CLIP_METADATA2=1` omits Gemma 4 vision linear clamps only when all
+four input/output bound tensors are absent. Explicit or partially specified
+bounds retain the existing path; audio clipping is unchanged. It defaults off
+and is enabled on the CUDA dev service. The current Q8_0 projector has 480
+audio bound tensors and no vision bounds; its reference vision configuration
+disables clipped linears. The old loader nevertheless inserted fallback
+±FLT_MAX vision clamps. A 20-image GPU trace attributed about 6.1 ms per image
+to those 4,520 clamp launches; the option removed them.
+
+At `d87c9be`, two alternating fresh-key comparisons against the same build
+with the option off, with both log sinks on the same Windows-mounted
+filesystem, measured on the RTX 5060 Ti dev service:
+
+| Input | Run | Off HTTP median | Deployed on | Paired wins |
+|---|---|---:|---:|---:|
+| Image | 1 | 116.75 ms | 73.61 ms | 20/20 |
+| Image | 2 | 69.00 ms | 55.94 ms | 20/20 |
+| Text + image + audio | 1 | 84.55 ms | 67.51 ms | 18/20 |
+| Text + image + audio | 2 | 75.01 ms | 62.63 ms | 19/20 |
+| Video | 1 | 170.08 ms | 164.26 ms | 14/20 |
+| Video | 2 | 159.62 ms | 152.84 ms | 18/20 |
+
+Both used six CPU threads and the existing CUDA options, including pixel
+reuse. Fixtures were a 96x96 PPM, one-second audio and a two-second 160x160
+MPEG-4 video; matching token counts were 260/294/248 for image/mixed/video.
+Fresh keys avoided the primary's response cache; the comparison instance had
+caches disabled. An initial comparison with different log locations regressed
+image latency (91.58 -> 130.49 ms) and left mixed latency roughly unchanged
+(100.83 -> 100.79 ms). Host contention varied substantially. These results
+describe the matched-sink shared-host repeats, not quiet llama.cpp throughput
+or a general speedup across inputs and hardware.
+
+All five modalities, changed image sizes and contents, concurrent arrays and
+post-error requests kept exact outputs and usage. Native Windows image checks
+were also exact, and CUDA/Linux CPU/Windows builds passed. The option has a
+separate numeric cache identity: deployment bypassed an old persisted response,
+recomputed it exactly and cached the next repeat. Cache isolation passed.
+
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
 timings remain visible. The video helper previously bypassed this filter and
