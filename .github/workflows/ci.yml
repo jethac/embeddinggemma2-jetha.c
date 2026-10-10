@@ -170,7 +170,7 @@ jobs:
     name: EmbeddingGemma 2 service (Linux ARM64 CPU)
     runs-on: ubuntu-24.04-arm
     container: ubuntu:22.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -180,7 +180,7 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends build-essential git curl ca-certificates python3-pip ffmpeg binutils file
+          apt-get install -y --no-install-recommends build-essential git curl ca-certificates python3-pip ffmpeg binutils file qemu-user
           python3 -m pip install --only-binary=:all: cmake==3.30.5
           cmake --version
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -189,7 +189,17 @@ jobs:
           uname -m
           test "$(uname -m)" = aarch64
           lscpu
-          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          gcc --version
+          g++ --version
+          for compiler in gcc g++; do
+            language=c
+            if [ "$compiler" = g++ ]; then language=c++; fi
+            for arch in armv8-a armv8-a+dotprod+fp16; do
+              echo "$compiler $arch macros"
+              "$compiler" -march="$arch" -dM -E -x "$language" /dev/null | sort | grep -E '__ARM_(ARCH|FEATURE|FP|NEON)'
+            done
+          done
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=ON -DGGML_CPU_ARM_PORTABLE=ON -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
       - name: Stage and install the ARM64 CPU application
         run: |
@@ -200,6 +210,12 @@ jobs:
           tar -xzf build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu.runtime.tar.gz -C build-packaged
           cp build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu build-packaged/bin/embeddinggemma2-jetha
           python3 tests/installed_service2.py --prefix build-packaged
+          test -f build-packaged/bin/libggml-cpu-armv8.0_1.so
+          test -f build-packaged/bin/libggml-cpu-armv8_dotprod_fp16.so
+          cp -a build-packaged build-arm-baseline
+          mkdir build-arm-held
+          mv build-arm-baseline/bin/libggml-cpu-armv8_dotprod_fp16.so build-arm-held/
+          python3 tests/installed_service2.py --prefix build-arm-baseline
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess
@@ -216,37 +232,128 @@ jobs:
                   print(f'{path}: {namespace}_' + '.'.join(map(str, maximum)))
                   assert maximum <= limit, f'{path}: {namespace} exceeds the Ubuntu 22.04 build baseline'
           PY
-      - name: Run all five modalities from the packaged ARM64 application
+      - name: Compare installed ARM kernels and exercise baseline ISA safety
         env:
           EI_THREADS: '2'
         run: |
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
-          build-packaged/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
-          service_pid=$!
-          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
-          ready=0
-          for attempt in $(seq 1 120); do
-            if curl -fsS http://127.0.0.1:42667/healthz; then ready=1; break; fi
-            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
-            sleep 1
-          done
-          if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
-          python3 examples/journey2.py
-          python3 - <<'PY'
-          import json, math, subprocess, urllib.request
-          text = 'task: search result | query: what powers the cell'
-          reference = json.loads(subprocess.check_output(['build-cmake/bin/reference2',
-              'model/embeddinggemma-2-Q8_0.gguf', text]))
-          request = urllib.request.Request('http://127.0.0.1:42667/api/embed',
-              json.dumps({'input': text}).encode(), headers={'Content-Type': 'application/json'})
-          with urllib.request.urlopen(request, timeout=180) as response:
-              actual = json.load(response)['embeddings'][0]
-          assert len(reference) == len(actual) == 768
-          cosine = sum(x*y for x,y in zip(reference, actual)) / math.sqrt(
-              sum(x*x for x in reference) * sum(x*x for x in actual))
-          print(f'Linux ARM64 text versus pinned native Q8 reference cosine: {cosine:.8f}')
-          assert cosine > 0.999, 'packaged ARM64 text differs from the pinned reference'
+          PYTHONPATH="$PWD/perf" python3 - <<'PY'
+          import json, os, subprocess, tempfile, time, urllib.request
+          from pathlib import Path
+          from types import SimpleNamespace
+          from compare_llamacpp import Endpoint, cosine_similarity
+          from compare_media_llamacpp2 import fixtures, validate, measure_native_pair
+
+          repo = Path.cwd()
+          binaries = {name: (repo / prefix / 'bin/embeddinggemma2-jetha').resolve()
+                      for name, prefix in [('on', 'build-packaged'), ('off', 'build-arm-baseline')]}
+          model = (repo / 'model/embeddinggemma-2-Q8_0.gguf').resolve()
+          mmproj = (repo / 'model/mmproj-embeddinggemma-2-Q8_0.gguf').resolve()
+          env = os.environ.copy()
+          for key in list(env):
+              if key.startswith('EI_') and key != 'EI_THREADS': env.pop(key)
+          for key in ('LD_LIBRARY_PATH', 'GGML_BACKEND_PATH'): env.pop(key, None)
+          endpoints = {name: Endpoint('127.0.0.1', port, '/v1/embeddings', 'openai')
+                       for name, port in [('on', 42667), ('off', 42668)]}
+          with tempfile.TemporaryDirectory(prefix='arm-installed-journey-') as tmp:
+              root = Path(tmp)
+              cases = fixtures(root, 1)
+              processes = []
+              def start(name, label, cache=None, emulate=False, profile=False):
+                  endpoint = endpoints[name]
+                  command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
+                             '--backend', 'cpu', '--model', str(model), '--mmproj', str(mmproj),
+                             '--cache-entries', '16' if cache else '0',
+                             '--response-cache-mb', '16' if cache else '0']
+                  if cache: command += ['--persistent-cache-path', str(cache)]
+                  if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
+                  child_env = env.copy()
+                  if profile: child_env['EI_PROFILE_BACKBONE2'] = '1'
+                  log = root / (label + '.log')
+                  with log.open('w') as stderr:
+                      process = subprocess.Popen(command, cwd=root, env=child_env,
+                                                 stdout=subprocess.DEVNULL, stderr=stderr)
+                  processes.append(process)
+                  deadline = time.monotonic() + (600 if emulate else 180)
+                  while time.monotonic() < deadline:
+                      if process.poll() is not None: raise AssertionError(log.read_text())
+                      try:
+                          with urllib.request.urlopen(f'http://{endpoint.host}:{endpoint.port}/healthz', timeout=1):
+                              break
+                      except OSError: time.sleep(.2)
+                  else: raise AssertionError('installed ARM service did not become ready')
+                  expected = 'armv8-baseline' if name == 'off' or emulate else 'dotprod-fp16-v1'
+                  assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
+                  maps = Path(f'/proc/{process.pid}/maps').read_text()
+                  selected = 'armv8.0_1' if expected == 'armv8-baseline' else 'armv8_dotprod_fp16'
+                  assert f'libggml-cpu-{selected}.so' in maps, maps
+                  if expected == 'armv8-baseline': assert 'libggml-cpu-armv8_dotprod_fp16.so' not in maps
+                  assert str(repo / 'build-cmake') not in maps, 'loaded build-tree runtime'
+                  return process, log
+              def stop(process):
+                  process.terminate()
+                  try: assert process.wait(timeout=60) == 0, 'cache shutdown failed'
+                  except subprocess.TimeoutExpired:
+                      process.kill(); process.wait(); raise
+                  processes.remove(process)
+              try:
+                  on, _ = start('on', 'native-on')
+                  off, _ = start('off', 'native-off')
+                  for kind in ('text', 'image', 'audio', 'video', 'mixed'):
+                      body = json.dumps(cases[kind][0][0]).encode()
+                      a, ta = validate(endpoints['on'], body)
+                      b, tb = validate(endpoints['off'], body)
+                      cosine = cosine_similarity(a, b)
+                      assert ta == tb and cosine > .999, (kind, ta, tb, cosine)
+                      print(json.dumps({'quality': kind, 'tokens': ta, 'cosine': cosine}), flush=True)
+                  options = SimpleNamespace(cooldown=2, quiet_total_cpu_percent=150,
+                                            rounds=3, target_seconds=3)
+                  for kind in ('text', 'audio', 'image'):
+                      bodies = [json.dumps(cases[kind][0][0]).encode()]
+                      measured = measure_native_pair(endpoints['on'], endpoints['off'], bodies,
+                                                     {on.pid, off.pid}, options)
+                      print(json.dumps({'native_ARM_C1': kind, **measured}), flush=True)
+                  stop(on); stop(off)
+
+                  # Real unsupported-ISA startup/request: both modules remain present.
+                  qemu, _ = start('on', 'cortex-a53', emulate=True)
+                  body = json.dumps({'input': 'task: search result | query: cell',
+                                     'model': 'embeddinggemma-2', 'dimensions': 768}).encode()
+                  req = urllib.request.Request('http://127.0.0.1:42667/v1/embeddings', body,
+                                               headers={'Content-Type': 'application/json'})
+                  with urllib.request.urlopen(req, timeout=600) as response:
+                      result = json.load(response)
+                  assert len(result['data'][0]['embedding']) == 768
+                  stop(qemu)
+                  print('Cortex-A53 real request selected baseline with optimized module present', flush=True)
+
+                  # Persisted arithmetic identities must separate both cache layers.
+                  shared = root / 'shared-cache'
+                  texts = json.dumps(cases['text'][0][0]).encode()
+                  images = json.dumps(cases['image'][0][0]).encode()
+                  native, _ = start('off', 'baseline-cache', cache=shared)
+                  validate(endpoints['off'], texts); validate(endpoints['off'], images)
+                  stop(native)
+                  baseline_text_id = shared.read_bytes()[16:24]
+                  baseline_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'optimized-cache', cache=shared, profile=True)
+                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  stop(native)
+                  assert log.read_text().count('backbone:') >= 2, 'baseline text/media snapshots crossed ARM numeric identity'
+                  assert baseline_text_id != shared.read_bytes()[16:24]
+                  assert baseline_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'optimized-cache-restart', cache=shared, profile=True)
+                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  stop(native)
+                  assert 'backbone:' not in log.read_text(), 'same-variant snapshot failed to restore'
+                  print('ARM text and media persisted identities isolate ISA variants and restore on restart', flush=True)
+              finally:
+                  for process in processes:
+                      if process.poll() is None:
+                          process.terminate()
+                          try: process.wait(timeout=30)
+                          except subprocess.TimeoutExpired: process.kill(); process.wait()
           PY
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)

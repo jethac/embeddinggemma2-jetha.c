@@ -39,7 +39,19 @@ set(GGML_AVX512 OFF CACHE BOOL "Local AVX-512 experiment")
 FetchContent_Declare(llama
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
     GIT_TAG de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b)
-FetchContent_MakeAvailable(llama)
+# Populate first: dependency CMake patches must precede its configuration.
+# CMake 3.30 deprecates this explicit population API but still supports it.
+if(POLICY CMP0169)
+    cmake_policy(PUSH)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+FetchContent_GetProperties(llama)
+if(NOT llama_POPULATED)
+    FetchContent_Populate(llama)
+endif()
+if(POLICY CMP0169)
+    cmake_policy(POP)
+endif()
 # Keep media fixes and CPU/OS dispatch guards as separate, adoptable patches
 # against the pinned dependency.
 find_package(Git REQUIRED)
@@ -49,6 +61,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     --git "${GIT_EXECUTABLE}" --base de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-dispatch.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-portable.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-container.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-deadline.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-mask-range.patch"
@@ -67,6 +80,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
 endif()
+add_subdirectory("${llama_SOURCE_DIR}" "${llama_BINARY_DIR}")
 if(NOT TARGET mtmd)
     # The dependency's version variables are scoped to its directory. Copy the
     # actual library properties before configuring its media library here.
@@ -128,6 +142,9 @@ add_executable(embeddinggemma2-jetha
     src/response_cache.c src/float_format.c src/media_request2.cpp src/media_service2.c src/jpeg_decode2.c)
 target_compile_definitions(embeddinggemma2-jetha PRIVATE EI_GEMMA2)
 target_include_directories(embeddinggemma2-jetha PRIVATE "${llama_SOURCE_DIR}/vendor")
+if(GGML_CPU_ARM_PORTABLE)
+    target_compile_definitions(embeddinggemma2-jetha PRIVATE EI_ARM_PORTABLE_DISPATCH2)
+endif()
 target_link_libraries(embeddinggemma2-jetha PRIVATE mtmd ggml llama vendor::nlohmann ei-simdjson2 ei-jpeg2 Threads::Threads)
 if(WIN32)
     target_compile_definitions(embeddinggemma2-jetha PRIVATE _CRT_RAND_S)

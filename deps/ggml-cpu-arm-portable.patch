@@ -1,0 +1,96 @@
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -181,6 +181,7 @@
+ option(GGML_VXE              "ggml: enable vxe"               ${GGML_NATIVE})
+ 
+ option(GGML_CPU_ALL_VARIANTS "ggml: build all variants of the CPU backend (requires GGML_BACKEND_DL)" OFF)
++option(GGML_CPU_ARM_PORTABLE "ggml: baseline and DOTPROD/FP16 Linux ARM64 dispatch experiment" OFF)
+ set(GGML_CPU_ARM_ARCH        "" CACHE STRING "ggml: CPU architecture for ARM")
+ set(GGML_CPU_POWERPC_CPUTYPE "" CACHE STRING "ggml: CPU type for PowerPC")
+ 
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -454,6 +454,11 @@
+             set(GGML_${feat} ON)
+         endforeach()
+     elseif (GGML_SYSTEM_ARCH STREQUAL "ARM")
++        if (GGML_CPU_ARM_PORTABLE)
++            foreach (feat DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2 NOSVE SME)
++                set(GGML_INTERNAL_${feat} OFF)
++            endforeach()
++        endif()
+         foreach (feat ${ARGN})
+             set(GGML_INTERNAL_${feat} ON)
+         endforeach()
+@@ -483,6 +488,10 @@
+ endfunction()
+ 
+ ggml_add_backend(CPU)
++
++if (GGML_CPU_ARM_PORTABLE AND NOT (GGML_CPU_ALL_VARIANTS AND GGML_SYSTEM_ARCH STREQUAL "ARM" AND CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SIZEOF_VOID_P EQUAL 8))
++    message(FATAL_ERROR "GGML_CPU_ARM_PORTABLE requires Linux ARM64 CPU_ALL_VARIANTS")
++endif()
+ 
+ if (GGML_CPU_ALL_VARIANTS)
+     if (NOT GGML_BACKEND_DL)
+@@ -521,6 +530,38 @@
+             # Many of these features are optional so we build versions with popular
+             # combinations and name the backends based on the version they were
+             # first released with
++            if (GGML_CPU_ARM_PORTABLE)
++                # Always ship the ARMv8-A baseline, regardless of compiler features.
++                ggml_add_cpu_backend_variant(armv8.0_1)
++                include(CheckCSourceCompiles)
++                include(CheckCXXSourceCompiles)
++                set(GGML_ARM_REQUIRED_FLAGS_SAVE "${CMAKE_REQUIRED_FLAGS}")
++                set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8-a+dotprod+fp16")
++                set(GGML_ARM_PORTABLE_PROBE [=[
++                    #include <arm_neon.h>
++                    #include <arm_fp16.h>
++                    #if !defined(__aarch64__) || !defined(__ARM_NEON) || !defined(__ARM_FEATURE_DOTPROD) || !defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC) || !defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++                    #error missing scored feature
++                    #endif
++                    #if defined(__ARM_FEATURE_ATOMICS) || defined(__ARM_FEATURE_CRC32) || defined(__ARM_FEATURE_QRDMX) || defined(__ARM_FEATURE_FP16_FML) || defined(__ARM_FEATURE_MATMUL_INT8) || defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_SME)
++                    #error unscored feature
++                    #endif
++                    int main(void) {
++                        int32x4_t d = vdotq_s32(vdupq_n_s32(0), vdupq_n_s8(1), vdupq_n_s8(2));
++                        float16x8_t h = vaddq_f16(vdupq_n_f16(1), vdupq_n_f16(2));
++                        float16_t f = vaddh_f16((float16_t)1, (float16_t)2);
++                        return vgetq_lane_s32(d, 0) + (int)vgetq_lane_f16(h, 0) + (int)f;
++                    }
++                ]=])
++                check_c_source_compiles("${GGML_ARM_PORTABLE_PROBE}" GGML_ARM_PORTABLE_C_SUPPORTED)
++                check_cxx_source_compiles("${GGML_ARM_PORTABLE_PROBE}" GGML_ARM_PORTABLE_CXX_SUPPORTED)
++                set(CMAKE_REQUIRED_FLAGS "${GGML_ARM_REQUIRED_FLAGS_SAVE}")
++                if (GGML_ARM_PORTABLE_C_SUPPORTED AND GGML_ARM_PORTABLE_CXX_SUPPORTED)
++                    ggml_add_cpu_backend_variant(armv8_dotprod_fp16 DOTPROD FP16_VECTOR_ARITHMETIC)
++                else()
++                    message(WARNING "DOTPROD/FP16 compiler probe failed; ARMv8-A baseline retained")
++                endif()
++            else()
+             ggml_add_cpu_backend_variant(armv8.0_1)
+             ggml_add_cpu_backend_variant(armv8.2_1    DOTPROD)
+             ggml_add_cpu_backend_variant(armv8.2_2    DOTPROD FP16_VECTOR_ARITHMETIC)
+@@ -529,6 +570,7 @@
+             ggml_add_cpu_backend_variant(armv8.6_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2)
+             ggml_add_cpu_backend_variant(armv9.2_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SME)
+             ggml_add_cpu_backend_variant(armv9.2_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2 SME)
++            endif()
+         elseif (CMAKE_SYSTEM_NAME MATCHES "Android")
+             # Android-specific backends with SoC-compatible feature sets
+             ggml_add_cpu_backend_variant(android_armv8.0_1)
+--- a/ggml/src/ggml-cpu/CMakeLists.txt
++++ b/ggml/src/ggml-cpu/CMakeLists.txt
+@@ -250,6 +250,11 @@
+                         set(ARCH_TAGS "${ARCH_TAGS}+sme")
+                         list(APPEND ARCH_DEFINITIONS GGML_USE_SME)
+                     endif()
++                    if (GGML_CPU_ARM_PORTABLE)
++                        # Explicit extensions match every runtime score requirement.
++                        # Do not inherit unscored ARMv8.1+ features such as LSE.
++                        set(ARM_MCPU "armv8-a")
++                    endif()
+                     list(APPEND ARCH_FLAGS "-march=${ARM_MCPU}${ARCH_TAGS}")
+                     ggml_add_cpu_backend_features(${GGML_CPU_NAME} arm ${ARCH_DEFINITIONS})
+                 endif()
