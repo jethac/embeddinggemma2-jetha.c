@@ -1,0 +1,29 @@
+name: XPU no-device fallback experiment
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fallback:
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    timeout-minutes: 120
+    steps:
+      - name: Install host build prerequisites (no accelerator driver)
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates git build-essential gcc-11 g++-11 python3 python3-pip nasm ffmpeg patchelf zlib1g
+          python3 -m pip install cmake==3.30.9
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Original failure, patched package, installed all-five CPU fallback
+        run: python3 scripts/xpu-fallback-experiment2.py
+      - name: Keep ordinary service logs for the experiment
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: xpu-fallback-service-logs
+          path: xpu-experiment/logs
+          retention-days: 7
