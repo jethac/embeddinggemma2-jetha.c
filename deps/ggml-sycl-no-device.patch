@@ -1,0 +1,17 @@
+diff --git a/ggml/src/ggml-sycl/ggml-sycl.cpp b/ggml/src/ggml-sycl/ggml-sycl.cpp
+--- a/ggml/src/ggml-sycl/ggml-sycl.cpp
++++ b/ggml/src/ggml-sycl/ggml-sycl.cpp
+@@ -7460,6 +7460,13 @@ ggml_backend_reg_t ggml_backend_sycl_reg() {
+         static std::mutex mutex;
+         std::lock_guard<std::mutex> lock(mutex);
+         if (!initialized) {
++            // Plugin discovery also runs for native CPU and AUTO selection.
++            // DPCT's default selector throws when no SYCL GPU is visible.
++            if (sycl::device::get_devices(sycl::info::device_type::gpu).empty()) {
++                GGML_LOG_INFO("%s: no visible SYCL GPU devices; skipping backend\n", __func__);
++                return nullptr;
++            }
++
+             ggml_check_sycl();
+             ggml_backend_sycl_reg_context * ctx = new ggml_backend_sycl_reg_context;
+             const int min_batch_size = getenv("GGML_OP_OFFLOAD_MIN_BATCH") ? atoi(getenv("GGML_OP_OFFLOAD_MIN_BATCH")) : 32;
