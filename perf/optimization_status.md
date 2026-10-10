@@ -3663,7 +3663,14 @@ versus 8.983/9.251 for llama.cpp (2.689x/2.770x). Audio measured
 2.077/2.074 versus 1.673/1.690 (1.241x/1.227x). Both orders had zero
 other CPU load. Original-FP32 1s660/5s660 cosine was 0.999222655/0.999209236;
 minimum C4 audio cross-engine cosine was 0.999199512. Full media, context
-and cache checks remain pending.
+and cache validation is now complete; full media performance comparisons remain pending.
+
+[Installed ARM run 38041916955](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041916955)
+passed all five inputs, all reduced dimensions and original-FP32 audio gates.
+Full 8192-token cosine was 0.999939726; both routes rejected 8193 tokens.
+Cortex-A53 selected the baseline. ISA and optimization ON/OFF identities
+isolated both persistent cache layers, and same-mode restart restored results
+without inference. Repacking allocated 132.15 MiB for 217 matrices.
 
 The same candidate executable passed native Windows quality requests with
 only the AVX2 or AVX-512 CPU module installed. All five inputs at
