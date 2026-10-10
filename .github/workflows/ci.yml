@@ -363,6 +363,8 @@ jobs:
                   if cache: command += ['--persistent-cache-path', str(cache)]
                   if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
                   child_env = env.copy()
+                  if not emulate:
+                      child_env.update(EI_CPU_REPACK2='1', EI_CPU_BF16_F32_2='1')
                   # Exercise unsupported-ISA fallback with the opt-in flag enabled.
                   if emulate or i8mm: child_env['EI_CPU_ARM_I8MM2'] = '1'
                   else: child_env.pop('EI_CPU_ARM_I8MM2', None)
@@ -405,6 +407,83 @@ jobs:
                   processes.remove(process)
                   persistent.discard(process.pid)
               try:
+                  # Reuse the installed combined ARM journey for this numeric module.
+                  # Both runs use the same packaged prefix and retained math flags.
+                  saved = {}
+                  for i8mm in (False, True):
+                      native, log = start('on', 'installed-full-' + str(i8mm), i8mm=i8mm, profile=True)
+                      def request_vector(body, dimensions=768):
+                          endpoint = endpoints['on']
+                          request = urllib.request.Request(f'http://{endpoint.host}:{endpoint.port}/v1/embeddings',
+                              json.dumps(dict(body, dimensions=dimensions)).encode(),
+                              headers={'Content-Type': 'application/json'})
+                          with urllib.request.urlopen(request, timeout=1800) as response: result = json.load(response)
+                          vector = result['data'][0]['embedding']
+                          assert len(vector) == dimensions and all(math.isfinite(v) for v in vector)
+                          assert abs(sum(v*v for v in vector) - 1) < .002
+                          tokens = result.get('usage', {}).get('prompt_tokens')
+                          return vector, tokens
+                      for kind in ('text', 'image', 'audio', 'video', 'mixed'):
+                          for dimensions in (768, 128, 256, 512):
+                              body = cases[kind][0][0]
+                              vector, tokens = request_vector(body, dimensions)
+                              if kind != 'text': assert tokens is not None
+                              key = kind, dimensions
+                              if not i8mm: saved[key] = vector, tokens
+                              else:
+                                  previous, previous_tokens = saved[key]
+                                  cosine = cosine_similarity(previous, vector)
+                                  assert previous_tokens == tokens and cosine > .999, (key, tokens, cosine)
+                                  print(json.dumps({'installed_i8mm': kind, 'dimensions': dimensions,
+                                                    'tokens': tokens, 'cosine': cosine}), flush=True)
+                      for seconds, frequency in ((1, 330), (1, 660), (5, 660)):
+                          golden = json.loads((repo / f'tests/fixtures/audio-{seconds}s{frequency}-hf-f32.json').read_text())
+                          audio = io.BytesIO()
+                          with wave.open(audio, 'wb') as wav:
+                              wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                              wav.writeframes(b''.join(struct.pack('<h', round(4000 * math.sin(
+                                  2 * math.pi * frequency * sample / 16000))) for sample in range(seconds * 16000)))
+                          body = dict(cases['audio'][0][0], input={'content': [{'type': 'audio',
+                              'data': 'data:audio/wav;base64,' + base64.b64encode(audio.getvalue()).decode()}]})
+                          for dimensions in (128, 256, 512):
+                              vector, tokens = request_vector(body, dimensions)
+                              reference = golden['embedding'][:dimensions]
+                              norm = math.sqrt(sum(x*x for x in reference)); reference = [x/norm for x in reference]
+                              cosine = cosine_similarity(vector, reference)
+                              assert tokens == golden['tokens'] and cosine > .999, (i8mm, seconds, frequency, dimensions, cosine)
+                              print(json.dumps({'installed_i8mm_HF': i8mm, 'seconds': seconds,
+                                                'frequency': frequency, 'dimensions': dimensions, 'cosine': cosine}), flush=True)
+                      for kind in ('text', 'mixed'):
+                          body = dict(cases[kind][0][0])
+                          if kind == 'text': body['input'] = 'q0' + ' x' * (8192 - 4)
+                          else:
+                              contents = [dict(part) for part in body['input']['content']]
+                              contents[0]['text'] = 'q0'; body['input'] = {'content': contents}
+                              _, base_tokens = request_vector(body)
+                              contents[0]['text'] += ' x' * (8192 - base_tokens)
+                          vector, tokens = request_vector(body)
+                          assert 'tokens=8192 batch=1' in log.read_text(), 'full context did not reach the backbone'
+                          if tokens is not None: assert tokens == 8192, tokens
+                          key = kind, 8192
+                          if not i8mm: saved[key] = vector
+                          else:
+                              cosine = cosine_similarity(saved[key], vector)
+                              assert cosine > .999, (key, cosine)
+                              print(json.dumps({'installed_i8mm_context': kind, 'tokens': 8192, 'cosine': cosine}), flush=True)
+                          if kind == 'text': body['input'] += ' x'
+                          else: body['input']['content'][0]['text'] += ' x'
+                          offset = log.stat().st_size
+                          for route in ('/api/embed', '/v1/embeddings'):
+                              request = urllib.request.Request('http://127.0.0.1:42667' + route,
+                                  json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+                              try:
+                                  with urllib.request.urlopen(request, timeout=60) as response: response.read()
+                                  raise AssertionError(('8193 accepted', i8mm, kind, route))
+                              except urllib.error.HTTPError as error:
+                                  result = json.load(error)
+                                  assert error.code == 400 and '8192' in json.dumps(result), result
+                          assert 'backbone:' not in log.read_bytes()[offset:].decode(), 'oversized input executed a graph'
+                      stop(native)
                   # Actual packed runtime with all modules; opt-in still must not
                   # select I8MM on Cortex-A53. One text request is sufficient.
                   emulated, _ = start('on', 'i8mm-unsupported-cortex-a53', emulate=True)
@@ -489,9 +568,9 @@ jobs:
         run: |
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
-          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$ARM_MEDIA_MODALITIES")
+          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities text,image,audio,video,mixed)
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
-          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1,4
   gemma2-windows:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
