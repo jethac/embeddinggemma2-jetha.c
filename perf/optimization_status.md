@@ -3832,3 +3832,8 @@ values, CPU selection and missing audio failed before readiness.
 
 The option defaults OFF. It primes only a common one-second audio shape,
 uses no cache entries and changes no numeric domain.
+
+Deployed on the Windows CUDA service: priming took 700.6 ms; the first
+changed audio request took 32.5 ms. The README client completed text, image,
+audio, video and mixed inputs with unit output vectors. Both original 660 Hz
+references passed all four dimensions, minimum cosine 0.9991465.
