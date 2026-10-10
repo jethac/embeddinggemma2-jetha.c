@@ -243,7 +243,7 @@ jobs:
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
           PYTHONPATH="$PWD/perf" python3 - <<'PY'
-          import json, os, signal, subprocess, tempfile, time, urllib.request
+          import json, math, os, signal, subprocess, tempfile, time, urllib.error, urllib.request
           from pathlib import Path
           from types import SimpleNamespace
           from compare_llamacpp import Endpoint, cosine_similarity
@@ -336,6 +336,50 @@ jobs:
                       measured = measure_native_pair(endpoints['on'], endpoints['off'], bodies,
                                                      {on.pid, off.pid}, options)
                       print(json.dumps({'native_ARM_C1': kind, **measured}), flush=True)
+                  # Truncation must retain finite normalized results and ISA parity.
+                  def request_vector(name, body, dimensions, tokens=None):
+                      endpoint = endpoints[name]
+                      request = urllib.request.Request(
+                          f'http://{endpoint.host}:{endpoint.port}/v1/embeddings',
+                          json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
+                      with urllib.request.urlopen(request, timeout=1800) as response:
+                          result = json.load(response)
+                      vector = result['data'][0]['embedding']
+                      assert len(vector) == dimensions and all(math.isfinite(v) for v in vector)
+                      assert abs(sum(v*v for v in vector) - 1) < .002
+                      actual_tokens = result['usage']['prompt_tokens']
+                      if tokens is not None: assert actual_tokens == tokens, (actual_tokens, tokens)
+                      return vector, actual_tokens
+                  for dimensions in (128, 256, 512):
+                      for kind in ('text', 'image', 'audio', 'video', 'mixed'):
+                          body = dict(cases[kind][0][0], dimensions=dimensions)
+                          a, ta = request_vector('on', body, dimensions)
+                          b, tb = request_vector('off', body, dimensions)
+                          cosine = cosine_similarity(a, b)
+                          assert ta == tb and cosine > .999, (kind, dimensions, ta, tb, cosine)
+                          print(json.dumps({'ARM_reduced_dimensions': kind, 'dimensions': dimensions,
+                                            'tokens': ta, 'cosine': cosine}), flush=True)
+                  # Match the actual tokenizer count; protect the full context boundary.
+                  full_context = {'model': 'embeddinggemma-2', 'input': 'q0' + ' x' * (8192 - 4),
+                                  'dimensions': 768}
+                  a, _ = request_vector('on', full_context, 768, tokens=8192)
+                  b, _ = request_vector('off', full_context, 768, tokens=8192)
+                  cosine = cosine_similarity(a, b)
+                  assert cosine > .999, ('ARM full8192 cosine', cosine)
+                  print(json.dumps({'ARM_full_context_tokens': 8192, 'cosine': cosine}), flush=True)
+                  oversized = dict(full_context, input=full_context['input'] + ' x')
+                  for name in ('on', 'off'):
+                      endpoint = endpoints[name]
+                      for route in ('/api/embed', '/v1/embeddings'):
+                          request = urllib.request.Request(f'http://{endpoint.host}:{endpoint.port}{route}',
+                              json.dumps(oversized).encode(), headers={'Content-Type': 'application/json'})
+                          try:
+                              with urllib.request.urlopen(request, timeout=60) as response: response.read()
+                              raise AssertionError(('ARM 8193 accepted', name, route))
+                          except urllib.error.HTTPError as error:
+                              result = json.load(error)
+                              assert error.code == 400 and '1..8192' in json.dumps(result), result
+                  print('ARM 8193-token input rejected by both public routes and both ISA paths', flush=True)
                   stop(on); stop(off)
 
                   # Real unsupported-ISA startup/request: both modules remain present.
