@@ -709,7 +709,36 @@ It uses the installed GGML kernels, matching Q8_0 weights, three CPU threads,
 caches off, one/four clients and both engine orders. Startup logs must show
 Metal backends and llama.cpp layer offload; llama.cpp info logging stays on
 to inspect placement. The runner prints its actual device, including any
-virtual device. No Metal speedup is established yet.
+virtual device.
+
+The [completed Metal comparison](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38004147312)
+at `8c8f48c` ran on **Apple Virtual Machine 1, Apple M1 (Virtual), three cores,
+7 GB RAM**, using the **Apple Paravirtual device**. Both engines used the same
+installed GGML kernels, Q8_0 weights, three inference threads, 768 dimensions,
+matching token counts and disabled caches. All ten cells passed the unchanged
+cosine gate; minimum cosine was 0.999301 for four-client audio.
+
+| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|---:|
+| Text | 1 | 2.4354 | 2.6003 | 0.937× |
+| Text | 4 | 4.6006 | 6.6475 | 0.692× |
+| Image | 1 | 0.0898 | 0.1175 | 0.764× |
+| Image | 4 | 0.1129 | 0.1623 | 0.696× |
+| Audio | 1 | 1.1562 | 1.0309 | 1.122× |
+| Audio | 4 | 1.5689 | 2.0867 | 0.752× |
+| Video | 1 | 0.1368 | 0.1565 | 0.874× |
+| Video | 4 | 0.1264 | 0.1713 | 0.738× |
+| Mixed | 1 | 0.0980 | 0.1180 | 0.831× |
+| Mixed | 4 | 0.0959 | 0.1382 | 0.694× |
+
+The complete-table geometric mean is **0.801×**: one win and nine losses.
+Rates varied substantially between engine orders. Other CPU activity ranged
+from 0.58% to 149.32%; early text/audio passes were near the 150% gate, while
+later passes were generally quieter. These are virtualized Metal observations;
+physical Apple Silicon performance and the cost of CPU fallback remain
+unqualified. Encoder/backbone phase profiling is the next diagnostic for these
+losses. The later CUDA serving improvements are not included in this run.
+
 To try Metal on macOS, configure with `-DGGML_METAL=ON` and start with
 `--backend metal`. Unsupported BF16 accelerator weights are widened exactly to
 FP32 at load time. Broader hardware and reference quality remain unverified.
