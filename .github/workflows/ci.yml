@@ -425,7 +425,10 @@ jobs:
           assert calls == 16, 'repeated requests missed the response cache'
           PY
           kill "$service_pid"
-          wait "$service_pid"
+          # A nonpersistent service uses the default SIGTERM exit status.
+          stop_status=0
+          wait "$service_pid" || stop_status=$?
+          test "$stop_status" = 0 || test "$stop_status" = 143
           trap - EXIT
           python3 tests/qkv_cache2.py --binary "$binary" --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode cpu-audio-f16
       - name: Run Metal and compare all five modalities with CPU
