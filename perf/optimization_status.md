@@ -3774,3 +3774,25 @@ oracle and original FP32 audio checks. Text throughput was unchanged
 (23.964 versus 23.991 emb/s). Audio fell from 2.071 to 0.827 emb/s, and
 four-client audio cosine failed at 0.998895. The candidate remains outside
 main. All completed quiet windows had zero other CPU load.
+
+### Optional Linux ARM I8MM (2026-10-10)
+
+[Native N2 run 38050516943](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38050516943)
+measured the same installed prefix with I8MM OFF/ON, two threads, cache OFF,
+Q8 repacking, F32 projection and precise F16 audio enabled. Both orders and
+all 16 load windows (0.0%) passed. Text improved 5.29% (24.138→25.414 emb/s;
+41.36–41.51→39.14–39.55 ms); audio improved 1.10% (2.077→2.099 emb/s;
+481.16–481.45→476.03–476.37 ms). Matched llama.cpp ratios were 2.777/2.889x
+for text C1/C4 and 1.241/1.230x for audio. This optional module remains OFF
+by default; these gains are relative to the retained DOTPROD/F32 path.
+
+The original shared 4x8 GEMV failed the independent Q8 oracle for one-row
+and 29-row tail inputs. The guarded SMMLA GEMV fixed those cases with zero
+maximum error at one/two threads. Restoring only F32/F16 SGEMM recovered
+an earlier 2.5x audio regression; quantized/BF16 SGEMM and SVE stay excluded.
+[Installed qualification 38051682224](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38051682224)
+passed all five modalities at C1/C4, 128/256/512/768 dimensions, original-FP32
+330/660 Hz references including 5 s audio, true 8192-token text/mixed and
+8193 rejection on both routes. I8MM's minimum reduced-dimension HF cosine
+was 0.999268. Persisted cache flip/restart separated/restored both numeric
+variants; flag ON on unsupported Cortex-A53 retained baseline fallback.

@@ -76,6 +76,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cuda-audio-f16.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-audio-f16-acc-f32.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cuda-audio-upload.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-i8mm.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
@@ -222,6 +223,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
             target_compile_definitions(cpu-dispatch-${EI_CHECK_ISA}-check2 PRIVATE GGML_AVX2 GGML_AVX512)
         endif()
     endforeach()
+endif()
+if(GGML_CPU_ARM_I8MM)
+    add_executable(i8mm-repack-check2 EXCLUDE_FROM_ALL tests/i8mm_repack2.cpp)
+    target_link_libraries(i8mm-repack-check2 PRIVATE ggml)
 endif()
 add_executable(reference2 EXCLUDE_FROM_ALL perf/reference2.c)
 target_link_libraries(reference2 PRIVATE llama ggml)

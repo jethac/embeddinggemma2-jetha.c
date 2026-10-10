@@ -244,6 +244,11 @@ def main():
     arm_precise = a.backend == 'cpu' and os.getenv('EI_ARM_FP16_ACC_F32') == '1'
     if arm_precise:
         llama_env['EI_ARM_FP16_ACC_F32'] = '1'
+    arm_i8mm = a.backend == 'cpu' and os.getenv('EI_CPU_ARM_I8MM2') == '1'
+    if arm_i8mm and not arm_precise:
+        p.error('ARM I8MM comparisons require EI_ARM_FP16_ACC_F32=1')
+    if arm_i8mm:
+        llama_env['EI_CPU_ARM_I8MM2'] = '1'
     if a.audio_reference and not (cpu_audio_f16 or cuda_audio_f16):
         p.error('audio references require the matched audio F16 loader')
     if a.profile_phases:
@@ -296,16 +301,18 @@ def main():
                     if arm_precise:
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')
-                        if 'ARM CPU numeric variant: dotprod-fp16-acc-f32-v2' not in native_log:
+                        variant = 'i8mm-dotprod-fp16-acc-f32-v3' if arm_i8mm else 'dotprod-fp16-acc-f32-v2'
+                        if f'ARM CPU numeric variant: {variant}' not in native_log:
                             raise RuntimeError('native ARM precise numeric variant did not activate')
-                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32'):
+                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32') + (('MATMUL_INT8', 'LLAMAFILE') if arm_i8mm else ()):
                             if not re.search(rf'\b{feature}\s*=\s*1\b', llama_log):
                                 raise RuntimeError(f'llama.cpp ARM feature did not activate: {feature}')
                         modules = []
                         for process in (op, lp):
                             maps = Path(f'/proc/{process.process.pid}/maps').read_text()
                             loaded = {Path(line.split()[-1]).resolve() for line in maps.splitlines()
-                                      if 'libggml-cpu-armv8_dotprod_fp16.so' in line}
+                                      if ('libggml-cpu-armv8_dotprod_fp16_i8mm.so' if arm_i8mm
+                                          else 'libggml-cpu-armv8_dotprod_fp16.so') in line}
                             if len(loaded) != 1:
                                 raise RuntimeError('ARM comparison did not load exactly one optimized module')
                             modules.append(loaded.pop())

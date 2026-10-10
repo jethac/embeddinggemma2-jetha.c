@@ -1,0 +1,172 @@
+--- a/ggml/CMakeLists.txt
++++ b/ggml/CMakeLists.txt
+@@ -182,6 +182,7 @@
+ 
+ option(GGML_CPU_ALL_VARIANTS "ggml: build all variants of the CPU backend (requires GGML_BACKEND_DL)" OFF)
+ option(GGML_CPU_ARM_PORTABLE "ggml: baseline and DOTPROD/FP16 Linux ARM64 dispatch experiment" OFF)
++option(GGML_CPU_ARM_I8MM "ggml: opt-in I8MM module in portable Linux ARM64 builds" OFF)
+ set(GGML_CPU_ARM_ARCH        "" CACHE STRING "ggml: CPU architecture for ARM")
+ set(GGML_CPU_POWERPC_CPUTYPE "" CACHE STRING "ggml: CPU type for PowerPC")
+ 
+--- a/ggml/src/CMakeLists.txt
++++ b/ggml/src/CMakeLists.txt
+@@ -489,6 +489,10 @@
+ 
+ if (GGML_CPU_ARM_PORTABLE AND NOT "${GGML_CPU_ARM_ARCH}" STREQUAL "")
+     message(FATAL_ERROR "GGML_CPU_ARM_PORTABLE cannot be combined with GGML_CPU_ARM_ARCH")
++endif()
++
++if (GGML_CPU_ARM_I8MM AND NOT GGML_CPU_ARM_PORTABLE)
++    message(FATAL_ERROR "GGML_CPU_ARM_I8MM requires GGML_CPU_ARM_PORTABLE")
+ endif()
+ 
+ ggml_add_backend(CPU)
+@@ -565,6 +569,38 @@
+                 set(CMAKE_REQUIRED_FLAGS "${GGML_ARM_REQUIRED_FLAGS_SAVE}")
+                 if (GGML_ARM_PORTABLE_C_SUPPORTED AND GGML_ARM_PORTABLE_CXX_SUPPORTED)
+                     ggml_add_cpu_backend_variant(armv8_dotprod_fp16 DOTPROD FP16_VECTOR_ARITHMETIC)
++                    if (GGML_CPU_ARM_I8MM)
++                        set(GGML_ARM_I8MM_FLAGS_SAVE "${CMAKE_REQUIRED_FLAGS}")
++                        set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8.2-a+dotprod+fp16+i8mm")
++                        set(GGML_ARM_I8MM_PROBE [=[
++                            #include <arm_neon.h>
++                            #include <arm_fp16.h>
++                            #if !defined(__aarch64__) || !defined(__ARM_NEON) || !defined(__ARM_FEATURE_DOTPROD) || !defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC) || !defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC) || !defined(__ARM_FEATURE_MATMUL_INT8)
++                            #error missing scored I8MM feature
++                            #endif
++                            #if !defined(__ARM_FEATURE_ATOMICS) || !defined(__ARM_FEATURE_CRC32) || !defined(__ARM_FEATURE_QRDMX)
++                            #error missing guarded ARMv8.1 feature
++                            #endif
++                            #if defined(__ARM_FEATURE_FP16_FML) || defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_BF16_SCALAR_ARITHMETIC) || defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_SVE2) || defined(__ARM_FEATURE_SME) || defined(__ARM_FEATURE_CRYPTO) || defined(__ARM_FEATURE_COMPLEX) || defined(__ARM_FEATURE_JCVT)
++                            #error unscored I8MM feature
++                            #endif
++                            int main(void) {
++                                int32x4_t m = vmmlaq_s32(vdupq_n_s32(0), vdupq_n_s8(1), vdupq_n_s8(2));
++                                int32x4_t d = vdotq_s32(m, vdupq_n_s8(1), vdupq_n_s8(2));
++                                float16x8_t h = vaddq_f16(vdupq_n_f16(1), vdupq_n_f16(2));
++                                float16_t f = vaddh_f16((float16_t)1, (float16_t)2);
++                                return vgetq_lane_s32(d, 0) + (int)vgetq_lane_f16(h, 0) + (int)f;
++                            }
++                        ]=])
++                        check_c_source_compiles("${GGML_ARM_I8MM_PROBE}" GGML_ARM_I8MM_C_SUPPORTED)
++                        check_cxx_source_compiles("${GGML_ARM_I8MM_PROBE}" GGML_ARM_I8MM_CXX_SUPPORTED)
++                        set(CMAKE_REQUIRED_FLAGS "${GGML_ARM_I8MM_FLAGS_SAVE}")
++                        if (GGML_ARM_I8MM_C_SUPPORTED AND GGML_ARM_I8MM_CXX_SUPPORTED)
++                            ggml_add_cpu_backend_variant(armv8_dotprod_fp16_i8mm DOTPROD FP16_VECTOR_ARITHMETIC MATMUL_INT8)
++                        else()
++                            message(WARNING "I8MM compiler probe failed; baseline and DOTPROD retained")
++                        endif()
++                    endif()
+                 else()
+                     message(WARNING "DOTPROD/FP16 compiler probe failed; ARMv8-A baseline retained")
+                 endif()
+--- a/ggml/src/ggml-cpu/CMakeLists.txt
++++ b/ggml/src/ggml-cpu/CMakeLists.txt
+@@ -257,6 +257,9 @@
+                         if (GGML_INTERNAL_DOTPROD AND GGML_INTERNAL_FP16_VECTOR_ARITHMETIC)
+                             set(ARM_MCPU "armv8.2-a")
+                             list(APPEND ARCH_DEFINITIONS GGML_USE_ARMV82_BASELINE)
++                            if (GGML_INTERNAL_MATMUL_INT8)
++                                list(APPEND ARCH_DEFINITIONS GGML_USE_ARM_I8MM_OPTIN)
++                            endif()
+                         endif()
+                     endif()
+                     list(APPEND ARCH_FLAGS "-march=${ARM_MCPU}${ARCH_TAGS}")
+--- a/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp
++++ b/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp
+@@ -1,5 +1,7 @@
+ #include "ggml-backend-impl.h"
+ #include "ggml-feats.h"
++#include <cstdlib>
++#include <cstring>
+ 
+ #if defined(__aarch64__) || defined(_M_ARM64)
+ 
+@@ -7,6 +9,12 @@
+     int score = 1;
+     const ggml_feats_arch64_runtime_t af = ggml_feats_get_arch64_runtime();
+     GGML_UNUSED(af);
++
++#ifdef GGML_USE_ARM_I8MM_OPTIN
++    // Keep the experimental module out of default dispatch even on I8MM CPUs.
++    const char * enabled = std::getenv("EI_CPU_ARM_I8MM2");
++    if (!enabled || std::strcmp(enabled, "1") != 0) { return 0; }
++#endif
+ 
+ #ifdef GGML_USE_ARMV82_BASELINE
+     // Linux ARMv8.2 variants inherit CRC32, LSE atomics and RDM from ARMv8.1.
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -43,7 +43,7 @@
+ #include <omp.h>
+ #endif
+ 
+-#if defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_MATMUL_INT8)
++#if defined(__ARM_FEATURE_SVE) || (defined(__ARM_FEATURE_MATMUL_INT8) && !defined(GGML_USE_ARM_I8MM_OPTIN))
+ #undef GGML_USE_LLAMAFILE
+ #endif
+ 
+@@ -1306,7 +1306,13 @@
+ 
+     const bool src1_cont = ggml_is_contiguous(src1);
+ 
+-    if (!params->use_ref && src1_cont) {
++    if (!params->use_ref && src1_cont
++#if defined(GGML_USE_ARM_I8MM_OPTIN)
++        // Only floating SGEMM is restored; quantized I8MM routes stay native.
++        && ((src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) ||
++            (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16))
++#endif
++    ) {
+         for (int64_t i13 = 0; i13 < ne13; i13++)
+             for (int64_t i12 = 0; i12 < ne12; i12++)
+                 if (!llamafile_sgemm(params,
+@@ -1384,7 +1390,12 @@
+     ggml_barrier(params->threadpool);
+ 
+ #if GGML_USE_LLAMAFILE
+-    if (!params->use_ref && src1->type != vec_dot_type) {
++    if (!params->use_ref && src1->type != vec_dot_type
++#if defined(GGML_USE_ARM_I8MM_OPTIN)
++        && ((src0->type == GGML_TYPE_F32 && vec_dot_type == GGML_TYPE_F32) ||
++            (src0->type == GGML_TYPE_F16 && vec_dot_type == GGML_TYPE_F16))
++#endif
++    ) {
+         const void* wdata = (src1->type == vec_dot_type) ? src1->data : params->wdata;
+         const size_t row_size = ggml_row_size(vec_dot_type, ne10);
+ 
+--- a/ggml/src/ggml-cpu/arch/arm/repack.cpp
++++ b/ggml/src/ggml-cpu/arch/arm/repack.cpp
+@@ -1790,6 +1790,32 @@
+     UNUSED(nb);
+     UNUSED(ncols_interleaved);
+     UNUSED(blocklen);
++
++#if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_MATMUL_INT8) && defined(GGML_USE_ARM_I8MM_OPTIN)
++    // Use the same verified 4x8 layout as GEMM, duplicating the activation
++    // row so each SMMLA tile's first row supplies two output columns.
++    const auto * weights = static_cast<const block_q8_0x4 *>(vx);
++    for (int c = 0; c < nc; c += 4) {
++        const auto * a = static_cast<const block_q8_0 *>(vy);
++        const auto * w = weights + (c / 4) * nb;
++        float32x4_t acc = vdupq_n_f32(0);
++        for (int b = 0; b < nb; ++b) {
++            int32x4_t lo = vdupq_n_s32(0), hi = vdupq_n_s32(0);
++            for (int chunk = 0; chunk < 4; ++chunk) {
++                const int8x8_t q = vld1_s8(a[b].qs + chunk * 8);
++                const int8x16_t aq = vcombine_s8(q, q);
++                lo = vmmlaq_s32(lo, aq, vld1q_s8(w[b].qs + chunk * 32));
++                hi = vmmlaq_s32(hi, aq, vld1q_s8(w[b].qs + chunk * 32 + 16));
++            }
++            const int32x4_t sums = vcombine_s32(vget_low_s32(lo), vget_low_s32(hi));
++            const float32x4_t wd = vcvt_f32_f16(vld1_f16((const __fp16 *) w[b].d));
++            const float ad = GGML_CPU_FP16_TO_FP32(a[b].d);
++            acc = vfmaq_f32(acc, vcvtq_f32_s32(sums), vmulq_n_f32(wd, ad));
++        }
++        vst1q_f32(s + c, acc);
++    }
++    return;
++#endif
+ 
+ #if defined(__aarch64__) && defined(__ARM_NEON) && defined(__ARM_FEATURE_DOTPROD)
+     const block_q8_0x4 * b_ptr = (const block_q8_0x4 *) vx;

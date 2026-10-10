@@ -285,7 +285,17 @@ Diagnostic controls:
 - `EI_ARM_FP16_ACC_F32=1`: use FP32 accumulation in F16 dot products,
   F16 matrix products and local flash-attention updates in the Linux ARM64
   portable DOTPROD/FP16 module. Default OFF; separates its numeric cache
-  domain. SVE, I8MM and SME variants remain unimplemented.
+  domain. SVE and SME variants remain unimplemented.
+
+- `EI_CPU_ARM_I8MM2=1`: select the optional Linux ARM64 I8MM module built
+  with `-DGGML_CPU_ARM_PORTABLE=ON -DGGML_CPU_ARM_I8MM=ON`. Build and runtime
+  defaults are OFF. Compiler and hardware guards retain baseline/DOTPROD
+  fallback on unsupported CPUs. The selected I8MM variant has its own numeric
+  cache domain, including when Q8 repacking is OFF. For qualified CPU audio,
+  also enable `EI_CPU_AUDIO_F16_2=1` and `EI_ARM_FP16_ACC_F32=1`.
+  The observed one-row/tail regression check is an optional target:
+  `cmake --build build --target i8mm-repack-check2`, then
+  `EI_CPU_ARM_I8MM2=1 build/bin/i8mm-repack-check2 <runtime-directory>`.
 
 ### CUDA audio accuracy
 
