@@ -3504,4 +3504,30 @@ ON maximum 169.379 ms versus OFF 158.397 ms. Comparable warmed private
 memory increased by 270.61 MiB (1-second) and 271.25 MiB (2-second).
 These are shared-host accuracy-fix cost measurements with foreign CPU load,
 not quiet-host or llama.cpp comparisons; the OFF baseline fails quality.
-The option remains undeployed pending review.
+A locally synthesized 4.055-second English speech clip also passed the
+original properly masked FP32 SDPA reference: cosine 0.999866 on AVX2 and
+0.999859 on AVX-512 (106 tokens).
+
+The Windows dev service now enables this option. Its final installed
+runtime passed all five modalities (text/image/video byte-exact), all four
+tone references and reduced dimensions, longer audio and speech. The old
+numeric cache domain was rejected; the new domain restored a byte-exact
+speech response after restart with zero inference.
+
+The actual deployed comparison against the preserved OFF runtime used
+matched six-thread settings and 64 MiB response caches, fresh request keys,
+and 20 fixture-balanced paired requests per duration. All 48 deployed
+requests, including warmup, were proven inference misses. One-second audio
+measured 149.216 -> 137.264 ms (18/20 wins, paired median 1.109x,
+aggregate 1.095x); two-second audio 256.997 -> 217.319 ms (16/20 wins,
+1.187x and 1.184x). Both-order aggregate ratios were 1.096x/1.093x and
+1.136x/1.237x. P95 improved 174.124 -> 153.534 ms and
+391.185 -> 358.742 ms; all samples remained, including two-second maxima
+568.628 -> 476.830 ms. This remains a shared-host accuracy-fix comparison
+against a known failing baseline, not a quiet-host or llama.cpp claim.
+
+
+The existing public audio-reference test's exact 660 Hz quantization
+regression reproduced failure on the preserved OFF runtime (0.998584)
+and passed on the actual deployed ON service (0.999322), using the original
+FP32 SDPA model with its boolean-mask guard.
