@@ -20,9 +20,16 @@ REVISION = "914f7f89142e33e77833254d9c9b90c3cef7303b"
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--url", default="http://127.0.0.1:42667")
+    parser.add_argument("--q8-activation-regression", action="store_true",
+                        help="check the observed 660 Hz CPU audio quantization failure")
     args = parser.parse_args()
     torch.set_num_threads(6)
-    pcm = (np.sin(np.arange(16000) * (2 * np.pi * 440 / 16000)) * 8192).astype("<i2")
+    if args.q8_activation_regression:
+        import math
+        pcm = np.array([round(4000 * math.sin(2 * math.pi * 660 * i / 16000))
+                        for i in range(16000)], dtype="<i2")
+    else:
+        pcm = (np.sin(np.arange(16000) * (2 * np.pi * 440 / 16000)) * 8192).astype("<i2")
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as wav:
         wav.setnchannels(1)
