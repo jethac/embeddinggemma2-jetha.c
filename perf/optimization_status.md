@@ -3603,3 +3603,33 @@ optimized module with this application's ARM baseline, not llama.cpp.
 Audio throughput improved 2.05%; the larger change is corrected reference
 quality. Half accumulation is not qualified by these results. SVE, I8MM
 and SME remain open.
+
+### Complete matched CPU media comparison (2026-10-10)
+
+[x86 run 38035288012](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38035288012)
+used source `a7a7f0c`, EPYC 9V74, two threads, Q8_0, 768 dimensions,
+caches off, five rounds, and both orders. All ten cells passed; minimum
+cosine was 0.999401903. Other CPU load was 0.5–1.6%. Geomean was
+0.993221x llama.cpp; C4 audio was 0.924389x. C1 audio changed from
+1.064637x to 0.964314x by order; its aggregate 1.013884x is not a stable win.
+The CPU F16 loader was active in both engines. Native original-FP32
+audio cosine was 0.999214410 at 1 second and 0.999195708 at 5 seconds.
+
+[ARM run 38036295848](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38036295848)
+used source `45c7cab`, the public 23-patch runtime, two threads, the same
+installed precise CPU module in both engines, and the same comparison settings.
+All ten cells passed with zero other CPU load. All ratios were below one:
+text 0.763–0.784x, audio 0.911–0.925x, image/video/mixed 0.962–0.970x.
+The README lists each cell. The later warm C4 audio comparison failed at
+0.998954102; native output stayed consistent with serial output, while
+llama.cpp changed. That failure remains open; thresholds were not relaxed.
+
+### XPU package without a visible GPU (2026-10-10)
+
+[Run 38037375545](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38037375545)
+reproduced the original 23-patch no-device crash, then passed with the appended
+SYCL guard. With SDK, build and install trees hidden, the staged package
+selected CPU through AUTO and returned byte-identical text/image/audio/video/mixed
+results to the same package with SYCL omitted. Runtime closure and Ubuntu 22.04
+ABI checks passed. F16 original-FP32 audio cosine was 0.999182406/0.999060411
+at 1/5 seconds. This qualifies CPU fallback, not Intel GPU execution or speed.
