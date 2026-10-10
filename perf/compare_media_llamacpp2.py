@@ -135,6 +135,12 @@ def phase_costs(path, offset, require_encoder=True):
                             'median_ms': dict(zip(fields, map(statistics.median, zip(*samples))))}
     if require_encoder and 'encoder' not in result:
         raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
+    # AUTO can disable unsupported flash attention while the reference forces
+    # it on. Preserve the actual encoder decisions before choosing kernel work.
+    # llama.cpp warms the encoder during startup, before the phase offset.
+    backend_lines = path.read_text(errors='replace').splitlines()
+    result['encoder_backend_messages'] = [line for line in backend_lines if any(marker in line for marker in
+        ('flash attention is ', 'flash attention not supported by ', 'unsupported operators by the backend'))]
     return result
 
 
