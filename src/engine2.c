@@ -1231,6 +1231,36 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
     return ok;
 }
 
+bool ei_engine_prime_audio(ei_engine *e, char *err, size_t err_len) {
+    const char *flag = getenv("EI_CUDA_PRIME_AUDIO2");
+    if (!flag || strcmp(flag, "0") == 0) return true;
+    if (strcmp(flag, "1") != 0)
+        return fail(err, err_len, "EI_CUDA_PRIME_AUDIO2 must be 0 or 1");
+    engine2 *s = e->gemma2;
+    if (strncmp(e->backend_name, "CUDA", 4) != 0 || !s->media || !mtmd_support_audio(s->media))
+        return fail(err, err_len, "EI_CUDA_PRIME_AUDIO2 requires CUDA and a loaded audio encoder");
+
+    // One second of mono 16 kHz PCM silence. The first normal execution loads
+    // kernels; a second stable-shape execution captures existing CUDA graphs.
+    unsigned char wav[32044] = {
+        'R', 'I', 'F', 'F', 0x24, 0x7d, 0, 0, 'W', 'A', 'V', 'E',
+        'f', 'm', 't', ' ', 16, 0, 0, 0, 1, 0, 1, 0,
+        0x80, 0x3e, 0, 0, 0, 0x7d, 0, 0, 2, 0, 16, 0,
+        'd', 'a', 't', 'a', 0, 0x7d, 0, 0,
+    };
+    ei_media_part part = {EI_PART_AUDIO, wav, sizeof wav, 0};
+    float out[EI_N_EMBD];
+    size_t tokens;
+    double encoder_ms, backbone_ms;
+    double started = now_ms();
+    for (int pass = 0; pass < 2; pass++) {
+        if (!ei_engine_embed_parts(e, &part, 1, out, &tokens,
+                                  &encoder_ms, &backbone_ms, err, err_len)) return false;
+    }
+    fprintf(stderr, "CUDA audio startup prime: two 1-second inputs, %.3f ms\n", now_ms() - started);
+    return true;
+}
+
 bool ei_engine_media_batch_enabled(const ei_engine *e) {
     return ((const engine2 *)e->gemma2)->media_batch;
 }

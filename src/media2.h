@@ -20,6 +20,7 @@ bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_pa
                            float out[EI_N_EMBD], size_t *tokens, double *encoder_ms,
                            double *backbone_ms, char *err, size_t err_len);
 bool ei_engine_media_batch_enabled(const ei_engine *e);
+bool ei_engine_prime_audio(ei_engine *e, char *err, size_t err_len);
 bool ei_engine_embed_parts_batch(ei_engine *e, const ei_media_part *const *parts,
                                  const size_t *n_parts, size_t batch, float *out,
                                  size_t *tokens, double *encoder_ms, double *backbone_ms,

@@ -1689,6 +1689,13 @@ int main(int argc, char **argv) {
                            reserve_error, sizeof reserve_error)) {
         ei_die("cannot reserve inference workspace: %s", reserve_error);
     }
+#ifdef EI_GEMMA2
+    if (!ei_engine_prime_audio(&engine, reserve_error, sizeof reserve_error))
+        ei_die("cannot prime audio inference: %s", reserve_error);
+    const char *prime_audio = getenv("EI_CUDA_PRIME_AUDIO2");
+    if (prime_audio && strcmp(prime_audio, "1") == 0)
+        startup_timing("CUDA audio prime", &startup_stage);
+#endif
     ei_inference_service_config service_config = {
         .cache_entries = opts.cache_entries,
         .max_batch_tokens = opts.max_batch_tokens,

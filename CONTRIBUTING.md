@@ -312,6 +312,14 @@ at most 8 MiB of staging memory; grouping reduced the initial 4.06 s F16
 encoder load to 1.44 s with byte-identical outputs. The native Windows
 CUDA route requires the MSVC runtime.
 
+`EI_CUDA_PRIME_AUDIO2=1` runs two one-second silent audio inputs before
+readiness through the normal encoder and backbone. Default OFF; requires
+selected CUDA and a loaded audio encoder. It loads kernels and captures the
+common one-second shape without filling request or response caches. Other
+audio lengths and modalities can still incur first-use work. Readiness is
+later; this is not a total-startup speed option. In the Windows probe, GPU
+memory increased by 230 MiB at readiness and 6 MiB after the first real input.
+
 ### Metal
 
 Metal 3.1 uses one-row direct Q4 GEMV at T=1..6 and four-row direct Q4 GEMV from
