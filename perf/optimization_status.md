@@ -3249,3 +3249,24 @@ Thirty-two warmed, cache-disabled HTTP pairs in both orders measured
 12.671/12.655 ms OFF/ON medians, 0.981x aggregate throughput, and 14 ON wins.
 Host contention remained; no small latency gain is supported. Minimum cosine
 was 0.999924. The probe was rejected and the dev service was unchanged.
+
+## CPU audio PAD row partition
+
+`EI_CPU_PAD_ROWS2=1` copies contiguous F32 rows and partitions all destination
+rows across threads. It applies only when the old partition gives a worker
+more rows. Circular padding and balanced partitions keep the original path.
+The default is OFF.
+
+On the native Windows Xeon W-2135, six threads, Q8_0, and caches off,
+20 warmed pairs per duration used both orders and changed audio tones.
+
+| Audio duration | OFF median ms | ON median ms | Median paired ratio | ON wins |
+|---|---:|---:|---:|---:|
+| 1 second | 145.595 | 139.448 | 1.039x | 13/20 |
+| 2 seconds | 238.654 | 225.272 | 1.055x | 15/20 |
+
+Both orders improved. One of four one-second blocks lost 1.2%; all four
+two-second blocks improved. All measured outputs and all five input types
+were byte-identical. The GB10 compiler was paused. Other host load remained;
+these results are not a quiet-host or llama.cpp comparison. Two-thread
+audio partitions bypassed the new path because they were already balanced.

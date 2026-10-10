@@ -1,0 +1,48 @@
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -8444,6 +8444,45 @@
+     const int32_t lp3 = ggml_get_op_params_i32(dst, 6);
+     const int32_t rp3 = ggml_get_op_params_i32(dst, 7);
+ 
++    if constexpr (!circular_t) {
++        static const bool row_copy = [] {
++            const char * value = getenv("EI_CPU_PAD_ROWS2");
++            return value && value[0] == '1' && value[1] == '\0';
++        }();
++        if (row_copy && nb00 == sizeof(float) && ggml_is_contiguous(dst) &&
++            lp0 >= 0 && rp0 >= 0 && lp1 >= 0 && rp1 >= 0 &&
++            lp2 >= 0 && rp2 >= 0 && lp3 >= 0 && rp3 >= 0 &&
++            ne0 - lp0 - rp0 == ne00 && ne1 - lp1 - rp1 == ne01 &&
++            ne2 - lp2 - rp2 == ne02 && ne3 - lp3 - rp3 == ne03 &&
++            ne00 > 0 && ne0 > 0 && ne1 > 0 && ne2 > 0 && ne3 > 0) {
++            const int64_t rows = ne1 * ne2 * ne3;
++            const int64_t duty = rows / nth + (rows % nth != 0);
++            const int64_t old_duty = (ne1 / nth + (ne1 % nth != 0)) * ne2 * ne3;
++            // Keep balanced row partitions on the original path.
++            if (old_duty > duty) {
++                const int64_t end = MIN(duty * (ith + 1), rows);
++                for (int64_t row = duty * ith; row < end; ++row) {
++                    const int64_t i1 = row % ne1;
++                    const int64_t i2 = (row / ne1) % ne2;
++                    const int64_t i3 = row / (ne1 * ne2);
++                    float * out = dst_ptr + row * ne0;
++                    if (i1 >= lp1 && i1 < ne1 - rp1 &&
++                        i2 >= lp2 && i2 < ne2 - rp2 &&
++                        i3 >= lp3 && i3 < ne3 - rp3) {
++                        const char * in = (const char *)src0->data +
++                            (i1 - lp1)*nb01 + (i2 - lp2)*nb02 + (i3 - lp3)*nb03;
++                        memset(out, 0, lp0 * sizeof(float));
++                        memcpy(out + lp0, in, ne00 * sizeof(float));
++                        memset(out + lp0 + ne00, 0, rp0 * sizeof(float));
++                    } else {
++                        memset(out, 0, ne0 * sizeof(float));
++                    }
++                }
++                return;
++            }
++        }
++    }
++
+     // TODO: optimize
+ 
+     for (int64_t i2 = 0; i2 < ne2; ++i2) {
