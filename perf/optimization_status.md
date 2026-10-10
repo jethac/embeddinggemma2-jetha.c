@@ -3143,3 +3143,13 @@ matched (14+58=72); minimum cosine was 0.999878. Singleton outputs were exact
 against the dev service; array outputs differed. With two encoder shapes and
 three warmed backbone shapes, this workload does not justify an additional
 cross-request grouping queue. Other workloads require separate measurements.
+
+## Rejected CPU A-scale packing
+
+Xeon W-2135 under WSL, two threads, paired Q8 rows, caches and profiling off.
+SIMD half-word insertion reduced packing from eleven instructions to five,
+with no spills. All ten existing quality cases and changed image/audio inputs
+remained byte-identical. Twenty balanced HTTP pairs per case gave OFF/ON
+medians of 125.815/132.682 ms (0.25-second audio), 243.275/243.022 ms (one second),
+and 420.977/462.034 ms (two seconds). ON won 10/8/9 pairs respectively. Fewer
+instructions did not produce a reliable request-latency gain; the patch was removed.
