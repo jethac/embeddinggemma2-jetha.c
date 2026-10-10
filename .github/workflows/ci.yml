@@ -264,7 +264,7 @@ jobs:
               root = Path(tmp)
               cases = fixtures(root, 1)
               processes = []
-              def start(name, label, cache=None, emulate=False, profile=False):
+              def start(name, label, cache=None, emulate=False, profile=False, precise=True):
                   endpoint = endpoints[name]
                   command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
                              '--backend', 'cpu', '--model', str(model), '--mmproj', str(mmproj),
@@ -273,6 +273,7 @@ jobs:
                   if cache: command += ['--persistent-cache-path', str(cache)]
                   if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
                   child_env = env.copy()
+                  if precise: child_env['EI_ARM_FP16_ACC_F32'] = '1'
                   if profile: child_env['EI_PROFILE_BACKBONE2'] = '1'
                   log = root / (label + '.log')
                   with log.open('w') as stderr:
@@ -287,7 +288,7 @@ jobs:
                               break
                       except OSError: time.sleep(.2)
                   else: raise AssertionError('installed ARM service did not become ready')
-                  expected = 'armv8-baseline' if name == 'off' or emulate else 'dotprod-fp16-v1'
+                  expected = 'armv8-baseline' if name == 'off' or emulate else ('dotprod-fp16-acc-f32-v1' if precise else 'dotprod-fp16-v1')
                   assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
                   maps = Path(f'/proc/{process.pid}/maps').read_text()
                   selected = 'armv8.0_1' if expected == 'armv8-baseline' else 'armv8_dotprod_fp16'
@@ -302,8 +303,18 @@ jobs:
                       process.kill(); process.wait(); raise
                   processes.remove(process)
               try:
-                  on, _ = start('on', 'native-on')
+                  # Same 330 Hz/1 s fixture that failed at cosine .9987010972.
+                  # Reproduce with the precision flag absent before testing the fix.
+                  on, _ = start('on', 'native-half-acc', precise=False)
                   off, _ = start('off', 'native-off')
+                  body = cases['audio'][0][0]
+                  a, ta = validate(endpoints['on'], body)
+                  b, tb = validate(endpoints['off'], body)
+                  cosine = cosine_similarity(a, b)
+                  assert ta == tb == 29 and .998 < cosine < .999, ('audio regression OFF', ta, tb, cosine)
+                  print(json.dumps({'audio_regression_flag_OFF': cosine, 'tokens': ta}), flush=True)
+                  stop(on)
+                  on, _ = start('on', 'native-f32-acc')
                   for kind in ('text', 'image', 'audio', 'video', 'mixed'):
                       body = cases[kind][0][0]
                       a, ta = validate(endpoints['on'], body)
@@ -341,12 +352,20 @@ jobs:
                   stop(native)
                   baseline_text_id = shared.read_bytes()[16:24]
                   baseline_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'half-acc-cache', cache=shared, profile=True, precise=False)
+                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  stop(native)
+                  assert log.read_text().count('backbone:') >= 2, 'baseline snapshots crossed half-acc ARM identity'
+                  half_text_id = shared.read_bytes()[16:24]
+                  half_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  assert baseline_text_id != half_text_id
+                  assert baseline_response_id != half_response_id
                   native, log = start('on', 'optimized-cache', cache=shared, profile=True)
                   validate(endpoints['on'], texts); validate(endpoints['on'], images)
                   stop(native)
                   assert log.read_text().count('backbone:') >= 2, 'baseline text/media snapshots crossed ARM numeric identity'
-                  assert baseline_text_id != shared.read_bytes()[16:24]
-                  assert baseline_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
+                  assert half_text_id != shared.read_bytes()[16:24]
+                  assert half_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
                   native, log = start('on', 'optimized-cache-restart', cache=shared, profile=True)
                   validate(endpoints['on'], texts); validate(endpoints['on'], images)
                   stop(native)
