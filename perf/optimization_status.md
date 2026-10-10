@@ -3657,6 +3657,27 @@ projection weights (+24 MiB) and avoids BF16 activation rounding. Both separate
 persistent arithmetic identities. Minimum C4 audio cross-engine cosine was
 0.999297722 for repacking and 0.999335943 for F32 projection.
 
+[Combined text/audio run 38041835959](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041835959/job/114183460055)
+passed with both flags active. Text C1/C4 measured 24.153/25.628 emb/s
+versus 8.983/9.251 for llama.cpp (2.689x/2.770x). Audio measured
+2.077/2.074 versus 1.673/1.690 (1.241x/1.227x). Both orders had zero
+other CPU load. Original-FP32 1s660/5s660 cosine was 0.999222655/0.999209236;
+minimum C4 audio cross-engine cosine was 0.999199512. Full media, context
+and cache checks remain pending.
+
+The same candidate executable passed native Windows quality requests with
+only the AVX2 or AVX-512 CPU module installed. All five inputs at
+128/256/512/768 dimensions passed ON/OFF cosine >0.999 with matching token
+counts and finite unit vectors. All three original-FP32 audio gates passed.
+Minimum ON reference cosine was 0.999055382 on AVX2 and 0.999176854 on
+AVX-512. This is quality verification, not a Windows speed result.
+
+[NEON BF16 run 38041978385](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041978385)
+passed after correcting the load cast for GGML's BF16 wrapper type. Text
+C1/C4 reached 11.461/11.573 emb/s; audio reached 1.779/1.778. Both orders
+had zero other CPU load, and all three original-FP32 audio gates passed.
+It is slower than the F32 projection path and remains outside main.
+
 ### XPU package without a visible GPU (2026-10-10)
 
 [Run 38037375545](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38037375545)
