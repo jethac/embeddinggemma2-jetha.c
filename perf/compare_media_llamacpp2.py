@@ -242,6 +242,8 @@ def main():
         # The patched encoder's diagnostic timer is shared by both engines.
         # Keep optimization flags isolated even during a profiled comparison.
         llama_env['EI_PROFILE_MEDIA2'] = '1'
+        if os.getenv('EI_CPU_GRAPH_PROFILE2') == '1':
+            llama_env['EI_CPU_GRAPH_PROFILE2'] = '1'
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
     if a.profile_phases or cpu_audio_f16 or arm_precise or a.backend in ('metal', 'cuda'):
@@ -354,6 +356,12 @@ def main():
                         raise RuntimeError('vision metadata experiment was not enabled')
                     if a.metal_media_flash_attn and 'Metal media flash attention: forced on;' not in op.log_path.read_text(errors='replace'):
                         raise RuntimeError('Metal encoder flash attention experiment was not enabled')
+                    if a.validate_only and a.profile_phases:
+                        for engine, endpoint in enumerate((ours, llama)):
+                            warm_bodies = [json.dumps(pair[engine], separators=(',', ':')).encode()
+                                           for pair in inputs[:concurrency]]
+                            run_requests(endpoint, warm_bodies, 2, 0)
+                        log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
