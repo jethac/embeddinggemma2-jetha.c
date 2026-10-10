@@ -95,6 +95,46 @@
  
  #ifdef GGML_USE_ARMV82_BASELINE
      // Linux ARMv8.2 variants inherit CRC32, LSE atomics and RDM from ARMv8.1.
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -43,7 +43,7 @@
+ #include <omp.h>
+ #endif
+ 
+-#if defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_MATMUL_INT8)
++#if defined(__ARM_FEATURE_SVE) || (defined(__ARM_FEATURE_MATMUL_INT8) && !defined(GGML_USE_ARM_I8MM_OPTIN))
+ #undef GGML_USE_LLAMAFILE
+ #endif
+ 
+@@ -1306,7 +1306,13 @@
+ 
+     const bool src1_cont = ggml_is_contiguous(src1);
+ 
+-    if (!params->use_ref && src1_cont) {
++    if (!params->use_ref && src1_cont
++#if defined(GGML_USE_ARM_I8MM_OPTIN)
++        // Only floating SGEMM is restored; quantized I8MM routes stay native.
++        && ((src0->type == GGML_TYPE_F32 && src1->type == GGML_TYPE_F32) ||
++            (src0->type == GGML_TYPE_F16 && src1->type == GGML_TYPE_F16))
++#endif
++    ) {
+         for (int64_t i13 = 0; i13 < ne13; i13++)
+             for (int64_t i12 = 0; i12 < ne12; i12++)
+                 if (!llamafile_sgemm(params,
+@@ -1384,7 +1390,12 @@
+     ggml_barrier(params->threadpool);
+ 
+ #if GGML_USE_LLAMAFILE
+-    if (!params->use_ref && src1->type != vec_dot_type) {
++    if (!params->use_ref && src1->type != vec_dot_type
++#if defined(GGML_USE_ARM_I8MM_OPTIN)
++        && ((src0->type == GGML_TYPE_F32 && vec_dot_type == GGML_TYPE_F32) ||
++            (src0->type == GGML_TYPE_F16 && vec_dot_type == GGML_TYPE_F16))
++#endif
++    ) {
+         const void* wdata = (src1->type == vec_dot_type) ? src1->data : params->wdata;
+         const size_t row_size = ggml_row_size(vec_dot_type, ne10);
+ 
 --- a/ggml/src/ggml-cpu/arch/arm/repack.cpp
 +++ b/ggml/src/ggml-cpu/arch/arm/repack.cpp
 @@ -1790,6 +1790,32 @@

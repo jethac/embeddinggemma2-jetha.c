@@ -107,7 +107,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
         s->cpu_projection_buffer ? "embeddinggemma2-cpu-projection-f32-v1" : NULL,
-        s->arm_i8mm ? "embeddinggemma2-arm-i8mm-v2" : NULL,
+        s->arm_i8mm ? "embeddinggemma2-arm-i8mm-v3" : NULL,
         s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cpu_repack_count ? "embeddinggemma2-cpu-q8-repack-v1" : NULL,
@@ -630,7 +630,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->arm_dotprod_fp16 = dotprod && fp16;
     if (s->arm_i8mm) fprintf(stderr, "ARM CPU I8MM selected: MATMUL_INT8=1 DOTPROD=1 FP16_VA=1\n");
     fprintf(stderr, "ARM CPU numeric variant: %s\n",
-            s->arm_i8mm ? (s->arm_fp16_acc_f32 ? "i8mm-dotprod-fp16-acc-f32-v2" : "i8mm-dotprod-fp16-v2") :
+            s->arm_i8mm ? (s->arm_fp16_acc_f32 ? "i8mm-dotprod-fp16-acc-f32-v3" : "i8mm-dotprod-fp16-v3") :
             s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "dotprod-fp16-acc-f32-v2" : "dotprod-fp16-v1") : "armv8-baseline");
 #endif
     ggml_backend_set_n_threads_t set_threads = (ggml_backend_set_n_threads_t)

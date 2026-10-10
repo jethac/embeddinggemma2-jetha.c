@@ -291,13 +291,13 @@ def main():
                     if arm_precise:
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')
-                        variant = 'i8mm-dotprod-fp16-acc-f32-v2' if i8mm_probe else 'dotprod-fp16-acc-f32-v2'
+                        variant = 'i8mm-dotprod-fp16-acc-f32-v3' if i8mm_probe else 'dotprod-fp16-acc-f32-v2'
                         module = 'armv8_dotprod_fp16_i8mm' if i8mm_probe else 'armv8_dotprod_fp16'
                         if f'ARM CPU numeric variant: {variant}' not in native_log:
                             raise RuntimeError('native ARM precise numeric variant did not activate')
                         if i8mm_probe and 'ARM CPU I8MM selected: MATMUL_INT8=1' not in native_log:
                             raise RuntimeError('native I8MM MATMUL_INT8 feature did not activate')
-                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32') + (('MATMUL_INT8',) if i8mm_probe else ()):
+                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32') + (('MATMUL_INT8', 'LLAMAFILE') if i8mm_probe else ()):
                             if not re.search(rf'\b{feature}\s*=\s*1\b', llama_log):
                                 raise RuntimeError(f'llama.cpp ARM feature did not activate: {feature}')
                         modules = []
