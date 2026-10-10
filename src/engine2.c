@@ -65,6 +65,7 @@ typedef struct {
     bool media_batch;
     bool media_pipeline;
     bool vision_clip_metadata;
+    bool metal_media_flash_attn;
     bool jpeg_turbo;
     uint64_t graph_clock;
     int threads;
@@ -100,6 +101,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->vision_clip_metadata ? "embeddinggemma2-vision-clip-metadata-v1" : NULL,
+        s->metal_media_flash_attn ? "embeddinggemma2-metal-media-flash-attn-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
         s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
         s->text_batch_buckets ? "embeddinggemma2-text-batch-buckets-v1" : NULL,
@@ -660,6 +662,11 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *vision_clip_metadata = getenv("EI_VISION_CLIP_METADATA2");
     s->vision_clip_metadata = vision_clip_metadata && strcmp(vision_clip_metadata, "1") == 0;
     if (s->vision_clip_metadata) fprintf(stderr, "Vision clipping: explicit metadata only\n");
+    const char *media_flash_attn = getenv("EI_METAL_MEDIA_FLASH_ATTN2");
+    s->metal_media_flash_attn = media_flash_attn && strcmp(media_flash_attn, "1") == 0 &&
+        s->n_backends > 1 && strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(
+            ggml_backend_get_device(s->backends[0]))), "MTL") == 0;
+    if (s->metal_media_flash_attn) fprintf(stderr, "Metal media flash attention: forced on; unsupported ops may use CPU\n");
     if (s->media_pipeline) fprintf(stderr, "Multimodal pipeline: up to two singleton raw inputs\n");
     const char *jpeg_turbo = getenv("EI_JPEG_TURBO2");
     s->jpeg_turbo = jpeg_turbo && strcmp(jpeg_turbo, "1") == 0;
@@ -749,6 +756,7 @@ bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmpr
     media_params.warmup = false;
     media_params.load_vision = load_vision;
     media_params.load_audio = load_audio;
+    if (s->metal_media_flash_attn) media_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
     s->media = mtmd_init_from_file(mmproj_path, s->vocab_model, media_params);
     if (!s->media) return fail(err, err_len, "cannot initialize modality encoders");
     if ((load_vision && !mtmd_support_vision(s->media)) ||

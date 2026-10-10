@@ -165,6 +165,8 @@ def main():
                    help='Diagnose encoder/backbone costs from actual server logs')
     p.add_argument('--vision-clip-metadata', action='store_true',
                    help='Check and measure native vision metadata clamping on/off')
+    p.add_argument('--metal-media-flash-attn', action='store_true',
+                   help='Check and measure forced encoder flash attention against AUTO on Metal')
     p.add_argument('--concurrency', type=parse_csv_ints, default=[1, 4])
     p.add_argument('--modalities', default='image,audio,video,mixed')
     p.add_argument('--rounds', type=int, default=5)
@@ -185,14 +187,20 @@ def main():
     for path in (a.model, a.mmproj, a.embeddinggemma_bin, a.llama_server):
         if not path.is_file(): p.error(f'not found: {path}')
     vnni_probe = os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1'
-    if vnni_probe and a.vision_clip_metadata:
+    if sum((vnni_probe, a.vision_clip_metadata, a.metal_media_flash_attn)) > 1:
         p.error('select one native on/off experiment at a time')
-    native_probe = vnni_probe or a.vision_clip_metadata
-    probe_name = 'VNNI paired rows' if vnni_probe else 'vision metadata clipping'
+    native_probe = vnni_probe or a.vision_clip_metadata or a.metal_media_flash_attn
+    probe_name = ('VNNI paired rows' if vnni_probe else 'Metal encoder flash attention'
+                  if a.metal_media_flash_attn else 'vision metadata clipping')
     off_flags = (('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
+                 else ('EI_METAL_MEDIA_FLASH_ATTN2',) if a.metal_media_flash_attn
                  else ('EI_VISION_CLIP_METADATA2',))
     if a.vision_clip_metadata:
         os.environ['EI_VISION_CLIP_METADATA2'] = '1'
+    if a.metal_media_flash_attn:
+        if a.backend != 'metal':
+            p.error('encoder flash attention experiment requires Metal')
+        os.environ['EI_METAL_MEDIA_FLASH_ATTN2'] = '1'
     if vnni_probe:
         cpuinfo = Path('/proc/cpuinfo')
         if a.backend != 'cpu' or not cpuinfo.is_file() or 'avx512_vnni' not in cpuinfo.read_text().split():
@@ -271,6 +279,8 @@ def main():
                             raise RuntimeError('VNNI experiment did not load a VNNI CPU plugin')
                     if a.vision_clip_metadata and 'Vision clipping: explicit metadata only' not in op.log_path.read_text(errors='replace'):
                         raise RuntimeError('vision metadata experiment was not enabled')
+                    if a.metal_media_flash_attn and 'Metal media flash attention: forced on;' not in op.log_path.read_text(errors='replace'):
+                        raise RuntimeError('Metal encoder flash attention experiment was not enabled')
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -298,9 +308,26 @@ def main():
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
                                                           inputs[:concurrency]))
-                            if unchanged != quality[0]:
+                            if a.metal_media_flash_attn:
+                                minimum_pair = min(cosine_similarity(on[0], auto[0])
+                                                   for on, auto in zip(quality[0], unchanged))
+                                minimum_auto_reference = min(cosine_similarity(auto[0], reference[0])
+                                                             for auto, reference in zip(unchanged, quality[1]))
+                                if [v[1] for v in unchanged] != tokens or min(minimum_pair, minimum_auto_reference) < .999:
+                                    raise RuntimeError(f'{kind}: encoder flash attention quality mismatch: '
+                                                       f'on/AUTO {minimum_pair:.8f}, AUTO/reference {minimum_auto_reference:.8f}')
+                                if kind != 'text' and 'warmup: flash attention is enabled' not in op.log_path.read_text(errors='replace'):
+                                    raise RuntimeError('forced encoder flash attention did not activate')
+                                print(json.dumps({'modality': kind, 'concurrency': concurrency,
+                                    'native_on_auto_minimum_cosine': minimum_pair,
+                                    'native_auto_reference_minimum_cosine': minimum_auto_reference,
+                                    'encoder_flash_attention': {name: [line for line in process.log_path.read_text(errors='replace').splitlines()
+                                        if 'flash attention' in line.lower()]
+                                        for name, process in (('on', op), ('auto', off_process))}}), flush=True)
+                            elif unchanged != quality[0]:
                                 raise RuntimeError(f'{kind}: {probe_name} changed native outputs')
-                            print(f'{probe_name}: exact native on/off outputs', flush=True)
+                            else:
+                                print(f'{probe_name}: exact native on/off outputs', flush=True)
                             if not a.validate_only:
                                 native_bodies = [json.dumps(pair[0], separators=(',', ':')).encode()
                                                  for pair in inputs[:concurrency]]
