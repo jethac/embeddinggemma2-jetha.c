@@ -305,7 +305,7 @@ jobs:
                   on, _ = start('on', 'native-on')
                   off, _ = start('off', 'native-off')
                   for kind in ('text', 'image', 'audio', 'video', 'mixed'):
-                      body = json.dumps(cases[kind][0][0]).encode()
+                      body = cases[kind][0][0]
                       a, ta = validate(endpoints['on'], body)
                       b, tb = validate(endpoints['off'], body)
                       cosine = cosine_similarity(a, b)
@@ -334,8 +334,8 @@ jobs:
 
                   # Persisted arithmetic identities must separate both cache layers.
                   shared = root / 'shared-cache'
-                  texts = json.dumps(cases['text'][0][0]).encode()
-                  images = json.dumps(cases['image'][0][0]).encode()
+                  texts = cases['text'][0][0]
+                  images = cases['image'][0][0]
                   native, _ = start('off', 'baseline-cache', cache=shared)
                   validate(endpoints['off'], texts); validate(endpoints['off'], images)
                   stop(native)
