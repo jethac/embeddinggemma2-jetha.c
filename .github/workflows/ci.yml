@@ -403,6 +403,10 @@ jobs:
                           assert ta == tb and cosine > .999, (kind, dimensions, ta, tb, cosine)
                           if kind == 'audio':
                               reference = goldens[(1, 330)]['embedding'][:dimensions]
+                              # cosine_similarity expects unit vectors; a prefix is not unit length.
+                              prefix_norm = math.sqrt(sum(x*x for x in reference))
+                              assert math.isfinite(prefix_norm) and prefix_norm > 0
+                              reference = [x / prefix_norm for x in reference]
                               baseline_hf = cosine_similarity(b, reference)
                               optimized_hf = cosine_similarity(a, reference)
                               print(json.dumps({'ARM_audio_F16_HF_dimensions': dimensions,
