@@ -3382,7 +3382,33 @@ contains 144 ELF code objects, all `sm_121a`.
 The host objects are x86-64. This is a device compilation result, not an
 ARM64 link, GB10 runtime check, or performance result.
 
-## Rejected native ARM FP16 path
+## Independent media preparation
+
+`EI_MEDIA_ISOLATION2=1` uses separate vision/audio locks and request-owned
+encoder outputs. It requires CUDA and the existing media pipeline; default
+is OFF. Mixed inputs lock vision before audio. Arrays use the union of
+their modality locks. At most two requests enter preparation or compute.
+Encoder weights are not duplicated. Decoded inputs are bounded at 256 MiB
+and raw workspaces at 36 MiB across the two requests. The single-chunk
+MTMD batch path avoids copying preprocessed inputs and uses the same math.
+
+The deployed dev service uses this option. In 16 pairs, with eight pairs
+in each engine order, audio arriving behind an eight-frame video measured
+291.822 -> 8.141 ms median and won every pair. Median paired ratio was
+36.244x. Text in the same workload regressed 3.864 -> 4.891 ms; video was
+unchanged at 299.613 -> 298.503 ms. All 96 vectors were byte-identical and
+all 32 media requests on the dev service logged inference misses. This
+is a shared-host comparison against the option OFF, not against llama.cpp.
+
+All five inputs, concurrent and opposite arrivals, unequal arrays, mixed
+inputs, error recovery, changed inputs, reduced dimensions, and 8192/8193
+limits passed on the deployed service. An old persisted media response
+returned byte-for-byte with zero inference; fresh cache fill/hit passed.
+Numeric cache identity is unchanged. Dev peak RSS was 1,874,216 KiB after
+the full-context journey; the reference's smaller workload does not permit
+a memory-delta comparison. Windows was unchanged.
+
+## Native ARM FP16 precision
 
 [Run 38026098520](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38026098520)
 built and staged baseline and guarded DOTPROD/FP16 modules on native ARM.
@@ -3390,3 +3416,14 @@ Text/image cosine passed at 0.999925/0.999949; audio failed at 0.998701.
 Timing and later cache checks did not run. The variant was not merged.
 Source inspection found half-precision accumulation in both F16 dot and
 F16/F16 SGEMM paths. These routes need separate diagnosis and correction.
+
+[Run 38027534098](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38027534098)
+passed with default-OFF `EI_ARM_FP16_ACC_F32=1` on the guarded portable
+DOTPROD/FP16 module. OFF reproduced audio cosine 0.998701; ON reached
+0.999633. All five inputs passed. Against the baseline module, two-thread
+both-order throughput ratios were 1.552x text, 1.780x audio and 1.691x image.
+Other CPU load was 0.0% in all measured windows. QEMU Cortex-A53 selected
+the baseline module with the optimized module present. Persisted caches
+separated baseline, half accumulation and FP32 accumulation; same-mode
+restart restored responses. The candidate remains unmerged pending
+reduced-dimension and full-context checks. Other ARM extensions remain open.
