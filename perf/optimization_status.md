@@ -4044,3 +4044,21 @@ for the six-thread arrays and pipeline controls; array cosine against singleton
 outputs was at least 0.999567, with 29 tokens per item and normalized vectors.
 These are shared-host observations, not matched llama.cpp results. No scheduler
 or deployed flag changed; the deployed array option remained unset/default OFF.
+
+### CPU audio exact-value F32 FFN control (2026-10-11)
+
+Rejected a private control promoting only 48 Conformer FFN up/down matrices
+from F16 to F32 with identical half-rounded weight values; each linear input
+was rounded F32→F16→F32. Four one-second tone fixtures and a two-second fixture
+produced exactly identical vectors/tokens to the F16 path and passed the
+original FP32 reference gates (minimum cosine 0.999322).
+
+At the deployed six-thread setting, eight balanced phase pairs retained every
+outlier. Encoder median increased from 81.819 to 89.901 ms; aggregate time
+increased from 679.148 to 714.663 ms. Baseline-first totals were 324.020 versus
+357.712 ms (0/4 candidate wins), and candidate-first totals were 355.128 versus
+356.951 ms (1/4). FFN median increased from 37.749 to 45.934 ms, including the
+activation casts; encoder totals also include graph setup. The control adds
+384 MiB of weights. These shared-host sparse whole-block phase observations
+justify no HTTP trial; no public option, model conversion, or deployment was
+retained.
