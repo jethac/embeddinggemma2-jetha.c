@@ -1,0 +1,14 @@
+--- a/ggml/cmake/ggml-config.cmake.in
++++ b/ggml/cmake/ggml-config.cmake.in
+@@ -57,6 +57,11 @@
+             else()
+                 list(APPEND GGML_CUDA_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:CUDA::cublas_static> $<LINK_ONLY:CUDA::cublasLt_static>)
+             endif()
++        else()
++            # Static GGML archives still need their dynamic CUDA dependencies.
++            # GGML_STATIC selects fully static toolkit linkage, independently
++            # of BUILD_SHARED_LIBS / GGML_SHARED_LIB.
++            list(APPEND GGML_CUDA_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:CUDA::cudart> $<LINK_ONLY:CUDA::cublas>)
+         endif()
+         if (NOT GGML_CUDA_NO_VMM)
+             list(APPEND GGML_CUDA_INTERFACE_LINK_LIBRARIES $<LINK_ONLY:CUDA::cuda_driver>)

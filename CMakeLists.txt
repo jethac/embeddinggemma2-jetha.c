@@ -61,6 +61,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-pixel-profile.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-pixel-reuse.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-vision-clip-metadata.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-static-package.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
