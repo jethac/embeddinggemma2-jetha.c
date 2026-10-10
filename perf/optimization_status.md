@@ -3211,3 +3211,16 @@ and 258-token fallback matched the four-slot service byte for byte. Reduced
 dimensions matched normalized prefixes within 2.49e-8. Mixed 8192-token
 outputs were exact; both routes rejected 8193 tokens before backbone execution.
 Four- and eight-slot executables reused the same persisted result identity.
+
+The CUDA dev service now uses eight slots. Its persisted response cache
+survived restart without inference. All five fresh input types matched the
+preserved four-slot executable byte for byte; deployed dimensions, mixed
+8192/8193-token limits, and response cache reuse passed.
+
+Against that old executable, the deployed service measured 29.360 to 13.087 ms
+median for the eight varied shapes: 32/32 paired wins, 32 to zero graph
+rebuilds, and 32 logged dev response-cache misses. Repeated shapes
+measured 12.520 to 11.324 ms but won only 14/32 pairs; neither engine rebuilt
+graphs. All 128 measured vectors were exact. The GB10 compiler was paused and
+CPU experiment processes were idle during timing. These are shared-host
+measurements. Windows kept its existing CPU service.
