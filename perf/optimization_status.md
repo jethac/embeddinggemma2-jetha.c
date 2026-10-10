@@ -3538,3 +3538,8 @@ Current 21-patch source, scalar-only x64 CPU runtime: F16 audio passed
 with finite unit vectors and 132 F16 matrices (+270 MiB weights).
 A stale private pre-PAD module was rebuilt; this was no product-code fix
 and establishes accuracy only, with no scalar performance claim.
+
+Native ARM64 CUDA compilation, linking, and staging passed for the 21-patch
+source in [run 38032908897](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38032908897).
+Packaged ELF imports meet GLIBC 2.34 / GLIBCXX 3.4.29; 144 cubins target sm_121a.
+NCCL was disabled; the GCC11 link library was not packaged. GPU execution is untested.
