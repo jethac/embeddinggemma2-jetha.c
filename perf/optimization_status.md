@@ -3270,3 +3270,16 @@ two-second blocks improved. All measured outputs and all five input types
 were byte-identical. The GB10 compiler was paused. Other host load remained;
 these results are not a quiet-host or llama.cpp comparison. Two-thread
 audio partitions bypassed the new path because they were already balanced.
+
+The Windows dev service now uses this option. All five input types matched
+the preserved old executable byte for byte. Its persisted response cache
+survived restart and returned the primed response without inference.
+
+Against the old executable, 20 fresh inference pairs per duration measured
+160.316/142.797 ms OFF/ON medians for one-second audio and
+240.127/237.468 ms for two-second audio. Median paired ratios were
+1.040x and 1.024x, with 15/20 ON wins each. All outputs were exact and every
+deployed request logged an inference miss. All samples were retained.
+Both routes had multi-second stalls during a foreign compile workload;
+the observed host CPU total was 947%. The owned GB10 compiler was paused.
+These measurements do not establish quiet-host latency or tail improvement.
