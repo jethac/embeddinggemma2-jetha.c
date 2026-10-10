@@ -71,8 +71,43 @@ permissions:
   contents: read
 
 jobs:
+  mac-cpu-weights:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32 }}
+    name: Native Mac CPU weight options
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the existing native Mac CPU configuration
+        run: |
+          uname -m
+          test "$(uname -m)" = arm64
+          sysctl hw.model hw.memsize hw.logicalcpu machdep.cpu.brand_string
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+          cmake --build build-cmake --target embeddinggemma2-jetha -j 3
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          commands = json.loads(Path('build-cmake/compile_commands.json').read_text())
+          for entry in commands:
+              if entry['file'].endswith(('ggml-cpu.c', '/arch/arm/repack.cpp')):
+                  print(entry['command'])
+          PY
+      - name: Install the current native CPU service
+        run: |
+          command -v ffmpeg || brew install ffmpeg
+          python3 scripts/download-model2.py
+          cmake --install build-cmake --prefix "$PWD/build-installed-cpu"
+          python3 scripts/stage-release2.py --build build-cmake --prefix build-installed-cpu --dist build-release-assets --target darwin-arm64 --backend cpu
+          mkdir -p build-packaged/bin
+          tar -xzf build-release-assets/embeddinggemma2-jetha-darwin-arm64-cpu.runtime.tar.gz -C build-packaged
+          cp build-release-assets/embeddinggemma2-jetha-darwin-arm64-cpu build-packaged/bin/embeddinggemma2-jetha
+          codesign --verify --verbose=2 build-packaged/bin/embeddinggemma2-jetha
+      - name: Gate original HF quality then measure text and audio in both orders
+        run: |
+          python3 perf/mac_cpu_weights2.py --binary build-packaged/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
   gemma2-linux:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) && !(github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32) }}
     name: EmbeddingGemma 2 service (Linux CPU)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
@@ -196,6 +231,7 @@ jobs:
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   gemma2-linux-arm64:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32) }}
     strategy:
       fail-fast: false
       matrix:
@@ -603,7 +639,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) && !(github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32) }}
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
     timeout-minutes: 45
@@ -669,7 +705,7 @@ jobs:
           python tests/openai_media_model2.py
           python tests/media_json2.py
   gemma2-macos:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) && !(github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32) }}
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.benchmark_metal_media && 90 || 30 }}
@@ -867,7 +903,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) && !(github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16 && inputs.cpu_q8_repack && inputs.cpu_projection_f32) }}
     name: Legacy 300M CPU (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
