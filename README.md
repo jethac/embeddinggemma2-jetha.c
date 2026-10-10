@@ -42,6 +42,7 @@ Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa
 | Metal | Image | 1 | 0.1302 | 0.1097 | 1.187x |
 | Metal | Image | 4 | 0.1915 | 0.1752 | 1.093x |
 
+ARM warm four-client audio: [comparison failed at cosine 0.998954](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38037459764/job/114170787198). This server matched serial output; llama.cpp changed.
 Metal uses `EI_METAL_MEDIA_FLASH_ATTN2=1`. Four-client ratio by order: 0.996–1.225x. Default AUTO: [0.801x across all inputs](perf/optimization_status.md#complete-virtual-metal-comparison).
 CUDA: no result below the host CPU load limit.
 
