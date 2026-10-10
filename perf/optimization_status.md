@@ -3361,9 +3361,11 @@ from F16 to F32 im2col. Cross-ISA encoder cosine improved from 0.995546 to
 0.999675, but final cosine was 0.998535. FP32 reference cosine was 0.998370
 for AVX2 and 0.998638 for AVX-512. All remain below the final 0.999 gate.
 The control was not retained. Convolution rounding explains much of the
-encoder difference; identical-feature replay will isolate the remaining
-backbone difference. The reference uses FP32 weights, so its difference
-from Q8 weights does not alone prove an implementation error.
+encoder difference. Replaying each saved encoder output into both backbones
+gave cross-ISA final cosine 0.999246 and 0.999397. Both passed, although
+neither reached 0.999 against FP32. Encoder variation and backbone drift
+combine in the failing full request. The reference uses FP32 weights, so
+its difference from Q8 weights does not alone prove an implementation error.
 
 ## GB10 device compilation
 
