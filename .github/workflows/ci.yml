@@ -154,6 +154,7 @@ jobs:
       - name: Measure matched multimodal CPU journeys in both engine orders
         if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
         env:
+          EI_CPU_AUDIO_F16_2: '1'
           EI_QKV2: ${{ inputs.packed_qkv && '1' || '0' }}
           MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
           EI_CPU_Q8_PAIR_VNNI2: ${{ inputs.cpu_pair_vnni && '1' || '0' }}

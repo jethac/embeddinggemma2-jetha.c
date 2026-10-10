@@ -179,6 +179,8 @@ def main():
     modalities = a.modalities.split(',')
     if not modalities or any(k not in ('text', 'image', 'audio', 'video', 'mixed') for k in modalities):
         p.error('modalities must be text,image,audio,video,mixed or a subset')
+    if a.backend == 'cpu' and any(k in modalities for k in ('audio', 'mixed')) and os.getenv('EI_CPU_AUDIO_F16_2') != '1':
+        p.error('CPU audio/mixed comparisons require EI_CPU_AUDIO_F16_2=1 for both encoders')
     if (a.threads < 1 or min(a.concurrency) < 1 or max(a.concurrency) > 32 or
             a.rounds < 3 or a.target_seconds <= 0 or a.cooldown < 0 or a.quiet_total_cpu_percent <= 0):
         p.error('invalid threads, concurrency, rounds or measurement duration')
@@ -223,16 +225,19 @@ def main():
                  '--ctx-size', '16384', '--kv-unified', '--batch-size', '16384', '--ubatch-size', '16384',
                  '--flash-attn', 'on', '--no-cache-prompt', '--cache-ram', '0',
                  '--no-cache-idle-slots', '--no-webui', '--log-disable']
-    # Dependency encoder options are also EI_ flags. Keep the comparison
-    # server on its default path rather than giving it native-only experiments.
+    # Keep native experiments isolated. The CPU audio quality fix belongs
+    # to the shared encoder loader and must be enabled in both engines.
     llama_env = {k: v for k, v in os.environ.items() if not k.startswith('EI_')}
+    cpu_audio_f16 = a.backend == 'cpu' and os.getenv('EI_CPU_AUDIO_F16_2') == '1'
+    if cpu_audio_f16:
+        llama_env['EI_CPU_AUDIO_F16_2'] = '1'
     if a.profile_phases:
         # The patched encoder's diagnostic timer is shared by both engines.
         # Keep optimization flags isolated even during a profiled comparison.
         llama_env['EI_PROFILE_MEDIA2'] = '1'
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
-    if a.profile_phases or a.backend in ('metal', 'cuda'):
+    if a.profile_phases or cpu_audio_f16 or a.backend in ('metal', 'cuda'):
         llama_cmd.remove('--log-disable')
         llama_cmd += ['--log-verbosity', '4']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
@@ -262,6 +267,11 @@ def main():
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env=llama_env) as lp:
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
+                    if cpu_audio_f16:
+                        marker = 'CPU audio F16 active: 132 Conformer matrices'
+                        for name, process in (('native', op), ('llama.cpp', lp)):
+                            if marker not in process.log_path.read_text(errors='replace'):
+                                raise RuntimeError(f'{name} did not enable the matched CPU audio F16 loader')
                     if a.backend in ('metal', 'cuda'):
                         device = 'MTL' if a.backend == 'metal' else 'CUDA0'
                         native_log = op.log_path.read_text(errors='replace')
