@@ -24,6 +24,7 @@ local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
 ```
 
 - Windows: use [MSYS2 MinGW64](CONTRIBUTING.md), `python`, `-G Ninja`, and `.exe`.
+  For CPU audio, run `export EI_CPU_AUDIO_F16_2=1` before startup. Adds 270 MiB of weights.
 - CUDA: install the toolkit and driver. Add `-DGGML_CUDA=ON`. Use `--backend cuda`.
 - Metal: use macOS. Replace `-DGGML_METAL=OFF` with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`. Use `--backend metal`.
 
