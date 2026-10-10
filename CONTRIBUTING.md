@@ -23,6 +23,14 @@ repository and remain subject to the model provider's terms.
 ## Development Setup
 
 For EmbeddingGemma 2, use the downloader and CMake commands in `README.md`.
+Use a separate build directory for each backend.
+
+| Platform | Changes to the README commands |
+|---|---|
+| Windows | Use MSYS2 MinGW64, `python`, `-G Ninja`, and the `.exe` suffix. |
+| CUDA | Install the CUDA toolkit and driver. Add `-DGGML_CUDA=ON`. Start with `--backend cuda`. |
+| Metal | On macOS, replace `-DGGML_METAL=OFF` with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`. Start with `--backend metal`. |
+
 The cache path and Make commands below apply to the original 300M implementation.
 
 The default model path is:
