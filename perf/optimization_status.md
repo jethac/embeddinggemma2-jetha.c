@@ -3527,6 +3527,17 @@ aggregate 1.095x); two-second audio 256.997 -> 217.319 ms (16/20 wins,
 against a known failing baseline, not a quiet-host or llama.cpp claim.
 
 
+Native macOS ARM CPU, three threads, current 21-patch source: F16 audio
+passed the original FP32 SDPA reference in
+[run 38034039814](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38034039814).
+For 660 Hz PCM, 1-second cosine improved from 0.998006751 to 0.999280925
+(29 tokens); 5-second improved from 0.998469465 to 0.999005756 (129 tokens).
+The 5-second result narrowly clears 0.999. The packaged ON service passed
+all five modalities and 128/256/512/768 dimensions with normalized prefixes.
+Repeated media requests hit the response cache. The F16 cache domain differs
+from OFF; ON responses matched fresh inference and survived restart with
+zero inference. These are quality and cache checks, with no Mac speed claim.
+
 `tests/audio_reference2.py --q8-activation-regression` reproduced the exact
 660 Hz quantization failure on the preserved OFF runtime (0.998584)
 and passed on the actual deployed ON service (0.999322), using the original
