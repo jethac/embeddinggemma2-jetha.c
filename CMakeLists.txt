@@ -68,6 +68,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-singleton-batch-output.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-stream-priority.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cpu-audio-f16.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-sycl-no-device.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
