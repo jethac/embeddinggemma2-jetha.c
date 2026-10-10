@@ -3752,6 +3752,13 @@ API routes rejected 8193 tokens. Shared-host, serial, both-order medians were
 This is accuracy-fix cost, not a quiet-host speed claim. Encoder startup rose
 from 0.34 to 4.00 seconds; added weight storage is 270 MiB.
 
+Load profiling found 221,184 synchronized row uploads taking 2.72 seconds.
+Grouping uploads with at most 8 MiB of staging reduced them to 132 calls.
+Both-order encoder load medians fell from 4.059 to 1.437 seconds (64.6%).
+All five outputs stayed byte-identical, and the original FP32 audio gates
+remained unchanged. The grouped-upload build is deployed on port 42671;
+the README client passed all five inputs again after replacement.
+
 ### I8MM candidate rejected (2026-10-10)
 
 [Run 38049027256](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38049027256)
