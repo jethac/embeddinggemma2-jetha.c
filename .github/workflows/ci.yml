@@ -290,7 +290,7 @@ jobs:
                               break
                       except OSError: time.sleep(.2)
                   else: raise AssertionError('installed ARM service did not become ready')
-                  expected = 'armv8-baseline' if name == 'off' or emulate else ('dotprod-fp16-acc-f32-v1' if precise else 'dotprod-fp16-v1')
+                  expected = 'armv8-baseline' if name == 'off' or emulate else ('dotprod-fp16-acc-f32-v2' if precise else 'dotprod-fp16-v1')
                   assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
                   maps = Path(f'/proc/{process.pid}/maps').read_text()
                   selected = 'armv8.0_1' if expected == 'armv8-baseline' else 'armv8_dotprod_fp16'

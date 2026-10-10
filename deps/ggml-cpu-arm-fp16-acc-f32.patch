@@ -50,12 +50,41 @@
          }
 --- a/ggml/src/ggml-cpu/vec.h
 +++ b/ggml/src/ggml-cpu/vec.h
-@@ -13,6 +13,27 @@
+@@ -13,6 +13,56 @@
  
  // floating point type used to accumulate sums
  typedef double ggml_float;
 +
 +#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++// FlashAttention keeps its half workspace and rounds after every update,
++// as the baseline does; only arithmetic and softmax coefficients stay FP32.
++inline static void ggml_arm_flash_scale_f16_acc_f32(int n, ggml_fp16_t * y, float v) {
++    const float32x4_t scale = vdupq_n_f32(v);
++    const int np = n & ~15; // baseline NEON vector prefix; same scalar tail
++    int i = 0;
++    for (; i < np; i += 4) {
++        const float32x4_t value = vcvt_f32_f16(vld1_f16((const __fp16 *) (y + i)));
++        vst1_f16((__fp16 *) (y + i), vcvt_f16_f32(vmulq_f32(value, scale)));
++    }
++    for (; i < n; ++i) {
++        y[i] = GGML_CPU_FP32_TO_FP16(GGML_CPU_FP16_TO_FP32(y[i])*v);
++    }
++}
++
++inline static void ggml_arm_flash_mad_f16_acc_f32(int n, ggml_fp16_t * y, const ggml_fp16_t * x, float v) {
++    const float32x4_t scale = vdupq_n_f32(v);
++    const int np = n & ~15; // baseline NEON vector prefix; same scalar tail
++    int i = 0;
++    for (; i < np; i += 4) {
++        const float32x4_t value = vcvt_f32_f16(vld1_f16((const __fp16 *) (x + i)));
++        const float32x4_t accum = vcvt_f32_f16(vld1_f16((const __fp16 *) (y + i)));
++        vst1_f16((__fp16 *) (y + i), vcvt_f16_f32(vfmaq_f32(accum, value, scale)));
++    }
++    for (; i < n; ++i) {
++        y[i] = GGML_CPU_FP32_TO_FP16(GGML_CPU_FP16_TO_FP32(y[i]) + GGML_CPU_FP16_TO_FP32(x[i])*v);
++    }
++}
++
 +// Match baseline FP32 accumulation while retaining native FP16 loads.
 +// Half accumulation in dot and SGEMM failed the audio cosine gate.
 +inline static float ggml_arm_vec_dot_f16_acc_f32(int n, const ggml_fp16_t * x, const ggml_fp16_t * y) {
@@ -78,7 +107,7 @@
  
  #if defined(__ARM_FEATURE_SVE)
  inline static void ggml_sve_f16_fma_widened(
-@@ -140,6 +161,14 @@
+@@ -140,6 +190,14 @@
  // compute GGML_VEC_DOT_UNROLL dot products at once
  // xs - x row stride in bytes
  inline static void ggml_vec_dot_f16_unroll(const int n, const int xs, float * GGML_RESTRICT s, void * GGML_RESTRICT xv, ggml_fp16_t * GGML_RESTRICT y) {
@@ -122,3 +151,47 @@
              tinyBLAS<8, float16x8_t, float16x8_t, ggml_fp16_t, ggml_fp16_t, float> tb{ params,
                  k, (const ggml_fp16_t *)A, lda,
                  (const ggml_fp16_t *)B, ldb,
+--- a/ggml/src/ggml-cpu/ops.cpp
++++ b/ggml/src/ggml-cpu/ops.cpp
+@@ -8885,6 +8885,10 @@
+         int64_t ic_start, int64_t ic_end,
+         float * partials, int64_t partial_stride) {
+ 
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++    const bool precise_pv = ggml_cpu_arm_fp16_acc_f32();
++#endif
++
+     const bool write_partials = (partials != nullptr);
+     const ggml_tensor * q     = dst->src[0];
+     const ggml_tensor * k     = dst->src[1];
+@@ -9035,14 +9039,28 @@
+                     ms = expf(Mold - M);
+ 
+                     // V = V*expf(Mold - M)
+-                    ggml_vec_scale_f16(DV, VKQ16, ms);
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++                    if (precise_pv) {
++                        ggml_arm_flash_scale_f16_acc_f32(DV, VKQ16, ms);
++                    } else
++#endif
++                    {
++                        ggml_vec_scale_f16(DV, VKQ16, ms);
++                    }
+                 } else {
+                     // no new maximum, ms == 1.0f, vs != 1.0f
+                     vs = expf(s - M);
+                 }
+ 
+                 // V += v*expf(s - M)
+-                ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++                if (precise_pv) {
++                    ggml_arm_flash_mad_f16_acc_f32(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
++                } else
++#endif
++                {
++                    ggml_vec_mad_f16(DV, VKQ16, (const ggml_fp16_t *) v_data, vs);
++                }
+             } else {
+                 if (s > M) {
+                     // s is new maximum, ms < 1.0f, vs == expf(s - s) == 1.0f

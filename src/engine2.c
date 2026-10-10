@@ -101,7 +101,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // Numeric variants can change accumulation order. Keep persisted text
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
-        s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v1" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
+        s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
@@ -548,7 +548,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     if (dotprod != fp16) ei_die("unexpected partial ARM numeric variant");
     s->arm_dotprod_fp16 = dotprod && fp16;
     fprintf(stderr, "ARM CPU numeric variant: %s\n",
-            s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "dotprod-fp16-acc-f32-v1" : "dotprod-fp16-v1") : "armv8-baseline");
+            s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "dotprod-fp16-acc-f32-v2" : "dotprod-fp16-v1") : "armv8-baseline");
 #endif
     ggml_backend_set_n_threads_t set_threads = (ggml_backend_set_n_threads_t)
         ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_set_n_threads");
