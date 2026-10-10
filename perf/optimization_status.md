@@ -3445,3 +3445,26 @@ the baseline module with the optimized module present. Persisted caches
 separated baseline, half accumulation and FP32 accumulation; same-mode
 restart restored responses. The candidate remains unmerged pending
 reduced-dimension and full-context checks. Other ARM extensions remain open.
+
+## CUDA backbone stream priority
+
+`EI_CUDA_BACKBONE_PRIORITY2=1` requests the highest supported priority for
+the CUDA backbone's launch stream. Media streams are unchanged. Default
+is OFF. Fresh 20-patch source/build, all five inputs, concurrent arrays,
+error recovery, reduced dimensions and 8192/8193 limits were byte-exact.
+Old text and media caches restored with zero inference; identities were
+unchanged. The device reported priority -5, with range -5..0.
+
+A private 16-pair run measured concurrent text 5.099 -> 4.694 ms, with
+14 wins. The actual deployed repeat did not reproduce it: text measured
+4.866 -> 4.944 ms, with eight wins and paired median ratio 1.0003x.
+Audio measured 8.133 -> 8.296 ms; video 311.197 -> 325.041 ms, with two
+wins. Video regressed in both orders and every balanced four-pair block.
+All 128 vectors were byte-exact, with actual media inference misses.
+These are shared-host OFF/ON comparisons, not llama.cpp results.
+
+The dev option was disabled. The same build with priority OFF passed
+all deployed journeys and cache restoration again. Windows was unchanged.
+The public option remains experimental and default OFF. A node trace
+showed unchanged isolated text spans but unequal concurrent audio overlap;
+it cannot attribute the private HTTP difference to GPU scheduling.
