@@ -24,6 +24,7 @@ Set the server address with `--url http://HOST:PORT`. API: `/api/embed` or `/v1/
 Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b). Same weights, kernels, threads, and inputs. Q8_0; 768 dimensions; caches off; both orders; cosine >=0.999. Ratio >1 means faster.
 
 - [CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034): EPYC 9V74; two threads; other CPU load 0.8–0.9%.
+- [ARM CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38036295848/job/114167311248): Linux ARM64 CI; two threads; other CPU load 0%. Both engines: `EI_CPU_AUDIO_F16_2=1`, `EI_ARM_FP16_ACC_F32=1`.
 - [Metal](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663): virtual M1; three threads; CPU vision attention; other CPU load 1.46–97.42%.
 
 | Backend | Input | Clients | This server, emb/s | llama.cpp, emb/s | Ratio |
@@ -34,6 +35,10 @@ Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa
 | CPU | Text, 256 tokens | 4 | 2.26 | 2.24 | 1.008x |
 | CPU | Text, 1024 tokens | 1 | 0.44 | 0.44 | 1.008x |
 | CPU | Text, 1024 tokens | 4 | 0.41 | 0.41 | 0.994x |
+| ARM CPU | Text, 18 tokens | 1 | 7.025 | 8.956 | 0.784x |
+| ARM CPU | Text, 18 tokens | 4 | 7.062 | 9.254 | 0.763x |
+| ARM CPU | Audio, 1 second | 1 | 1.543 | 1.669 | 0.925x |
+| ARM CPU | Audio, 1 second | 4 | 1.530 | 1.679 | 0.911x |
 | Metal | Image | 1 | 0.1302 | 0.1097 | 1.187x |
 | Metal | Image | 4 | 0.1915 | 0.1752 | 1.093x |
 
