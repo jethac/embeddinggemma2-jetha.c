@@ -3837,3 +3837,18 @@ Deployed on the Windows CUDA service: priming took 700.6 ms; the first
 changed audio request took 32.5 ms. The README client completed text, image,
 audio, video and mixed inputs with unit output vectors. Both original 660 Hz
 references passed all four dimensions, minimum cosine 0.9991465.
+
+### CUDA array batching rejected (2026-10-10)
+
+On the busy Windows RTX 5060 Ti host, four-item audio arrays lost in all
+four paired orders: median HTTP time rose from 30.605 to 32.525 ms versus
+concurrent singleton requests. Backbone compute fell from 11.121 to 3.716 ms,
+but the audio encoders remained serial. No cross-request scheduler was retained.
+
+A separate compatible-image encoder prototype also lost its first OFF/ON
+block: four serial encodes took 164.61 ms versus 191.589 ms grouped; the
+same-array HTTP median rose from 234.666 to 261.562 ms. Grouping added
+322 MiB GPU residency and about 341 MiB private process memory. Distinct
+image outputs passed cosine >=0.999955. The experiment stopped without
+reverse-order timing or broader qualification; no batching change was retained.
+These diagnostics do not establish a quiet-host throughput comparison.
