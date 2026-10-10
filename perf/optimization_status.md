@@ -3538,6 +3538,17 @@ Repeated media requests hit the response cache. The F16 cache domain differs
 from OFF; ON responses matched fresh inference and survived restart with
 zero inference. These are quality and cache checks, with no Mac speed claim.
 
+The 23-patch public source `cda0afb` passed the same native macOS ARM CPU
+checks after the CMake population and shared CPU-header changes in
+[run 38036524284](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38036524284)
+(experiment head `42bfb5f`; only non-Mac job guards changed).
+Original FP32 SDPA cosine remained 0.999280925 at 1 second and
+0.999005756 at 5 seconds, with 29/129 tokens. The 5-second margin above
+0.999 remains only 0.000005756. Startup confirmed 132 F16 Conformer
+matrices; all five modality journeys, normalized 128/256/512 prefixes,
+repeated responses and persistent cache isolation passed. This preserves
+the opt-in quality recommendation; it adds no performance claim.
+
 `tests/audio_reference2.py --q8-activation-regression` reproduced the exact
 660 Hz quantization failure on the preserved OFF runtime (0.998584)
 and passed on the actual deployed ON service (0.999322), using the original
