@@ -3312,3 +3312,28 @@ and 8192/8193-token limits passed. Minimum changed-input cosine was 0.999589.
 Reduced-dimension text and audio cosine remained above 0.999. OFF matched
 the dev service byte for byte. Actual persisted caches restored with the
 same flag and rejected the other numeric identity.
+
+## Native CPU ISA comparison
+
+On Xeon W-2135, isolated Haswell and SkylakeX runtimes each loaded only the
+intended CPU module. Both used six threads, Q8_0, PAD row copies and Q8
+pairing, with caches off. Q8 pairing applies only to the AVX-512 route.
+For 20 long-text pairs in both orders, AVX2/AVX-512 medians were
+2289.556/1686.877 ms. Median paired ratio was 1.345x, with 19/20 AVX-512
+wins. Both orders and all four blocks improved; aggregate ratio was 1.174x.
+All samples were retained, including multi-second host stalls. Effective
+frequency was unavailable. Minimum changed-text cosine was 0.999898.
+
+Stock media fixtures passed, but a changed one-second 660 Hz clip produced
+AVX2/AVX-512 cosine 0.997071. The unchanged 0.999 gate stopped audio timing.
+This comparison does not identify which route differs from the reference.
+The deployed AVX-512 service was unchanged.
+
+## Rejected native ARM FP16 path
+
+[Run 38026098520](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38026098520)
+built and staged baseline and guarded DOTPROD/FP16 modules on native ARM.
+Text/image cosine passed at 0.999925/0.999949; audio failed at 0.998701.
+Timing and later cache checks did not run. The variant was not merged.
+Source inspection found half-precision accumulation in both F16 dot and
+F16/F16 SGEMM paths. These routes need separate diagnosis and correction.
