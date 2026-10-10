@@ -62,6 +62,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-dispatch.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-portable.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-fp16-acc-f32.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-container.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-deadline.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-mask-range.patch"

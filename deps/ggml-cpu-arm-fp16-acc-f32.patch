@@ -1,0 +1,124 @@
+--- a/ggml/src/ggml-cpu/ggml-cpu-impl.h
++++ b/ggml/src/ggml-cpu/ggml-cpu-impl.h
+@@ -14,6 +14,9 @@
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
++
++// Frozen during CPU initialization; enabled only in the portable FP16 module.
++bool ggml_cpu_arm_fp16_acc_f32(void);
+ 
+ struct ggml_compute_params {
+     // ith = thread index, nth = number of threads
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -3856,6 +3856,12 @@
+ #endif
+ }
+ 
++static bool ggml_arm_fp16_acc_f32 = false;
++
++bool ggml_cpu_arm_fp16_acc_f32(void) {
++    return ggml_arm_fp16_acc_f32;
++}
++
+ void ggml_cpu_init(void) {
+     // needed to initialize ggml_time
+     {
+@@ -3869,6 +3875,10 @@
+     static bool is_first_call = true;
+ 
+     if (is_first_call) {
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++        const char * fp16_acc = getenv("EI_ARM_FP16_ACC_F32");
++        ggml_arm_fp16_acc_f32 = fp16_acc && strcmp(fp16_acc, "1") == 0;
++#endif
+         // initialize GELU, Quick GELU, SILU and EXP F32 tables
+         {
+             const uint64_t t_start = ggml_time_us(); UNUSED(t_start);
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -588,6 +588,9 @@
+         if (ggml_cpu_has_arm_fma()) {
+             features.push_back({ "ARM_FMA", "1" });
+         }
++        if (ggml_cpu_arm_fp16_acc_f32()) {
++            features.push_back({ "ARM_FP16_ACC_F32", "1" });
++        }
+         if (ggml_cpu_has_fp16_va()) {
+             features.push_back({ "FP16_VA", "1" });
+         }
+--- a/ggml/src/ggml-cpu/vec.h
++++ b/ggml/src/ggml-cpu/vec.h
+@@ -13,6 +13,27 @@
+ 
+ // floating point type used to accumulate sums
+ typedef double ggml_float;
++
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++// Match baseline FP32 accumulation while retaining native FP16 loads.
++// Half accumulation in dot and SGEMM failed the audio cosine gate.
++inline static float ggml_arm_vec_dot_f16_acc_f32(int n, const ggml_fp16_t * x, const ggml_fp16_t * y) {
++    float32x4_t sum[4] = { vdupq_n_f32(0), vdupq_n_f32(0), vdupq_n_f32(0), vdupq_n_f32(0) };
++    int i = 0;
++    for (; i + 16 <= n; i += 16) {
++        for (int j = 0; j < 4; ++j) {
++            const float32x4_t a = vcvt_f32_f16(vld1_f16((const __fp16 *) (x + i + j*4)));
++            const float32x4_t b = vcvt_f32_f16(vld1_f16((const __fp16 *) (y + i + j*4)));
++            sum[j] = vfmaq_f32(sum[j], a, b);
++        }
++    }
++    ggml_float result = vaddvq_f32(vaddq_f32(vaddq_f32(sum[0], sum[2]), vaddq_f32(sum[1], sum[3])));
++    for (; i < n; ++i) {
++        result += (ggml_float) (GGML_CPU_FP16_TO_FP32(x[i]) * GGML_CPU_FP16_TO_FP32(y[i]));
++    }
++    return result;
++}
++#endif
+ 
+ #if defined(__ARM_FEATURE_SVE)
+ inline static void ggml_sve_f16_fma_widened(
+@@ -140,6 +161,14 @@
+ // compute GGML_VEC_DOT_UNROLL dot products at once
+ // xs - x row stride in bytes
+ inline static void ggml_vec_dot_f16_unroll(const int n, const int xs, float * GGML_RESTRICT s, void * GGML_RESTRICT xv, ggml_fp16_t * GGML_RESTRICT y) {
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++    if (ggml_cpu_arm_fp16_acc_f32()) {
++        for (int k = 0; k < GGML_VEC_DOT_UNROLL; ++k) {
++            s[k] = ggml_arm_vec_dot_f16_acc_f32(n, (const ggml_fp16_t *) ((const char *) xv + k*xs), y);
++        }
++        return;
++    }
++#endif
+     ggml_float sumf[GGML_VEC_DOT_UNROLL] = { 0.0 };
+ 
+     ggml_fp16_t * GGML_RESTRICT x[GGML_VEC_DOT_UNROLL];
+--- a/ggml/src/ggml-cpu/vec.cpp
++++ b/ggml/src/ggml-cpu/vec.cpp
+@@ -268,6 +268,12 @@
+     GGML_UNUSED(by);
+     GGML_UNUSED(bs);
+ 
++#if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
++    if (ggml_cpu_arm_fp16_acc_f32()) {
++        *s = ggml_arm_vec_dot_f16_acc_f32(n, x, y);
++        return;
++    }
++#endif
+     ggml_float sumf = 0.0;
+ 
+ 
+--- a/ggml/src/ggml-cpu/llamafile/sgemm.cpp
++++ b/ggml/src/ggml-cpu/llamafile/sgemm.cpp
+@@ -4137,6 +4137,11 @@
+         if (n < 8)
+             return false;
+         if (Btype == GGML_TYPE_F16) {
++            if (ggml_cpu_arm_fp16_acc_f32()) {
++                tinyBLAS<4, float32x4_t, float32x4_t, ggml_fp16_t, ggml_fp16_t, float> tb{ params,
++                    k, (const ggml_fp16_t *) A, lda, (const ggml_fp16_t *) B, ldb, (float *) C, ldc };
++                return tb.matmul(m, n);
++            }
+             tinyBLAS<8, float16x8_t, float16x8_t, ggml_fp16_t, ggml_fp16_t, float> tb{ params,
+                 k, (const ggml_fp16_t *)A, lda,
+                 (const ggml_fp16_t *)B, ldb,
