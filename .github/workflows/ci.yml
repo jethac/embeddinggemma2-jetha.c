@@ -159,6 +159,10 @@ jobs:
           lscpu
           cc --version
           python perf/compare_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --token-counts 32,256,1024 --concurrency 1,4 --rounds 5 --target-seconds 8
+      - name: Check CPU audio against the original model before media timing
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
+        run: |
+          python tests/audio_f16_reference2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --threads 2
       - name: Measure matched multimodal CPU journeys in both engine orders
         if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
         env:

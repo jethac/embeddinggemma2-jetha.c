@@ -41,7 +41,7 @@ def check(args):
             port_check.bind(('127.0.0.1', args.port))
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith('EI_')}
-        environment.update(EI_THREADS='3', EI_CPU_AUDIO_F16_2=str(enabled))
+        environment.update(EI_THREADS=str(args.threads), EI_CPU_AUDIO_F16_2=str(enabled))
         log_path = Path(args.log_dir) / f'audio-f16-{enabled}.stderr.log'
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open('w') as log:
@@ -117,4 +117,8 @@ if __name__ == '__main__':
     parser.add_argument('--mmproj', required=True)
     parser.add_argument('--port', type=int, default=42670)
     parser.add_argument('--log-dir', default='build-cmake')
-    check(parser.parse_args())
+    parser.add_argument('--threads', type=int, default=3)
+    args = parser.parse_args()
+    if args.threads < 1:
+        parser.error('--threads must be positive')
+    check(args)
