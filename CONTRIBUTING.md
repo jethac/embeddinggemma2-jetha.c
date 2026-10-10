@@ -320,6 +320,15 @@ audio lengths and modalities can still incur first-use work. Readiness is
 later; this is not a total-startup speed option. In the Windows probe, GPU
 memory increased by 230 MiB at readiness and 6 MiB after the first real input.
 
+### CUDA raw-input graph cache
+
+`EI_RAW_GRAPH_CACHE_TOKENS2=256..512` sets the maximum aggregate raw-input
+tokens per cached shape. Default 256; requires CUDA, `EI_GRAPH_CACHE2=1`
+and `EI_RAW_GRAPH_CACHE2=1`. Text stays limited to 256 tokens. Larger inputs
+use the normal workspace. The existing shared slot limit remains unchanged.
+Use 512 for alternating image/mixed shapes; the measured Windows workload
+added 106–126 MiB GPU memory and 425–540 MiB private process commit.
+
 ### Metal
 
 Metal 3.1 uses one-row direct Q4 GEMV at T=1..6 and four-row direct Q4 GEMV from

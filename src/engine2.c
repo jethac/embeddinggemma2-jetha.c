@@ -57,6 +57,7 @@ typedef struct {
     graph2 graphs[1 + MAX_GRAPH_CACHE2]; // Normal workspace plus bounded short-text shapes.
     bool graph_cache;
     bool raw_graph_cache;
+    size_t raw_graph_cache_tokens;
     int graph_cache_slots;
     bool text_buckets;
     bool text_batch_buckets;
@@ -156,7 +157,7 @@ static struct ggml_tensor *norm(struct ggml_context *ctx, struct ggml_tensor *x,
 }
 
 static graph2 *select_graph(engine2 *s, size_t tokens, size_t batch, bool raw) {
-    if (!s->graph_cache || (raw && !s->raw_graph_cache) || tokens > 256) return &s->graphs[0];
+    if (!s->graph_cache || (raw && !s->raw_graph_cache) || tokens > (raw ? s->raw_graph_cache_tokens : 256)) return &s->graphs[0];
     graph2 *chosen = &s->graphs[1];
     for (int i = 1; i <= s->graph_cache_slots; i++) {
         graph2 *state = &s->graphs[i];
@@ -747,6 +748,20 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     }
     const char *raw_graph_cache = getenv("EI_RAW_GRAPH_CACHE2");
     s->raw_graph_cache = s->graph_cache && raw_graph_cache && strcmp(raw_graph_cache, "1") == 0;
+    s->raw_graph_cache_tokens = 256;
+    const char *raw_cache_tokens = getenv("EI_RAW_GRAPH_CACHE_TOKENS2");
+    if (raw_cache_tokens) {
+        char *end = NULL;
+        long limit = strtol(raw_cache_tokens, &end, 10);
+        if (!*raw_cache_tokens || strspn(raw_cache_tokens, "0123456789") != strlen(raw_cache_tokens) ||
+            *end || limit < 256 || limit > 512)
+            ei_die("EI_RAW_GRAPH_CACHE_TOKENS2 must be an integer 256..512");
+        if (!s->raw_graph_cache || strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(
+                ggml_backend_get_device(s->backends[0]))), "CUDA") != 0)
+            ei_die("EI_RAW_GRAPH_CACHE_TOKENS2 requires CUDA, EI_GRAPH_CACHE2=1 and EI_RAW_GRAPH_CACHE2=1");
+        s->raw_graph_cache_tokens = (size_t)limit;
+        fprintf(stderr, "CUDA raw-input graph cache: at most %zu tokens per shape\n", s->raw_graph_cache_tokens);
+    }
     if (s->raw_graph_cache) fprintf(stderr, "CUDA raw-input graph cache: sharing the bounded short-input slots\n");
     const char *audio_cache = getenv("EI_AUDIO_GRAPH_CACHE2");
     const char *audio_slots = getenv("EI_AUDIO_GRAPH_CACHE_SLOTS2");

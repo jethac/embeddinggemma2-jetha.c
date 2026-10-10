@@ -2922,6 +2922,7 @@ required. Keep phase profiling off for throughput measurements.
 | `EI_GRAPH_CACHE2=1` | CUDA text graph cache, at most 256 aggregate tokens |
 | `EI_GRAPH_CACHE_SLOTS2=2..8` | Default two shapes; hard limit eight |
 | `EI_RAW_GRAPH_CACHE2=1` | Share graph slots with raw inputs up to 256 aggregate tokens |
+| `EI_RAW_GRAPH_CACHE_TOKENS2=256..512` | CUDA raw-input ceiling; default 256; requires both graph cache flags |
 | `EI_TEXT_BUCKETS2=1` | Singleton CUDA text buckets 32/64/128/256; exclude padding from attention/pooling |
 | `EI_TEXT_BATCH_BUCKETS2=1` | Plain text batches up to 256 aggregate tokens; isolated sequence masks/pooling |
 | `EI_QKV2=1` | Packed Q8_0 projections on CPU/CUDA; 27.62 MiB additional weights |
@@ -3858,3 +3859,25 @@ same-array HTTP median rose from 234.666 to 261.562 ms. Grouping added
 image outputs passed cosine >=0.999955. The experiment stopped without
 reverse-order timing or broader qualification; no batching change was retained.
 These diagnostics do not establish a quiet-host throughput comparison.
+
+### Optional larger CUDA raw graph cache (2026-10-10)
+
+On native Windows RTX 5060 Ti, alternating image/mixed shapes rebuilt the
+normal workspace on every request above 256 tokens. A same-build 256/512
+comparison used changed inputs, cache OFF, profiling OFF and both orders.
+Image HTTP medians fell from 64.375 to 53.221 ms; mixed from 71.232 to
+59.900 ms. Both orders improved, with 31/32 image and 32/32 mixed paired
+wins. All 128 measured vectors and token counts were byte-identical.
+These are busy-host latency observations, not a llama.cpp throughput ratio.
+
+The 260/296/299/302/305-token shapes used 151.43 MiB cached workspace,
+including the startup-prime shape. GPU residency rose 106–126 MiB and
+private process commit rose 425–540 MiB. Text limits and slot count remain
+unchanged; raw shapes above the configured ceiling use the normal workspace.
+
+Unset matched the prior app for all five modalities. Reduced dimensions,
+changed arrays/layouts, nine-shape eviction/reentry, 520/596-token bypass,
+8192-token mixed input and 8193 rejection passed. Persisted text/media entries
+restored with zero inference and unchanged identities. Invalid configuration
+failed before listening. The option defaults to 256 and requires selected CUDA
+with both graph cache flags enabled.
