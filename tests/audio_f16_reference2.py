@@ -41,12 +41,16 @@ def check(args):
             port_check.bind(('127.0.0.1', args.port))
         environment = {key: value for key, value in os.environ.items()
                        if not key.startswith('EI_')}
-        environment.update(EI_THREADS=str(args.threads), EI_CPU_AUDIO_F16_2=str(enabled))
-        log_path = Path(args.log_dir) / f'audio-f16-{enabled}.stderr.log'
+        environment.pop('GGML_CUDA_CUBLAS_COMPUTE_TYPE', None)
+        flag = 'EI_CUDA_AUDIO_F16_2' if args.backend == 'cuda' else 'EI_CPU_AUDIO_F16_2'
+        environment.update(EI_THREADS=str(args.threads))
+        environment[flag] = str(enabled)
+        prefix = 'audio-cuda-f16' if args.backend == 'cuda' else 'audio-f16'
+        log_path = Path(args.log_dir) / f'{prefix}-{enabled}.stderr.log'
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open('w') as log:
             child = subprocess.Popen([
-                str(Path(args.binary).resolve()), '--backend', 'cpu',
+                str(Path(args.binary).resolve()), '--backend', args.backend,
                 '--bind', '127.0.0.1', '--port', str(args.port),
                 '--model', str(Path(args.model).resolve()),
                 '--mmproj', str(Path(args.mmproj).resolve()),
@@ -56,12 +60,12 @@ def check(args):
                 base = f'http://127.0.0.1:{args.port}'
                 deadline = time.monotonic() + 180
                 while True:
-                    assert child.poll() is None, 'CPU service exited during startup'
+                    assert child.poll() is None, f'{args.backend} service exited during startup'
                     try:
                         with urllib.request.urlopen(base + '/healthz', timeout=2):
                             break
                     except OSError:
-                        assert time.monotonic() < deadline, 'CPU startup timeout'
+                        assert time.monotonic() < deadline, f'{args.backend} startup timeout'
                         time.sleep(0.2)
                 for sample in fixture['fixtures']:
                     pcm = b''.join(struct.pack('<h', round(fixture['amplitude'] *
@@ -106,13 +110,18 @@ def check(args):
                     child.kill()
                     child.wait(timeout=30)
         text = log_path.read_text()
-        assert ('CPU audio F16 active: 132 Conformer matrices' in text) == bool(enabled)
-        assert 'ggml_metal_library_init' not in text, 'CPU service initialized Metal'
+        label = 'CUDA' if args.backend == 'cuda' else 'CPU'
+        assert (f'{label} audio F16 active: 132 Conformer matrices' in text) == bool(enabled)
+        if args.backend == 'cuda':
+            assert 'EmbeddingGemma 2: CUDA' in text, 'CUDA service did not select CUDA'
+        else:
+            assert 'ggml_metal_library_init' not in text, 'CPU service initialized Metal'
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--binary', required=True)
+    parser.add_argument('--backend', choices=('cpu', 'cuda'), default='cpu')
     parser.add_argument('--model', required=True)
     parser.add_argument('--mmproj', required=True)
     parser.add_argument('--port', type=int, default=42670)
