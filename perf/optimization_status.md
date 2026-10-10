@@ -3636,9 +3636,10 @@ The cross-engine failure remains; this probe does not show stale cache data.
 
 ### ARM CPU weight experiments (2026-10-10)
 
-These default-OFF experiments remain outside main. Both used two threads,
-both orders, zero other CPU load, and passed the three original-FP32 audio
-gates before timing. The five-modality and installed-service work is pending.
+Both options default OFF. These experiments used two threads, both orders,
+zero other CPU load, and passed the three original-FP32 audio gates before
+timing. The separate F32 experiment passed all ten media performance cells;
+its image/video/mixed ratios were 1.025–1.041x.
 
 | Experiment | Input | Clients | This server, emb/s | llama.cpp, emb/s | Ratio |
 |---|---|---:|---:|---:|---:|
@@ -3678,6 +3679,26 @@ only the AVX2 or AVX-512 CPU module installed. All five inputs at
 counts and finite unit vectors. All three original-FP32 audio gates passed.
 Minimum ON reference cosine was 0.999055382 on AVX2 and 0.999176854 on
 AVX-512. This is quality verification, not a Windows speed result.
+On AVX-512, mixed 8192-token requests passed with projection OFF and ON
+(cross-mode cosine 0.999916275). Both routes rejected 8193 tokens before
+backbone execution in both modes.
+
+[Combined ARM profile 38043499704](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38043499704)
+measured a warm 18-token graph at 40.648 ms versus llama.cpp's 109.989 ms.
+The projection used F32 and took 3.753 ms; llama.cpp's mapped BF16 projection
+took 73.083 ms. Q8 nodes used `CPU_REPACK` in both engines. Native matrix
+work was 31.393 ms and attention 4.552 ms per slowest worker. Pool creation
+and destruction took 62/59 microseconds; pool reuse is not the next priority.
+
+[x86 F32 run 38042114054](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38042114054)
+used a Xeon 6973P-C, not the earlier EPYC host. Text C1/C4 ratios were
+0.437x/0.473x; audio C1 was 0.766x. Original-FP32 audio gates passed, but
+C4 audio cross-engine cosine failed at 0.998912313. Native concurrent output
+matched serial; llama.cpp changed. Keep F32 projection OFF on x86.
+
+[VNNI run 38043962060](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38043962060)
+stopped before building the comparison: the assigned AMD runner had no
+AVX-512 VNNI. It produced no VNNI performance result.
 
 [NEON BF16 run 38041978385](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041978385)
 passed after correcting the load cast for GGML's BF16 wrapper type. Text
