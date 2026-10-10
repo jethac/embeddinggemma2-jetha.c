@@ -1,0 +1,46 @@
+--- a/tools/mtmd/models/models.h
++++ b/tools/mtmd/models/models.h
+@@ -173,7 +173,8 @@
+ };
+ 
+ struct clip_graph_gemma4a : clip_graph {
+-    clip_graph_gemma4a(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {}
++    clip_graph_gemma4a(clip_ctx * ctx, const clip_image_f32 & img);
++    bool cpu_audio_kv_views = false;
+     ggml_cgraph * build() override;
+     ggml_tensor * build_mm(ggml_tensor * w, ggml_tensor * x) const override;
+ };
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -342,6 +342,18 @@
+     // reuse from parent
+     ctx0 = parent.ctx0;
+     gf   = parent.gf;
++}
++
++clip_graph_gemma4a::clip_graph_gemma4a(clip_ctx * ctx, const clip_image_f32 & img) : clip_graph(ctx, img) {
++    const char * value = getenv("EI_CPU_AUDIO_KV_VIEWS2");
++    if (value && strcmp(value, "0") != 0 && strcmp(value, "1") != 0) {
++        throw std::runtime_error("EI_CPU_AUDIO_KV_VIEWS2 must be 0 or 1");
++    }
++    cpu_audio_kv_views = value && strcmp(value, "1") == 0 &&
++        ggml_backend_dev_type(ggml_backend_get_device(ctx->backend)) == GGML_BACKEND_DEVICE_TYPE_CPU;
++    if (cpu_audio_kv_views) {
++        LOG_INF("EI_CPU_AUDIO_KV_VIEWS2 active: CPU Gemma4A K/V overlapping views\n");
++    }
+ }
+ 
+ ggml_tensor * clip_graph::build_mm(ggml_tensor * w, ggml_tensor * x) const {
+--- a/tools/mtmd/models/gemma4a.cpp
++++ b/tools/mtmd/models/gemma4a.cpp
+@@ -128,7 +128,9 @@
+                 // nb1=D*sizeof, nb2=D*H*sizeof, nb3=C*D*H*sizeof (overlap: C < S)
+                 t = ggml_view_4d(ctx0, t, d_head, n_head, S, B,
+                     t->nb[1], t->nb[2], C * t->nb[2], 0);
+-                t = ggml_cont(ctx0, t);                       // materialize overlapping windows
++                if (!cpu_audio_kv_views) {
++                    t = ggml_cont(ctx0, t); // materialize overlapping windows
++                }
+                 return t;
+             };
+ 

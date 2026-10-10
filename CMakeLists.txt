@@ -77,6 +77,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-audio-f16-acc-f32.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cuda-audio-upload.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-i8mm.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cpu-audio-kv-views.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")

@@ -165,6 +165,8 @@ def main():
                    help='Diagnose encoder/backbone costs from actual server logs')
     p.add_argument('--vision-clip-metadata', action='store_true',
                    help='Check and measure native vision metadata clamping on/off')
+    p.add_argument('--cpu-audio-kv-views', action='store_true',
+                   help='Compare private CPU audio K/V overlapping views with the original copies')
     p.add_argument('--metal-media-flash-attn', action='store_true',
                    help='Check and measure forced encoder flash attention against AUTO on Metal')
     p.add_argument('--concurrency', type=parse_csv_ints, default=[1, 4])
@@ -196,14 +198,20 @@ def main():
     for path in (a.model, a.mmproj, a.embeddinggemma_bin, a.llama_server):
         if not path.is_file(): p.error(f'not found: {path}')
     vnni_probe = os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1'
-    if sum((vnni_probe, a.vision_clip_metadata, a.metal_media_flash_attn)) > 1:
+    if a.cpu_audio_kv_views and (a.backend != 'cpu' or not a.audio_reference):
+        p.error('CPU audio K/V views require CPU and original audio references')
+    if sum((vnni_probe, a.vision_clip_metadata, a.metal_media_flash_attn, a.cpu_audio_kv_views)) > 1:
         p.error('select one native on/off experiment at a time')
-    native_probe = vnni_probe or a.vision_clip_metadata or a.metal_media_flash_attn
-    probe_name = ('VNNI paired rows' if vnni_probe else 'Metal encoder flash attention'
+    native_probe = vnni_probe or a.vision_clip_metadata or a.metal_media_flash_attn or a.cpu_audio_kv_views
+    probe_name = ('CPU audio K/V overlapping views' if a.cpu_audio_kv_views else
+                  'VNNI paired rows' if vnni_probe else 'Metal encoder flash attention'
                   if a.metal_media_flash_attn else 'vision metadata clipping')
-    off_flags = (('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
+    off_flags = (('EI_CPU_AUDIO_KV_VIEWS2',) if a.cpu_audio_kv_views else
+                 ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
                  else ('EI_METAL_MEDIA_FLASH_ATTN2',) if a.metal_media_flash_attn
                  else ('EI_VISION_CLIP_METADATA2',))
+    if a.cpu_audio_kv_views:
+        os.environ['EI_CPU_AUDIO_KV_VIEWS2'] = '1'
     if a.vision_clip_metadata:
         os.environ['EI_VISION_CLIP_METADATA2'] = '1'
     if a.metal_media_flash_attn:
@@ -375,6 +383,8 @@ def main():
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
                             quality.append(list(pool.map(lambda pair: validate(endpoint, pair[engine]),
                                                          inputs[:concurrency])))
+                    if a.cpu_audio_kv_views and 'EI_CPU_AUDIO_KV_VIEWS2 active: CPU Gemma4A K/V overlapping views' not in op.log_path.read_text(errors='replace'):
+                        raise RuntimeError('CPU audio K/V views experiment did not activate')
                     tokens = [v[1] for v in quality[0]]
                     if tokens != [v[1] for v in quality[1]]:
                         raise RuntimeError(f'{kind} token counts differ: {tokens} vs {[v[1] for v in quality[1]]}')
@@ -397,6 +407,8 @@ def main():
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
                                                           inputs[:concurrency]))
+                            if a.cpu_audio_kv_views and 'EI_CPU_AUDIO_KV_VIEWS2 active:' in off_process.log_path.read_text(errors='replace'):
+                                raise RuntimeError('CPU audio K/V views OFF control activated the candidate')
                             if a.metal_media_flash_attn:
                                 minimum_pair = min(cosine_similarity(on[0], auto[0])
                                                    for on, auto in zip(quality[0], unchanged))
