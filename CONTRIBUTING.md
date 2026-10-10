@@ -268,6 +268,19 @@ Diagnostic controls:
   portable DOTPROD/FP16 module. Default OFF; separates its numeric cache
   domain. SVE, I8MM and SME variants remain unimplemented.
 
+### CUDA audio accuracy
+
+`EI_CUDA_AUDIO_F16_2=1` replaces the 132 Conformer Q8_0 matrices with F16
+and uses FP32 accumulation/output for their CUDA GEMMs. Default OFF; adds
+270 MiB of weights and separates both persistent cache layers. It requires
+a CUDA plugin exposing `AUDIO_F16_ACC_F32=1`; older plugins are rejected
+when enabled. Output projections retain their original representation.
+On native Windows RTX 5060 Ti, the original FP32 660 Hz checks improved from
+0.998766/0.998786 to 0.999257/0.999294 for 1 s/5 s audio. Shared-host,
+both-order warm medians were 35.31→35.28 ms (1 s) and 37.97→37.13 ms (2 s),
+with no throughput gain claimed. Encoder loading increased from about
+0.34 s to 4.00 s; the native Windows CUDA route requires the MSVC runtime.
+
 ### Metal
 
 Metal 3.1 uses one-row direct Q4 GEMV at T=1..6 and four-row direct Q4 GEMV from

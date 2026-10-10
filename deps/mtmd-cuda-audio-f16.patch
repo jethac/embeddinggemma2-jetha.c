@@ -1,0 +1,67 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -2219,11 +2219,29 @@
+         const bool cpu_audio_model = ctx_clip.cpu_only_requested &&
+             ggml_backend_dev_type(ggml_backend_get_device(ctx_clip.backend)) == GGML_BACKEND_DEVICE_TYPE_CPU &&
+             model.modality == CLIP_MODALITY_AUDIO && ctx_clip.proj_type() == PROJECTOR_TYPE_GEMMA4A;
+-        const char * audio_f16_flag = cpu_audio_model ? getenv("EI_CPU_AUDIO_F16_2") : nullptr;
++        const bool cuda_audio_model = !ctx_clip.cpu_only_requested &&
++            strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(
++                ggml_backend_get_device(ctx_clip.backend))), "CUDA") == 0 &&
++            model.modality == CLIP_MODALITY_AUDIO && ctx_clip.proj_type() == PROJECTOR_TYPE_GEMMA4A;
++        const char * audio_f16_name = cuda_audio_model ? "EI_CUDA_AUDIO_F16_2" : "EI_CPU_AUDIO_F16_2";
++        const char * audio_f16_flag = (cpu_audio_model || cuda_audio_model) ? getenv(audio_f16_name) : nullptr;
+         if (audio_f16_flag && strcmp(audio_f16_flag, "0") && strcmp(audio_f16_flag, "1")) {
+-            throw std::runtime_error("EI_CPU_AUDIO_F16_2 must be 0 or 1");
++            throw std::runtime_error(std::string(audio_f16_name) + " must be 0 or 1");
+         }
+         const bool audio_f16 = audio_f16_flag && !strcmp(audio_f16_flag, "1");
++        if (cuda_audio_model && audio_f16) {
++            auto reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(ctx_clip.backend));
++            auto get_features = reinterpret_cast<ggml_backend_get_features_t>(
++                ggml_backend_reg_get_proc_address(reg, "ggml_backend_get_features"));
++            bool supported = false;
++            if (get_features) {
++                for (auto * feature = get_features(reg); feature && feature->name; ++feature) {
++                    if (!strcmp(feature->name, "AUDIO_F16_ACC_F32") &&
++                        feature->value && !strcmp(feature->value, "1")) supported = true;
++                }
++            }
++            if (!supported) throw std::runtime_error("EI_CUDA_AUDIO_F16_2 requires CUDA AUDIO_F16_ACC_F32=1");
++        }
+         size_t audio_f16_count = 0;
+         size_t audio_f16_source_bytes = 0;
+         size_t audio_f16_target_bytes = 0;
+@@ -2274,7 +2292,7 @@
+                 ggml_tensor * data_tensor;
+                 if (convert_audio_f16) {
+                     if (ggml_n_dims(cur) != 2 || cur->ne[0] % 32 || !ggml_is_contiguous(cur)) {
+-                        throw std::runtime_error("CPU audio F16 requires contiguous Q8_0 Conformer matrices");
++                        throw std::runtime_error("audio F16 requires contiguous Q8_0 Conformer matrices");
+                     }
+                     data_tensor = ggml_new_tensor_2d(ctx_clip.ctx_data.get(), GGML_TYPE_F16, cur->ne[0], cur->ne[1]);
+                     ++audio_f16_count;
+@@ -3764,10 +3782,10 @@
+         if (audio_f16) {
+             if (hparams.n_layer != 12 || hparams.n_embd != 1024 || hparams.n_ff != 4096 ||
+                 audio_f16_count != 132 || audio_f16_target_bytes != 576u * 1024u * 1024u) {
+-                throw std::runtime_error("CPU audio F16 requires the 132 EmbeddingGemma 2 Conformer Q8_0 matrices");
+-            }
+-            LOG_INF("%s: CPU audio F16 active: %zu Conformer matrices, %.2f MiB Q8_0 -> %.2f MiB F16, no duplicate weights\n",
+-                __func__, audio_f16_count, audio_f16_source_bytes / (1024.0 * 1024.0),
++                throw std::runtime_error("audio F16 requires the 132 EmbeddingGemma 2 Conformer Q8_0 matrices");
++            }
++            LOG_INF("%s: %s audio F16 active: %zu Conformer matrices, %.2f MiB Q8_0 -> %.2f MiB F16, no duplicate weights\n",
++                __func__, cuda_audio_model ? "CUDA" : "CPU", audio_f16_count, audio_f16_source_bytes / (1024.0 * 1024.0),
+                 audio_f16_target_bytes / (1024.0 * 1024.0));
+         }
+ 
+@@ -3815,7 +3833,7 @@
+                         for (int64_t row = 0; row < t->ne[1]; ++row) {
+                             fin.read(reinterpret_cast<char *>(row_q8.data()), source_row_bytes);
+                             if (!fin) {
+-                                throw std::runtime_error(string_format("CPU audio F16: truncated tensor %s", t->name));
++                                throw std::runtime_error(string_format("audio F16: truncated tensor %s", t->name));
+                             }
+                             traits->to_float(row_q8.data(), row_f32.data(), t->ne[0]);
+                             ggml_fp32_to_fp16_row(row_f32.data(), row_f16.data(), t->ne[0]);
