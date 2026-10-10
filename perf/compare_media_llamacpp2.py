@@ -190,13 +190,17 @@ def main():
                  '--ctx-size', '16384', '--kv-unified', '--batch-size', '16384', '--ubatch-size', '16384',
                  '--flash-attn', 'on', '--no-cache-prompt', '--cache-ram', '0',
                  '--no-cache-idle-slots', '--no-webui', '--log-disable']
+    # Dependency encoder options are also EI_ flags. Keep the comparison
+    # server on its default path rather than giving it native-only experiments.
+    llama_env = {k: v for k, v in os.environ.items() if not k.startswith('EI_')}
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
-    if a.profile_phases or a.backend == 'metal':
+    if a.profile_phases or a.backend in ('metal', 'cuda'):
         llama_cmd.remove('--log-disable')
         llama_cmd += ['--log-verbosity', '4']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
         'flags': {k: v for k, v in os.environ.items() if k.startswith('EI_')},
+        'llama_flags': {k: v for k, v in llama_env.items() if k.startswith('EI_')},
         'validate_only': a.validate_only, 'orders': ['ours/llama', 'llama/ours'],
         'ours_command': ours_cmd, 'llama_command': llama_cmd,
         'fixtures': '96x96 RGB PPM; 1s 16kHz mono PCM WAV; 2s 1fps 96x96 MPEG4; text+image+audio',
@@ -219,17 +223,18 @@ def main():
                 print(json.dumps({'llama_command': matched_llama_cmd}), flush=True)
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
-                                   env={k: v for k, v in os.environ.items() if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as lp:
+                                   env=llama_env) as lp:
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
-                    if a.backend == 'metal':
+                    if a.backend in ('metal', 'cuda'):
+                        device = 'MTL' if a.backend == 'metal' else 'CUDA0'
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')
-                        if 'EmbeddingGemma 2: MTL' not in native_log or 'CLIP using MTL' not in native_log:
-                            raise RuntimeError('native Metal comparison fell back to CPU')
+                        if f'EmbeddingGemma 2: {device}' not in native_log or f'CLIP using {device}' not in native_log:
+                            raise RuntimeError(f'native {a.backend} comparison fell back to CPU')
                         if not re.search(r'offloaded [1-9][0-9]*/[0-9]+ layers to GPU', llama_log):
-                            raise RuntimeError('llama.cpp Metal comparison did not offload model layers')
-                        if 'CLIP using MTL' not in llama_log:
-                            raise RuntimeError('llama.cpp Metal comparison did not select Metal encoders')
+                            raise RuntimeError(f'llama.cpp {a.backend} comparison did not offload model layers')
+                        if f'CLIP using {device}' not in llama_log:
+                            raise RuntimeError(f'llama.cpp {a.backend} comparison did not select GPU encoders')
                     if vnni_probe:
                         startup = op.log_path.read_text(errors='replace')
                         if not any('libggml-cpu-' + name + '.so' in startup for name in
