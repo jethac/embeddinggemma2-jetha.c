@@ -3527,7 +3527,7 @@ aggregate 1.095x); two-second audio 256.997 -> 217.319 ms (16/20 wins,
 against a known failing baseline, not a quiet-host or llama.cpp claim.
 
 
-The existing public audio-reference test's exact 660 Hz quantization
-regression reproduced failure on the preserved OFF runtime (0.998584)
+`tests/audio_reference2.py --q8-activation-regression` reproduced the exact
+660 Hz quantization failure on the preserved OFF runtime (0.998584)
 and passed on the actual deployed ON service (0.999322), using the original
 FP32 SDPA model with its boolean-mask guard.
