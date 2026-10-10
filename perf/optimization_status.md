@@ -3283,3 +3283,6 @@ deployed request logged an inference miss. All samples were retained.
 Both routes had multi-second stalls during a foreign compile workload;
 the observed host CPU total was 947%. The owned GB10 compiler was paused.
 These measurements do not establish quiet-host latency or tail improvement.
+The one-second aggregate ratio was 0.760x (loss); maximum latency was
+5.050/5.088 seconds OFF/ON. The two-second aggregate ratio was 1.021x;
+both orders and all four blocks improved. Its maximum was 278.135/253.272 ms.
