@@ -3887,3 +3887,13 @@ Deployed with a 512-token ceiling. The same changed image/mixed inputs,
 72.510→60.608 ms respectively; outputs stayed byte-identical. The README
 journey passed all five modalities on the replacement service. Original 1/5 s
 660 Hz audio passed all four dimensions, minimum cosine 0.9991466.
+
+### CUDA vision F16 storage rejected (2026-10-10)
+
+Dequantizing the existing 112 Q8 vision matrices to resident F16 switched
+MMQ to cuBLAS but lost in both orders on the busy Windows RTX 5060 Ti host.
+Image HTTP median rose 53.869→56.569 ms (3/32 wins); mixed rose
+60.698→62.748 ms (5/32). The original HF image cosine passed at 0.999899;
+changed image/mixed outputs also passed. The probe added 135 MiB weights,
+144 MiB GPU residency and 146–149 MiB private process commit. All measured
+outliers were retained. No source, kernel or deployment change was retained.
