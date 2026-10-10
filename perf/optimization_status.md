@@ -3382,6 +3382,16 @@ alone does not explain the AVX2 failure. The next control adds the native
 Q8_0 activation quantizer at the clamped linear inputs, keeping attention
 in FP32. The deployed CPU service is unchanged.
 
+That control used the exported Haswell Q8_0 quantizer at all 134 clamped
+linear inputs. Encoder cosine fell to 0.992746 with FP32 attention. The
+private F32-convolution routes matched it at 0.999399/0.999359. Activation
+quantization can reproduce the late drift without a native attention bug.
+Removing activation quantization from layer 11 passed the final 660 Hz
+gate (0.999474) but failed 330 Hz (0.998792). Layers 10 and 11 together
+still failed 330 Hz (0.998812); 440/550/660 Hz passed. Neither policy is
+retained. A matched-weight final-output control is needed before selecting
+more layers or changing native kernels.
+
 ## GB10 device compilation
 
 CUDA 13.0.88 compiled the pinned GGML CUDA source with the 16 patches from
