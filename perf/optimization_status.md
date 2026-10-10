@@ -3624,6 +3624,39 @@ The README lists each cell. The later warm C4 audio comparison failed at
 0.998954102; native output stayed consistent with serial output, while
 llama.cpp changed. That failure remains open; thresholds were not relaxed.
 
+[Audio batch probe 38041241536](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041241536)
+used the unchanged 24-patch runtime and the same installed ARM module.
+Native 660 Hz output stayed identical across serial, arrays, concurrent waves,
+repeated arrays and rotated arrays (original-FP32 cosine 0.999340343).
+llama.cpp arrays repeated identically but differed from serial; original-FP32
+cosine was 0.999108537. Concurrent waves reached 0.999101513 or 0.999330927.
+All these outputs passed the original-FP32 gate. Actual logs showed 116-token,
+four-sequence array batches, with each sequence starting at position zero.
+The cross-engine failure remains; this probe does not show stale cache data.
+
+### ARM CPU weight experiments (2026-10-10)
+
+These default-OFF experiments remain outside main. Both used two threads,
+both orders, zero other CPU load, and passed the three original-FP32 audio
+gates before timing. The five-modality and installed-service work is pending.
+
+| Experiment | Input | Clients | This server, emb/s | llama.cpp, emb/s | Ratio |
+|---|---|---:|---:|---:|---:|
+| [Q8 repacking](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38040784274/job/114180432478) | Text, 18 tokens | 1 | 9.014 | 8.935 | 1.009x |
+| Q8 repacking | Text, 18 tokens | 4 | 9.201 | 9.215 | 0.998x |
+| Q8 repacking | Audio, 1 second | 1 | 1.683 | 1.669 | 1.008x |
+| Q8 repacking | Audio, 1 second | 4 | 1.662 | 1.678 | 0.990x |
+| [F32 projection](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38040941946/job/114180894267) | Text, 18 tokens | 1 | 13.742 | 9.004 | 1.526x |
+| F32 projection | Text, 18 tokens | 4 | 13.845 | 9.281 | 1.492x |
+| F32 projection | Audio, 1 second | 1 | 1.871 | 1.675 | 1.117x |
+| F32 projection | Audio, 1 second | 4 | 1.868 | 1.685 | 1.109x |
+
+Q8 repacking uses the selected CPU module's `CPU_REPACK` buffer for backbone
+matrices, retaining mapped token lookup. F32 projection widens the stored BF16
+projection weights (+24 MiB) and avoids BF16 activation rounding. Both separate
+persistent arithmetic identities. Minimum C4 audio cross-engine cosine was
+0.999297722 for repacking and 0.999335943 for F32 projection.
+
 ### XPU package without a visible GPU (2026-10-10)
 
 [Run 38037375545](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38037375545)
