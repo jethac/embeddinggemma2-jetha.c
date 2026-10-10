@@ -3796,3 +3796,17 @@ passed all five modalities at C1/C4, 128/256/512/768 dimensions, original-FP32
 8193 rejection on both routes. I8MM's minimum reduced-dimension HF cosine
 was 0.999268. Persisted cache flip/restart separated/restored both numeric
 variants; flag ON on unsupported Cortex-A53 retained baseline fallback.
+
+### CUDA cold-request profiling (2026-10-10)
+
+Warmed 1-second 660 Hz audio used identical encoder kernels in both engines:
+1,069 instances with matching kernel/grid/block signatures. Nsight kernel
+time was 3.196/3.216 ms (native/llama); neither request recaptured its graph.
+The earlier 18.1/11.3 ms encoder wall times did not justify a kernel change.
+
+A cold native trace spent 507 ms in 31 CUDA library loads; kernel work was
+5.4 ms. The next same-shape request spent 41 ms instantiating two graphs.
+`CUDA_MODULE_LOADING=EAGER` was rejected in both orders: launch through first
+audio response took 23.46/23.46 seconds, versus LAZY's 4.06/7.35 seconds.
+These are busy-host diagnostics; profiler overhead and order variation prevent
+a throughput or precise latency-savings claim.
