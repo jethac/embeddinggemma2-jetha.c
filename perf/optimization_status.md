@@ -3984,3 +3984,20 @@ the current 28-patch dependency build. Malformed inputs and context overflow
 were rejected; dimension, encoding, layout, API/model keys stayed isolated.
 Canonical and raw restart hits performed no inference. The option defaults OFF;
 these results precede deployment.
+
+
+The retained CPU dev service now enables this option. Fresh audio format aliases
+changed from 132.087/127.808 ms with one inference each to 53.178/23.303 ms with
+none. A fresh bare request seeded the canonical entry after replacement; the
+measured aliases used new raw spellings, so persisted raw entries could not
+produce this result. A pre-deployment raw request still hit after restart in
+23.189 ms without inference. All HTTP response bytes stayed identical.
+
+Fresh image/video/mixed canonical aliases took 23.057/24.204/22.718 ms without
+inference, after first requests of 4330.448/3555.003/8127.578 ms. The mixed input
+included image, audio and video. All five old/new journeys were byte-identical
+across the old 21-patch and new 28-patch CPU dependency closures. Malformed audio
+returned HTTP 400, followed by a valid canonical hit. Actual arguments, working
+directory, cache/persistence settings and every environment value were preserved
+except the new option. The CUDA service remained unchanged. These are deployed
+shared-host cache observations, not uncached throughput comparisons.
