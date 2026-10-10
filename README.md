@@ -266,6 +266,13 @@ Encoder build/allocation totaled about 0.35 ms. Profiling and llama.cpp info
 logging were enabled, so these are diagnostic serving measurements. This
 different CPU does not resolve or replace the Intel and earlier EPYC losses.
 
+The [full-modality VNNI qualification](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38005434026)
+at `1add5c4` ran on Intel Xeon Platinum 8573C with two inference threads.
+Text, image, audio, video and mixed requests at C1/C4 had exact native
+flag-on/off outputs and matching llama.cpp token counts. Minimum cosine
+against llama.cpp was 0.999399. This was validation only, with no throughput
+claim; the VNNI option remains default off.
+
 On the shared Xeon W-2135 host, alternating unique-key one-/two-second audio
 requests (four different tones, caches off, two CPU threads under WSL) measured
 386.5 -> 307.6 ms and 625.0 -> 517.2 ms median; a repeat measured
@@ -332,6 +339,32 @@ remained about 3.7 ms. All five modalities, changed samples and lengths,
 and usage. A persisted response survived deployment without inference.
 These shared-host observations establish an audio serving improvement,
 not a new llama.cpp comparison or a speedup for every audio length.
+
+`EI_PIXEL_REUSE2=1` retains CPU pixel staging for the Gemma 4 vision encoder.
+It defaults off and is enabled on the CUDA dev service. The retained buffer
+is capped at 16 MiB; larger inputs use the existing temporary allocation.
+Every call overwrites all pixels, including when dimensions or contents change.
+It also applies to video frames; other projector types keep their existing path.
+
+At `f413825`, alternating fresh-key requests against the same build with
+reuse off measured on the RTX 5060 Ti dev service:
+
+| Input | Reuse off, HTTP median | Deployed reuse on | Paired wins |
+|---|---:|---:|---:|
+| Image | 75.81 ms | 65.03 ms | 18/20 |
+| Text + image + audio | 82.20 ms | 75.78 ms | 16/20 |
+| Video | 223.50 ms | 227.06 ms | 9/20 |
+
+Both used six CPU threads and the existing CUDA options. Fresh keys avoided
+the primary's 64 MiB response cache; the comparison instance had caching
+disabled. Image and mixed medians improved by 14% and 8%; video did not improve.
+Separate encoder profiling reduced pixel allocation from about 4.5 ms to
+0.001 ms, with copy/upload still required. All five modalities, changing image
+sizes and contents, concurrent arrays and post-error requests kept exact
+outputs and usage. Native Windows flag-on/off image outputs were also exact.
+A pre-restart cached image restored byte-for-byte without inference. These
+shared-host observations are not quiet llama.cpp comparisons or a CPU speedup
+claim.
 
 Dependency debug output, including video-helper probe/frame messages, is
 filtered by default; `EI_DEBUG_LOG2=1` restores it. Warnings and request/startup
