@@ -3374,6 +3374,14 @@ to 0.992368 and 0.990991. It improved ISA agreement but worsened reference
 agreement. It is rejected as an accuracy fix; the next comparison starts
 with preprocessing and subsampling outputs.
 
+The exact 660 Hz FP32 SDPA encoder was then run with all 134 audio/projector
+Q8_0 matrices dequantized from the actual GGUF. Encoder cosine against the
+original FP32 weights was 0.999907. Against this matched-weight reference,
+native AVX2 cosine was 0.994953 and AVX-512 was 0.999057. Weight quantization
+alone does not explain the AVX2 failure. The next control adds the native
+Q8_0 activation quantizer at the clamped linear inputs, keeping attention
+in FP32. The deployed CPU service is unchanged.
+
 ## GB10 device compilation
 
 CUDA 13.0.88 compiled the pinned GGML CUDA source with the 16 patches from
