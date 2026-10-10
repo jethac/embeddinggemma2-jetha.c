@@ -3881,3 +3881,9 @@ changed arrays/layouts, nine-shape eviction/reentry, 520/596-token bypass,
 restored with zero inference and unchanged identities. Invalid configuration
 failed before listening. The option defaults to 256 and requires selected CUDA
 with both graph cache flags enabled.
+
+Deployed with a 512-token ceiling. The same changed image/mixed inputs,
+32 measured requests per setting, improved 65.943→54.370 ms and
+72.510→60.608 ms respectively; outputs stayed byte-identical. The README
+journey passed all five modalities on the replacement service. Original 1/5 s
+660 Hz audio passed all four dimensions, minimum cosine 0.9991466.
