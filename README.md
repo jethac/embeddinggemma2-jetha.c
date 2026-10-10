@@ -2,10 +2,8 @@
 
 Experimental EmbeddingGemma 2 server in C. Based on
 [QuixiAI/embeddinggemma.c](https://github.com/QuixiAI/embeddinggemma.c).
-This repository uses a separate name and release identity. See [GOAL.md](GOAL.md).
-
-Text, image, audio, video, and mixed inputs are implemented. Outputs have 128,
-256, 512, or 768 dimensions. The context limit is 8192 tokens.
+Supports text, image, audio, video, and mixed inputs. Outputs: 128, 256, 512,
+or 768 dimensions. Context: 8192 tokens. See [GOAL.md](GOAL.md) for scope.
 
 | Target | Verified execution |
 |---|---|
@@ -17,19 +15,14 @@ Text, image, audio, video, and mixed inputs are implemented. Outputs have 128,
 | ROCm, Intel XPU | Unverified |
 | GB10, Strix Halo GPU, Strix Halo NPU | Unverified; NPU support is absent |
 
-GGML can use CPU fallback. Metal results do not prove physical Apple Silicon
-performance or execution of all operations on the GPU. Complete reference
-coverage, cross-request media batching, and release validation remain unfinished.
-There are no binary releases. Build from source.
+GPU backends can use CPU fallback. Physical Apple GPU performance is unverified.
+Cross-request media batching is absent. No binary releases; build from source.
 
 ## Build and run
 
-Install CMake 3.24 or newer, a C/C++ compiler, Git, and Python 3.9 or newer.
-Install NASM on x86. Video and WebP require `ffmpeg` and `ffprobe` on `PATH`.
-CMake downloads pinned dependencies. The model downloader saves separate Q8_0
-weight files.
-
-For Linux or macOS CPU:
+Requires CMake >=3.24, a C/C++ compiler, Git, Python >=3.9, and NASM on x86.
+Video and WebP require `ffmpeg` and `ffprobe` on `PATH`.
+Linux or macOS CPU:
 
 ```sh
 git clone https://github.com/jethac/embeddinggemma2-jetha.c.git
@@ -61,22 +54,17 @@ The installation includes the MinGW runtime DLLs.
 | CUDA | `-DGGML_CUDA=ON` | `--backend cuda` | CUDA toolkit for builds; compatible NVIDIA driver |
 | Metal | `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON` | `--backend metal` | macOS with a Metal device |
 
-Use a separate build directory for each backend. Replace `-DGGML_METAL=OFF`
-when building Metal. CUDA development uses CUDA 13.0. In WSL, keep the weights
-on the Linux filesystem: use `--directory ~/embeddinggemma2-models` with the
-downloader and pass those paths to the server.
+Use separate build directories. Replace `-DGGML_METAL=OFF` for Metal.
+CUDA development uses CUDA 13.0. In WSL, download weights to the Linux filesystem
+with `--directory ~/embeddinggemma2-models` and use those paths.
 
-Keep the entire installation directory when you move it. Shared libraries,
-CPU plugins, and license notices are required. On x86-64, the default build
-checks CPU and OS support before selecting scalar, AVX, AVX2, or AVX-512 kernels.
-Do not disable `EI_CPU_DISPATCH` for portable builds.
+Move the entire installation directory. x86-64 builds select scalar, AVX, AVX2,
+or AVX-512 at runtime. Keep `EI_CPU_DISPATCH` enabled for portable builds.
 
 Omit `--mmproj` for text only. Use `--media-encoders vision` for image/video or
 `--media-encoders audio` for audio. The default loads both encoders.
 
 ## Send requests
-
-With the server running:
 
 ```sh
 python examples/embed.py --text "task: search result | query: what powers the cell"
@@ -87,23 +75,19 @@ python examples/embed.py --text "A description" --image picture.jpg --audio reco
 python examples/journey2.py
 ```
 
-Add `--url http://HOST:PORT` to select another server. The journey command sends
-synthetic inputs for all five input types. Add `--compare-url URL` to compare
-with another running service.
+Use `--url http://HOST:PORT` for another server. `journey2.py` sends all five
+input types; `--compare-url URL` compares outputs with another service.
 
-Text routes are `/api/embed` and `/v1/embeddings`. Media uses an object with
-ordered `content` parts, or an array of those objects. POST this JSON to either
-route; replace `BASE64_BYTES` with encoded file bytes:
+POST to `/api/embed` or `/v1/embeddings`. Media accepts ordered `content` parts
+or an array of input objects. Replace `BASE64_BYTES` with encoded file bytes:
 
 ```json
 {"input":{"content":[{"type":"text","text":"A red square"},{"type":"image","data":"BASE64_BYTES"}]},"dimensions":256}
 ```
 
-Part types are `text`, `image`, `audio`, and `video`. Media accepts base64 bytes
-or data URLs. Video accepts `fps`, which defaults to 1. The server normalizes
-vectors after truncation. `encoding_format` accepts `float` or `base64` float32
-bytes. Native responses contain `embeddings` and `usage`. OpenAI responses
-contain `data` and `usage`.
+Part types: `text`, `image`, `audio`, `video`. Media accepts base64 or data URLs.
+Video `fps` defaults to 1. Outputs are normalized after truncation.
+`encoding_format`: `float` or `base64` float32 bytes.
 
 | Limit | Value |
 |---|---|
@@ -115,34 +99,27 @@ contain `data` and `usage`.
 | Unique pending media requests | 64; 128 MiB of keys and bookkeeping |
 | External probe / decoder deadline | 10 / 30 seconds; not a whole-request deadline |
 
-Excess pending work returns HTTP 503. Identical media bodies on the same route
-share one inference. Unique media requests are not batched across requests.
-Short media arrays can use optional backbone batching. See
-[optimization options and measurements](perf/optimization_status.md#embeddinggemma-2-development-results).
+Queue overflow returns HTTP 503. Identical media requests share one inference.
+Short media arrays support [optional backbone batching](perf/optimization_status.md#embeddinggemma-2-development-results).
 
 ## Cache
 
-Add `--persistent-cache-path cache.bin` to save exact results on graceful
-shutdown. HTTP response persistence also requires a nonzero
-`--response-cache-mb` value; its default is 64. Stop with SIGTERM or Ctrl-C on
-Unix, or Ctrl-C/Ctrl-Break on Windows. Forced termination does not save data.
-
+`--persistent-cache-path cache.bin` saves results on graceful shutdown.
+HTTP persistence requires `--response-cache-mb >0` (default: 64).
 Cache files contain request bodies and media bytes. Reuse requires matching
-weights, backend, encoder selection, batch limits, and numeric options. Changed
-bodies and API routes have separate keys. Cache hits are not inference speedups.
+weights and inference settings. Forced termination does not save data.
 
 ## Performance versus llama.cpp
 
-The baseline is pinned to `de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b`.
-Comparisons use matching Q8_0 weights, GGML kernels, threads, inputs, token
-counts, and 768 dimensions. Result, response, and prompt caches are off.
-Each cell uses fresh servers, warmup, both engine orders, and cosine >=0.999.
-A ratio above 1 means this server was faster.
+Baseline: `de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b`.
+Matching Q8_0 weights, GGML kernels, threads, inputs, tokens, and 768 dimensions.
+Caches off. Fresh servers, warmup, both engine orders, cosine >=0.999.
+Ratio >1 means this server was faster.
 
 The [CPU text run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034)
-used EPYC 9V74, Ubuntu 24.04, GCC 13.3, and two inference threads.
-Other CPU load was 0.8-0.9%. The geometric mean was 1.003x: no measured CPU
-speed advantage. Minimum cosine was 0.999970.
+used EPYC 9V74, Ubuntu 24.04, GCC 13.3, and two threads.
+Other CPU load: 0.8-0.9%. Minimum cosine: 0.999970.
+Geometric mean: **1.003x; no measured speed advantage.**
 
 | Tokens | Clients | Ours embeddings/s | llama.cpp embeddings/s | Ratio | Ratio by order |
 | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -154,13 +131,9 @@ speed advantage. Minimum cosine was 0.999970.
 | 1024 | 4 | 0.41 | 0.41 | 0.994x | 0.991–0.998x |
 
 The [Metal run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38004147312)
-used Apple M1 (Virtual), three cores, 7 GB RAM, and an Apple Paravirtual GPU.
-Both engines used three threads. Minimum cosine was 0.999301. The geometric
-mean was 0.801x: one win and nine losses. Other CPU load was 0.58-149.32%;
-engine-order rates varied. This is a virtual GPU result.
-
-The [vision-clamp experiment](perf/optimization_status.md#metal-vision-clamp-experiment)
-lost 3.1% at one client and gained 2.9% at four; the option remains off by default.
+used Apple M1 (Virtual), three cores, 7 GB RAM, Apple Paravirtual GPU, and three
+threads. Minimum cosine: 0.999301. Other CPU load: 0.58-149.32%.
+Geometric mean: **0.801x; one win, nine losses.** Virtual GPU; order rates varied.
 
 | Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
 |---|---:|---:|---:|---:|
@@ -175,40 +148,30 @@ lost 3.1% at one client and gained 2.9% at four; the option remains off by defau
 | Mixed | 1 | 0.0980 | 0.1180 | 0.831× |
 | Mixed | 4 | 0.0959 | 0.1382 | 0.694× |
 
-Earlier WSL text results were 1.01x CPU and 1.16x CUDA geometric means. Their
-load guard missed Windows CPU contention, so those results are provisional.
-The corrected guard has rejected later CUDA timing attempts before measurement.
-No current quiet-host CUDA media throughput result is available.
+Earlier WSL text means (CPU 1.01x, CUDA 1.16x) are provisional: the load guard
+missed Windows contention. No quiet-host CUDA media result is available.
+CPU media runs had image parity and audio/video/mixed losses.
+See [all measurements, quality failures, and experiments](perf/optimization_status.md#embeddinggemma-2-development-results).
 
-CPU media runs had image parity and audio/video/mixed losses. One four-client
-audio cell failed the 0.999 quality gate and has no published rate. Optional
-VNNI audio results include wins on EPYC 9V45 and losses on Xeon 6973P-C.
-Profiling was enabled in the EPYC run. Do not combine results from different CPUs.
-[All completed cells, failures, and development latency measurements](perf/optimization_status.md#embeddinggemma-2-development-results)
-include the provisional WSL results and optimization comparisons.
-
-Reproduce CPU text or complete Metal media comparisons:
+Reproduce:
 
 ```sh
 gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_cpu=true
 gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_metal_media=true -f media_modalities=text,image,audio,video,mixed
 ```
 
-For local runs, use [the text harness](perf/compare_llamacpp2.py) or
-[the media harness](perf/compare_media_llamacpp2.py). Build `llama-server` from
-the pinned dependency with matching GGML options. Under WSL, Windows
-`python.exe` must be on `PATH` for host-load measurement. Leave phase profiling
-off when measuring throughput.
+Local runs: [text harness](perf/compare_llamacpp2.py),
+[media harness](perf/compare_media_llamacpp2.py). Build the pinned `llama-server`
+with matching GGML options. In WSL, put Windows `python.exe` on `PATH` for load
+measurement. Disable phase profiling for throughput measurements.
 
 ## License and releases
 
-[MIT](LICENSE). Preserve the QuixiAI copyright notice. Windows host changes
-come from [jethac/embeddinggemma.c](https://github.com/jethac/embeddinggemma.c).
-Model weights have their own license. Runtime packages include dependency notices.
+[MIT](LICENSE). Retains QuixiAI attribution. Windows host code:
+[jethac/embeddinggemma.c](https://github.com/jethac/embeddinggemma.c).
+Weights have a separate license. Packages include dependency notices.
 This software is based in part on the work of the Independent JPEG Group.
 
-[RELEASE.md](RELEASE.md) defines this repository's release matrix and staging.
-`install.sh` and `install.ps1` target future releases; use source installation now.
-The inherited Makefile and contributing guide describe the 300M implementation.
-[UPSTREAM_README.md](UPSTREAM_README.md) retains its documentation and results.
-Those results do not apply to EmbeddingGemma 2.
+[Release process](RELEASE.md). Install scripts target future binary releases.
+The inherited Makefile, contributing guide, and [upstream README](UPSTREAM_README.md)
+describe EmbeddingGemma 300M; their results do not apply here.
