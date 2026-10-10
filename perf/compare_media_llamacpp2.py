@@ -157,6 +157,8 @@ def main():
     p.add_argument('--threads', type=int, default=2)
     p.add_argument('--profile-phases', action='store_true',
                    help='Diagnose encoder/backbone costs from actual server logs')
+    p.add_argument('--vision-clip-metadata', action='store_true',
+                   help='Check and measure native vision metadata clamping on/off')
     p.add_argument('--concurrency', type=parse_csv_ints, default=[1, 4])
     p.add_argument('--modalities', default='image,audio,video,mixed')
     p.add_argument('--rounds', type=int, default=5)
@@ -177,11 +179,19 @@ def main():
     for path in (a.model, a.mmproj, a.embeddinggemma_bin, a.llama_server):
         if not path.is_file(): p.error(f'not found: {path}')
     vnni_probe = os.getenv('EI_CPU_Q8_PAIR_VNNI2') == '1'
+    if vnni_probe and a.vision_clip_metadata:
+        p.error('select one native on/off experiment at a time')
+    native_probe = vnni_probe or a.vision_clip_metadata
+    probe_name = 'VNNI paired rows' if vnni_probe else 'vision metadata clipping'
+    off_flags = (('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2') if vnni_probe
+                 else ('EI_VISION_CLIP_METADATA2',))
+    if a.vision_clip_metadata:
+        os.environ['EI_VISION_CLIP_METADATA2'] = '1'
     if vnni_probe:
         cpuinfo = Path('/proc/cpuinfo')
         if a.backend != 'cpu' or not cpuinfo.is_file() or 'avx512_vnni' not in cpuinfo.read_text().split():
             p.error('VNNI experiment requires a Linux AVX-512 VNNI CPU')
-    for port in ((a.port, a.port + 1, a.port + 2) if vnni_probe else (a.port, a.port + 1)):
+    for port in ((a.port, a.port + 1, a.port + 2) if native_probe else (a.port, a.port + 1)):
         check_available_port(port)
     os.environ['EI_THREADS'] = str(a.threads)
     if a.profile_phases:
@@ -253,6 +263,8 @@ def main():
                         if not any('libggml-cpu-' + name + '.so' in startup for name in
                                    ('cascadelake', 'cooperlake', 'icelake', 'sapphirerapids', 'zen4')):
                             raise RuntimeError('VNNI experiment did not load a VNNI CPU plugin')
+                    if a.vision_clip_metadata and 'Vision clipping: explicit metadata only' not in op.log_path.read_text(errors='replace'):
+                        raise RuntimeError('vision metadata experiment was not enabled')
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
@@ -266,19 +278,23 @@ def main():
                         diagnose_quality(kind, inputs[:concurrency], (ours, llama), quality)
                         raise RuntimeError(f'{kind} output mismatch: cosine {minimum:.8f}')
                     native_pair = None
-                    if vnni_probe:
+                    if native_probe:
                         off = Endpoint(ours.host, ours.port + 2, ours.path, ours.api)
                         command = ours_cmd.copy()
                         command[command.index('--port') + 1] = str(off.port)
                         with ManagedServer(command, off, '/healthz', root / 'native-off.log',
                                 env={k: v for k, v in os.environ.items()
-                                     if k not in ('EI_CPU_Q8_PAIR2', 'EI_CPU_Q8_PAIR_VNNI2')}) as off_process:
+                                     if k not in off_flags}) as off_process:
+                            if a.backend in ('metal', 'cuda'):
+                                off_log = off_process.log_path.read_text(errors='replace')
+                                if f'EmbeddingGemma 2: {device}' not in off_log or f'CLIP using {device}' not in off_log:
+                                    raise RuntimeError(f'native {a.backend} off comparison fell back to CPU')
                             with ThreadPoolExecutor(max_workers=concurrency) as pool:
                                 unchanged = list(pool.map(lambda pair: validate(off, pair[0]),
                                                           inputs[:concurrency]))
                             if unchanged != quality[0]:
-                                raise RuntimeError(f'{kind}: VNNI paired rows changed native outputs')
-                            print('VNNI paired rows: exact native on/off outputs', flush=True)
+                                raise RuntimeError(f'{kind}: {probe_name} changed native outputs')
+                            print(f'{probe_name}: exact native on/off outputs', flush=True)
                             if not a.validate_only:
                                 native_bodies = [json.dumps(pair[0], separators=(',', ':')).encode()
                                                  for pair in inputs[:concurrency]]

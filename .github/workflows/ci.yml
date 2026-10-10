@@ -26,6 +26,10 @@ on:
         description: Diagnose actual encoder/backbone costs during the media comparison
         type: boolean
         default: false
+      vision_clip_metadata:
+        description: Check and measure vision metadata clamping on/off on Metal
+        type: boolean
+        default: false
       media_modalities:
         description: Modalities for the matched media comparison
         type: string
@@ -338,6 +342,7 @@ jobs:
           MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
           MEDIA_VALIDATE_ONLY: ${{ inputs.media_validate_only && '1' || '0' }}
           MEDIA_PROFILE_PHASES: ${{ inputs.media_profile_phases && '1' || '0' }}
+          MEDIA_VISION_CLIP_METADATA: ${{ inputs.vision_clip_metadata && '1' || '0' }}
         run: |
           system_profiler SPHardwareDataType SPDisplaysDataType
           clang --version
@@ -347,6 +352,10 @@ jobs:
           args=()
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
+          if [ "$MEDIA_VISION_CLIP_METADATA" = 1 ]; then
+            python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --vision-clip-metadata --validate-only --modalities text,image,audio,video,mixed --concurrency 1
+            args+=(--vision-clip-metadata)
+          fi
           python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:

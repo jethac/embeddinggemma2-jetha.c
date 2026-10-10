@@ -736,8 +736,34 @@ Rates varied substantially between engine orders. Other CPU activity ranged
 from 0.58% to 149.32%; early text/audio passes were near the 150% gate, while
 later passes were generally quieter. These are virtualized Metal observations;
 physical Apple Silicon performance and the cost of CPU fallback remain
-unqualified. Encoder/backbone phase profiling is the next diagnostic for these
-losses. The later CUDA serving improvements are not included in this run.
+unqualified. The later CUDA serving improvements are not included in this run.
+
+The [encoder phase diagnostic](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38012325160)
+at `9a451e6` used another Apple M1 (Virtual) runner with three cores, 7 GB RAM
+and the Apple Paravirtual device. Both encoders had diagnostic timers enabled;
+native optimizations remained off. Matching weights, threads, tokens, dimensions,
+disabled caches and both engine orders were retained. All four cells passed
+the cosine gate; minimum cosine was 0.999374.
+
+| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|---:|
+| Image | 1 | 0.1157 | 0.1502 | 0.770× |
+| Image | 4 | 0.1336 | 0.1610 | 0.830× |
+| Audio | 1 | 1.6199 | 1.7857 | 0.907× |
+| Audio | 4 | 2.2997 | 2.8890 | 0.796× |
+
+Native image encoder compute medians were 9,121/6,556 ms for one/four clients,
+versus llama.cpp's 5,277/5,160 ms. Native encoder build, allocation and input
+setup together took under 4 ms. Audio encoder compute was 327/225 ms, with
+native backbone compute of 228/175 ms. Compute dominates this diagnostic;
+graph setup cannot explain the image losses. Other CPU activity ranged from
+0.92% to 145.36%, and engine-order rates varied substantially. These profiled,
+virtualized measurements do not establish physical Apple Silicon performance.
+
+The optional vision metadata experiment first checks all five modalities for
+exact native on/off outputs, then measures both native settings and llama.cpp
+on the same runner. It keeps the baseline's optimization flags unset:
+`gh workflow run ci.yml --repo jethac/embeddinggemma2-jetha.c -f benchmark_metal_media=true -f vision_clip_metadata=true -f media_modalities=image`.
 
 To try Metal on macOS, configure with `-DGGML_METAL=ON` and start with
 `--backend metal`. Unsupported BF16 accelerator weights are widened exactly to
