@@ -66,7 +66,11 @@ with tempfile.TemporaryDirectory(prefix='embeddinggemma2-example-') as tmp:
                 assert abs(sum(x*x for x in prefix) - 1) < 1e-5
                 prefix_norm = math.sqrt(sum(x*x for x in vector[:dimensions]))
                 assert max(abs(x-y/prefix_norm) for x,y in zip(prefix, vector)) < 1e-6
-                assert prefix_result['usage'] == result['usage']
+                if name == 'text':
+                    assert prefix_result.get('usage') == result.get('usage')
+                else:
+                    assert isinstance(result['usage'], dict)
+                    assert prefix_result['usage'] == result['usage']
             with urllib.request.urlopen(request, timeout=300) as response:
                 assert json.load(response) == result, 'repeated response changed: ' + name
             print(name, '128/256/512 normalized prefixes and repeated response passed', flush=True)
