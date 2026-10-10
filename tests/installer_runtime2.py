@@ -8,6 +8,7 @@ import tempfile
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--assets', type=Path, required=True)
+parser.add_argument('--variant', choices=['cpu', 'metal'], default='cpu')
 args = parser.parse_args()
 assets = args.assets.resolve()
 root = Path(__file__).resolve().parent.parent
@@ -36,7 +37,7 @@ if os.environ.get('PROBE_CORRUPT') and name.endswith('.runtime.tar.gz'):
                PROBE_ASSETS=str(assets), PROBE_CHECKSUMS=str(checksums))
     for name in ('LD_LIBRARY_PATH', 'GGML_BACKEND_PATH', 'DYLD_LIBRARY_PATH', 'DYLD_FALLBACK_LIBRARY_PATH'):
         env.pop(name, None)
-    command = ['sh', str(root / 'install.sh'), '--variant', 'cpu', '--install-dir', str(install)]
+    command = ['sh', str(root / 'install.sh'), '--variant', args.variant, '--install-dir', str(install)]
     subprocess.run(command, env=env, check=True, timeout=90)
     binary = install / 'embeddinggemma2-jetha'
     before = binary.readlink()

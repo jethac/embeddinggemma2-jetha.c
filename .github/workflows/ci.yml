@@ -311,7 +311,15 @@ jobs:
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 3
           cmake --install build-cmake --prefix "$PWD/build-installed"
           python3 tests/installed_service2.py --prefix build-installed
-          binary="$PWD/build-installed/bin/embeddinggemma2-jetha"
+          cmake --install build-cmake --prefix "$PWD/build-stage-metal"
+          python3 scripts/stage-release2.py --build build-cmake --prefix build-stage-metal --dist build-release-metal --target darwin-arm64 --backend metal
+          python3 tests/installer_runtime2.py --assets build-release-metal --variant metal
+          mkdir -p build-packaged-metal/bin
+          tar -xzf build-release-metal/embeddinggemma2-jetha-darwin-arm64-metal.runtime.tar.gz -C build-packaged-metal
+          cp build-release-metal/embeddinggemma2-jetha-darwin-arm64-metal build-packaged-metal/bin/embeddinggemma2-jetha
+          codesign --verify --verbose=2 build-packaged-metal/bin/embeddinggemma2-jetha
+          python3 tests/installed_service2.py --prefix build-packaged-metal
+          binary="$PWD/build-packaged-metal/bin/embeddinggemma2-jetha"
           "$binary" --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/cpu.stdout.log 2> build-cmake/cpu.stderr.log &
           cpu_pid=$!
           "$binary" --bind 127.0.0.1 --port 42668 --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/metal.stdout.log 2> build-cmake/metal.stderr.log &
@@ -357,16 +365,16 @@ jobs:
           system_profiler SPHardwareDataType SPDisplaysDataType
           clang --version
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then
-            python3 tests/media_benchmark_profile2.py --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server
+            python3 tests/media_benchmark_profile2.py --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server
           fi
           args=()
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           if [ "$MEDIA_VISION_CLIP_METADATA" = 1 ]; then
-            python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --vision-clip-metadata --validate-only --modalities text,image,audio,video,mixed --concurrency 1
+            python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --vision-clip-metadata --validate-only --modalities text,image,audio,video,mixed --concurrency 1
             args+=(--vision-clip-metadata)
           fi
-          python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
+          python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
     name: Legacy 300M CPU (${{ matrix.platform }})
