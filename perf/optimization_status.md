@@ -3897,3 +3897,39 @@ Image HTTP median rose 53.869→56.569 ms (3/32 wins); mixed rose
 changed image/mixed outputs also passed. The probe added 135 MiB weights,
 144 MiB GPU residency and 146–149 MiB private process commit. All measured
 outliers were retained. No source, kernel or deployment change was retained.
+
+
+### Windows video metadata companion deployed (2026-10-10)
+
+The existing optional libavformat helper was built against private shared
+FFmpeg 8.0.1 libraries. All built-in demuxers, parsers and decoders were kept;
+no system installation was changed. Metadata matched ffprobe for MP4/MPEG4,
+MP4/H264 and Matroska/FFV1 through the actual seekable stdin wrapper.
+
+Private OFF/ON/ON/OFF HTTP requests preserved all 140 vectors and token counts.
+The last OFF block had large host-load outliers, so it does not establish a
+precise gain. The deployed service then measured six warmed requests per input
+before and after adding only `EI_VIDEO_PROBE2`. Medians in milliseconds:
+
+| Input | ffprobe | Companion |
+| --- | ---: | ---: |
+| 96-square MP4 | 144.065 | 112.267 |
+| Changed 96-square MP4 | 141.932 | 108.962 |
+| 1080p MPEG4 MP4 | 231.682 | 204.434 |
+| FFV1 Matroska | 156.106 | 131.583 |
+| H264 MP4 | 240.521 | 198.548 |
+
+All 90 deployed responses kept identical vectors and token counts. All outliers
+were retained. The five-modality client journey passed after replacement.
+Actual arguments, remaining environment and inference DLL paths were preserved;
+the CPU service stayed unchanged. The helper remains optional and is not yet
+bundled in release assets. These busy-host observations are not quiet-host
+throughput comparisons against llama.cpp.
+
+### CUDA vision QKV packing rejected (2026-10-10)
+
+Concatenating the existing Q8 Q/K/V blocks used the existing packed vision path
+without changing weight bytes or metadata. Quality and token counts passed.
+Image HTTP median changed 55.761 to 55.468 ms, only 19/32 paired wins. Video
+gains reversed by order. A separate phase probe increased image encoder compute
+from 37.056 to 40.544 ms. No converter, model or deployment change was retained.

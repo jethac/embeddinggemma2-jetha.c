@@ -24,6 +24,9 @@ repository and remain subject to the model provider's terms.
 
 Install CMake >=3.24, a C/C++ compiler, Git, Python >=3.9, and NASM (x86).
 For video and WebP, add `ffmpeg` and `ffprobe` to `PATH`.
+With libavformat >=59 and libavutil >=57 installed, build the optional metadata
+helper with `-DEI_VIDEO_PROBE=ON`. Set `EI_VIDEO_PROBE2` to its absolute path.
+The helper replaces metadata probing; video decoding still uses `ffmpeg`.
 
 ```sh
 git clone https://github.com/jethac/embeddinggemma2-jetha.c.git
