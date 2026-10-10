@@ -401,6 +401,14 @@ jobs:
                           b, tb = request_vector('off', body, dimensions)
                           cosine = cosine_similarity(a, b)
                           assert ta == tb and cosine > .999, (kind, dimensions, ta, tb, cosine)
+                          if kind == 'audio':
+                              reference = goldens[(1, 330)]['embedding'][:dimensions]
+                              baseline_hf = cosine_similarity(b, reference)
+                              optimized_hf = cosine_similarity(a, reference)
+                              print(json.dumps({'ARM_audio_F16_HF_dimensions': dimensions,
+                                                'tokens': ta, 'baseline_cosine': baseline_hf,
+                                                'optimized_cosine': optimized_hf}), flush=True)
+                              assert baseline_hf > .999 and optimized_hf > .999, (dimensions, baseline_hf, optimized_hf)
                           print(json.dumps({'ARM_reduced_dimensions': kind, 'dimensions': dimensions,
                                             'tokens': ta, 'cosine': cosine}), flush=True)
                   # Match the actual tokenizer count; protect the full context boundary.
