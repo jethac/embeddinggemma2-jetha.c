@@ -240,7 +240,7 @@ jobs:
           swift -e 'import Metal; print("available=" + (MTLCreateSystemDefaultDevice() == nil ? "OFF" : "ON"))' >> "$GITHUB_OUTPUT"
       - name: Build the current model for native macOS CPU
         run: |
-          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=${{ steps.metal.outputs.available }} -DGGML_OPENMP=OFF
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 media-admission-check2 media-id-check2 jpeg-decode-check2 response-persistence-check2 decoder-stall2 decoder-deadline-check2 -j 3
           build-cmake/bin/media-admission-check2
           build-cmake/bin/media-id-check2
@@ -256,9 +256,15 @@ jobs:
         run: |
           command -v ffmpeg || brew install ffmpeg
           python3 scripts/download-model2.py
-          cmake --install build-cmake --prefix "$PWD/build-installed"
-          python3 tests/installed_service2.py --prefix build-installed
-          build-installed/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
+          cmake --install build-cmake --prefix "$PWD/build-installed-cpu"
+          python3 scripts/stage-release2.py --build build-cmake --prefix build-installed-cpu --dist build-release-assets --target darwin-arm64 --backend cpu
+          python3 tests/installer_runtime2.py --assets build-release-assets
+          mkdir -p build-packaged/bin
+          tar -xzf build-release-assets/embeddinggemma2-jetha-darwin-arm64-cpu.runtime.tar.gz -C build-packaged
+          cp build-release-assets/embeddinggemma2-jetha-darwin-arm64-cpu build-packaged/bin/embeddinggemma2-jetha
+          codesign --verify --verbose=2 build-packaged/bin/embeddinggemma2-jetha
+          python3 tests/installed_service2.py --prefix build-packaged
+          build-packaged/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
           service_pid=$!
           trap 'kill "$service_pid" 2>/dev/null || true' EXIT
           ready=0
@@ -301,6 +307,10 @@ jobs:
         env:
           EI_THREADS: '3'
         run: |
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DGGML_NATIVE=OFF -DGGML_METAL=ON -DGGML_OPENMP=OFF
+          cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 3
+          cmake --install build-cmake --prefix "$PWD/build-installed"
+          python3 tests/installed_service2.py --prefix build-installed
           binary="$PWD/build-installed/bin/embeddinggemma2-jetha"
           "$binary" --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/cpu.stdout.log 2> build-cmake/cpu.stderr.log &
           cpu_pid=$!
