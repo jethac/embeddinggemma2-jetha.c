@@ -1,7 +1,7 @@
 # Contributing
 
 This project serves EmbeddingGemma 2 on CPU and accelerator backends.
-See [GOAL.md](GOAL.md) for scope and [README.md](README.md) for build commands.
+See [GOAL.md](GOAL.md) for scope.
 The original 300M implementation is retained.
 
 ## Before Starting
@@ -22,10 +22,26 @@ repository and remain subject to the model provider's terms.
 
 ## Development Setup
 
-For EmbeddingGemma 2, use the downloader and CMake commands in `README.md`.
-Use a separate build directory for each backend.
+Install CMake >=3.24, a C/C++ compiler, Git, Python >=3.9, and NASM (x86).
+For video and WebP, add `ffmpeg` and `ffprobe` to `PATH`.
 
-| Platform | Changes to the README commands |
+```sh
+git clone https://github.com/jethac/embeddinggemma2-jetha.c.git
+cd embeddinggemma2-jetha.c
+python3 scripts/download-model2.py
+cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
+cmake --build build-cmake --target embeddinggemma2-jetha -j 6
+cmake --install build-cmake --prefix local-install
+local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
+  --backend cpu --model model/embeddinggemma-2-Q8_0.gguf \
+  --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+```
+
+For Windows/macOS CPU audio, set `EI_CPU_AUDIO_F16_2=1` (+270 MiB).
+For text only, omit `--mmproj`. Use a separate build directory for each backend.
+
+| Platform | Changes to the commands above |
 |---|---|
 | Windows | Use MSYS2 MinGW64, `python`, `-G Ninja`, and the `.exe` suffix. |
 | CUDA | Install the CUDA toolkit and driver. Add `-DGGML_CUDA=ON`. Start with `--backend cuda`. |
