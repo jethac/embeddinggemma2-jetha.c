@@ -523,7 +523,13 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
                 break;
             }
         }
-        if (device) s->backends[s->n_backends++] = ggml_backend_dev_init(device, NULL);
+        if (device) {
+            const char *priority = getenv("EI_CUDA_BACKBONE_PRIORITY2");
+            const char *params = priority && strcmp(priority, "1") == 0 &&
+                strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)), "CUDA") == 0
+                ? "stream_priority=high" : NULL;
+            s->backends[s->n_backends++] = ggml_backend_dev_init(device, params);
+        }
         else if (strcmp(requested, "auto")) ei_die("requested backend %s is unavailable", requested);
     }
     s->backends[s->n_backends++] = cpu;

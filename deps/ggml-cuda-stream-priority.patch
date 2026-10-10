@@ -1,0 +1,31 @@
+--- a/ggml/src/ggml-cuda/ggml-cuda.cu
++++ b/ggml/src/ggml-cuda/ggml-cuda.cu
+@@ -5260,9 +5260,26 @@
+ }
+ 
+ static ggml_backend_t ggml_backend_cuda_device_init_backend(ggml_backend_dev_t dev, const char * params) {
++    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
++    ggml_backend_t backend = ggml_backend_cuda_init(ctx->device);
++#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
++    // Callers may select launch-stream priority without changing graph nodes.
++    // Other init strings retain their existing ignored-parameter behavior.
++    if (backend && params && strcmp(params, "stream_priority=high") == 0) {
++        auto * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
++        ggml_cuda_set_device(ctx->device);
++        int least = 0, greatest = 0, actual = 0;
++        CUDA_CHECK(cudaDeviceGetStreamPriorityRange(&least, &greatest));
++        GGML_ASSERT(cuda_ctx->streams[ctx->device][0] == nullptr);
++        CUDA_CHECK(cudaStreamCreateWithPriority(&cuda_ctx->streams[ctx->device][0],
++                                               cudaStreamNonBlocking, greatest));
++        CUDA_CHECK(cudaStreamGetPriority(cuda_ctx->streams[ctx->device][0], &actual));
++        GGML_LOG_INFO("CUDA backbone stream priority: actual=%d range=%d..%d\n", actual, greatest, least);
++    }
++#else
+     GGML_UNUSED(params);
+-    ggml_backend_cuda_device_context * ctx = (ggml_backend_cuda_device_context *)dev->context;
+-    return ggml_backend_cuda_init(ctx->device);
++#endif
++    return backend;
+ }
+ 
+ static ggml_backend_buffer_type_t ggml_backend_cuda_device_get_buffer_type(ggml_backend_dev_t dev) {
