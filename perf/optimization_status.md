@@ -3224,3 +3224,28 @@ measured 12.520 to 11.324 ms but won only 14/32 pairs; neither engine rebuilt
 graphs. All 128 measured vectors were exact. The GB10 compiler was paused and
 CPU experiment processes were idle during timing. These are shared-host
 measurements. Windows kept its existing CPU service.
+
+## Linux ARM64 portable package
+
+[Native ARM run 38023961381](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38023961381)
+passed the staged installer and all five journeys on Neoverse-N2. Its Ubuntu
+24.04 payload required GLIBC 2.38 and GLIBCXX 3.4.32, exceeding the baseline.
+[Run 38024502805](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38024502805)
+rebuilt on the same native ARM hardware in Ubuntu 22.04. The final payload
+requires GLIBC 2.34 and GLIBCXX 3.4.29. Installation, relocation, all five
+finite normalized 768-dimensional outputs, and text reference cosine
+0.99996952 passed. This verifies the CPU package; it is not a performance gain
+or a GB10 CUDA result.
+
+## Rejected CUDA MMQ output tiling
+
+A private SM120 Q8 probe used exact output-tile blocks for the observed
+28/72-token backbone shapes. It removed 1,728 stream-K fixup kernels, but
+main MMQ time rose from 9.122 to 16.579 ms across eight requests. Total
+backbone GPU time rose from 24.666 to 26.166 ms; encoder time was unchanged.
+The reduced grid had 4–16 blocks versus the original 36-SM decomposition.
+
+Thirty-two warmed, cache-disabled HTTP pairs in both orders measured
+12.671/12.655 ms OFF/ON medians, 0.981x aggregate throughput, and 14 ON wins.
+Host contention remained; no small latency gain is supported. Minimum cosine
+was 0.999924. The probe was rejected and the dev service was unchanged.
