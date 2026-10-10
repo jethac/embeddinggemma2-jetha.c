@@ -9,11 +9,12 @@ import os
 from pathlib import Path
 import re
 import struct
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import wave
 
-from compare_llamacpp import Endpoint, ManagedServer, cosine_similarity
+from compare_llamacpp import Endpoint, ManagedServer, cosine_similarity, sample_host
 from compare_media_llamacpp2 import check_available_port, fixtures, measure_native_pair, validate
 
 
@@ -102,7 +103,20 @@ def main():
                 servers = [start(stack, name, kind) for name in endpoints]
                 ignored = {server.process.pid for server in servers}
                 bodies = [json.dumps(cases[kind][0][0]).encode()]
-                result = measure_native_pair(endpoints['on'], endpoints['off'], bodies, ignored, options)
+                try:
+                    result = measure_native_pair(endpoints['on'], endpoints['off'], bodies, ignored, options)
+                except RuntimeError as error:
+                    if 'host remained busy' in str(error):
+                        _, cpu, top = sample_host(ignored, float('inf'), float('inf'))
+                        print(json.dumps({'quiet_guard_failure': kind, 'ignored_server_pids': sorted(ignored),
+                                          'other_cpu_percent': cpu, 'top_other_process': top}), flush=True)
+                        for command in (['ps', '-p', ','.join(map(str, sorted(ignored))),
+                                         '-o', 'pid=,%cpu=,%mem=,comm='],
+                                        ['memory_pressure', '-Q'], ['sysctl', 'vm.swapusage']):
+                            snapshot = subprocess.run(command, capture_output=True, text=True, timeout=10)
+                            print(json.dumps({'diagnostic_command': command, 'status': snapshot.returncode,
+                                              'output': snapshot.stdout + snapshot.stderr}), flush=True)
+                    raise
                 print(json.dumps({'performance': kind, 'concurrency': 1, 'threads': 3,
                                   'cache_entries': 0, 'response_cache_mb': 0, **result}), flush=True)
 
