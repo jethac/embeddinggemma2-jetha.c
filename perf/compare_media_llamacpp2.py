@@ -333,14 +333,16 @@ def main():
                             parts = ({'type': 'audio', 'data': url},
                                      {'type': 'input_audio', 'input_audio': {'data': url, 'format': 'wav'}})
                             checked = []
+                            checked_quality = []
                             for name, endpoint, part in zip(('ours', 'llama'), (ours, llama), parts):
                                 vector, tokens = validate(endpoint, {'model': 'embeddinggemma-2',
                                     'input': {'content': [part]}, 'dimensions': 768, 'encoding_format': 'float'})
                                 cosine = cosine_similarity(vector, reference)
                                 print(json.dumps({'original_hf_audio': str(reference_path), 'engine': name,
                                                   'tokens': tokens, 'cosine': cosine}), flush=True)
-                                assert tokens == golden['tokens'] and cosine > .999
                                 checked.append(vector)
+                                checked_quality.append((name, tokens == golden['tokens'] and cosine > .999))
+                            assert all(ok for _, ok in checked_quality), checked_quality
                             assert cosine_similarity(*checked) > .999
                         references_checked = True
                     if a.backend in ('metal', 'cuda'):
