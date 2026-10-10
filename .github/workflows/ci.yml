@@ -341,6 +341,9 @@ jobs:
         run: |
           system_profiler SPHardwareDataType SPDisplaysDataType
           clang --version
+          if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then
+            python3 tests/media_benchmark_profile2.py --backend metal --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server
+          fi
           args=()
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi

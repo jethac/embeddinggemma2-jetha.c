@@ -202,6 +202,10 @@ def main():
     # Dependency encoder options are also EI_ flags. Keep the comparison
     # server on its default path rather than giving it native-only experiments.
     llama_env = {k: v for k, v in os.environ.items() if not k.startswith('EI_')}
+    if a.profile_phases:
+        # The patched encoder's diagnostic timer is shared by both engines.
+        # Keep optimization flags isolated even during a profiled comparison.
+        llama_env['EI_PROFILE_MEDIA2'] = '1'
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
     if a.profile_phases or a.backend in ('metal', 'cuda'):
