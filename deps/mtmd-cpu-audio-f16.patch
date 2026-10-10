@@ -1,0 +1,112 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -200,6 +200,7 @@
+ 
+     // for measuring memory usage
+     bool no_alloc = false;
++    bool cpu_only_requested = false;
+     std::map<ggml_backend_dev_t, size_t> mem_usage;
+     std::map<ggml_backend_dev_t, size_t> mem_compute;
+ 
+@@ -221,6 +222,7 @@
+         audio_eval_user_data = ctx_params.cb_eval_user_data;
+         flash_attn_type = ctx_params.flash_attn_type;
+         no_alloc = ctx_params.no_alloc;
++        cpu_only_requested = !ctx_params.use_gpu;
+         backend_cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+         if (!backend_cpu) {
+             throw std::runtime_error("failed to initialize CPU backend");
+@@ -2214,6 +2216,18 @@
+         auto & hparams = model.hparams;
+         std::map<std::string, size_t> tensor_offset;
+         std::vector<ggml_tensor *> tensors_to_load;
++        const bool cpu_audio_model = ctx_clip.cpu_only_requested &&
++            ggml_backend_dev_type(ggml_backend_get_device(ctx_clip.backend)) == GGML_BACKEND_DEVICE_TYPE_CPU &&
++            model.modality == CLIP_MODALITY_AUDIO && ctx_clip.proj_type() == PROJECTOR_TYPE_GEMMA4A;
++        const char * audio_f16_flag = cpu_audio_model ? getenv("EI_CPU_AUDIO_F16_2") : nullptr;
++        if (audio_f16_flag && strcmp(audio_f16_flag, "0") && strcmp(audio_f16_flag, "1")) {
++            throw std::runtime_error("EI_CPU_AUDIO_F16_2 must be 0 or 1");
++        }
++        const bool audio_f16 = audio_f16_flag && !strcmp(audio_f16_flag, "1");
++        size_t audio_f16_count = 0;
++        size_t audio_f16_source_bytes = 0;
++        size_t audio_f16_target_bytes = 0;
++
+ 
+         auto fin = open_ifstream_binary(fname);
+         if (!fin) {
+@@ -2255,7 +2269,20 @@
+             }
+             if (cur) {
+                 tensors_to_load.push_back(cur);
+-                ggml_tensor * data_tensor = ggml_dup_tensor(ctx_clip.ctx_data.get(), cur);
++                const bool convert_audio_f16 = audio_f16 && name.compare(0, 6, "a.blk.") == 0 &&
++                    cur->type == GGML_TYPE_Q8_0;
++                ggml_tensor * data_tensor;
++                if (convert_audio_f16) {
++                    if (ggml_n_dims(cur) != 2 || cur->ne[0] % 32 || !ggml_is_contiguous(cur)) {
++                        throw std::runtime_error("CPU audio F16 requires contiguous Q8_0 Conformer matrices");
++                    }
++                    data_tensor = ggml_new_tensor_2d(ctx_clip.ctx_data.get(), GGML_TYPE_F16, cur->ne[0], cur->ne[1]);
++                    ++audio_f16_count;
++                    audio_f16_source_bytes += ggml_nbytes(cur);
++                    audio_f16_target_bytes += ggml_nbytes(data_tensor);
++                } else {
++                    data_tensor = ggml_dup_tensor(ctx_clip.ctx_data.get(), cur);
++                }
+                 ggml_set_name(data_tensor, cur->name);
+                 loaded_tensor_names.insert(name);
+                 cur = data_tensor;
+@@ -3734,6 +3761,16 @@
+                 GGML_ASSERT(false && "unknown projector type");
+         }
+ 
++        if (audio_f16) {
++            if (hparams.n_layer != 12 || hparams.n_embd != 1024 || hparams.n_ff != 4096 ||
++                audio_f16_count != 132 || audio_f16_target_bytes != 576u * 1024u * 1024u) {
++                throw std::runtime_error("CPU audio F16 requires the 132 EmbeddingGemma 2 Conformer Q8_0 matrices");
++            }
++            LOG_INF("%s: CPU audio F16 active: %zu Conformer matrices, %.2f MiB Q8_0 -> %.2f MiB F16, no duplicate weights\n",
++                __func__, audio_f16_count, audio_f16_source_bytes / (1024.0 * 1024.0),
++                audio_f16_target_bytes / (1024.0 * 1024.0));
++        }
++
+         // load data
+         {
+             std::vector<uint8_t> read_buf;
+@@ -3767,7 +3804,24 @@
+                         throw std::runtime_error(string_format("%s: failed to seek for tensor %s\n", __func__, t->name));
+                     }
+                     size_t num_bytes = ggml_nbytes(cur);
+-                    if (ggml_backend_buft_is_host(buft)) {
++                    if (audio_f16 && t->type == GGML_TYPE_Q8_0 && cur->type == GGML_TYPE_F16) {
++                        // Read each original Q8_0 row at its GGUF offset; preserve all other tensors.
++                        const size_t source_row_bytes = ggml_row_size(t->type, t->ne[0]);
++                        const size_t target_row_bytes = ggml_row_size(cur->type, cur->ne[0]);
++                        std::vector<uint8_t> row_q8(source_row_bytes);
++                        std::vector<float> row_f32(t->ne[0]);
++                        std::vector<ggml_fp16_t> row_f16(t->ne[0]);
++                        const auto * traits = ggml_get_type_traits(GGML_TYPE_Q8_0);
++                        for (int64_t row = 0; row < t->ne[1]; ++row) {
++                            fin.read(reinterpret_cast<char *>(row_q8.data()), source_row_bytes);
++                            if (!fin) {
++                                throw std::runtime_error(string_format("CPU audio F16: truncated tensor %s", t->name));
++                            }
++                            traits->to_float(row_q8.data(), row_f32.data(), t->ne[0]);
++                            ggml_fp32_to_fp16_row(row_f32.data(), row_f16.data(), t->ne[0]);
++                            ggml_backend_tensor_set(cur, row_f16.data(), row * target_row_bytes, target_row_bytes);
++                        }
++                    } else if (ggml_backend_buft_is_host(buft)) {
+                         // for the CPU and Metal backend, we can read directly into the tensor
+                         fin.read(reinterpret_cast<char *>(cur->data), num_bytes);
+                     } else {
+@@ -3776,7 +3830,8 @@
+                         fin.read(reinterpret_cast<char *>(read_buf.data()), num_bytes);
+                         ggml_backend_tensor_set(cur, read_buf.data(), 0, num_bytes);
+                     }
+-                    data_loaded += num_bytes;
++                    data_loaded += audio_f16 && t->type == GGML_TYPE_Q8_0 && cur->type == GGML_TYPE_F16
++                        ? ggml_nbytes(t) : num_bytes;
+                     if (progress_callback && total_data_size > 0) {
+                         const float progress = (float)data_loaded / (float)total_data_size;
+                         if (!progress_callback(progress, progress_callback_user_data)) {

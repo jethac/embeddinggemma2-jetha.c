@@ -3445,3 +3445,89 @@ the baseline module with the optimized module present. Persisted caches
 separated baseline, half accumulation and FP32 accumulation; same-mode
 restart restored responses. The candidate remains unmerged pending
 reduced-dimension and full-context checks. Other ARM extensions remain open.
+
+## CUDA backbone stream priority
+
+`EI_CUDA_BACKBONE_PRIORITY2=1` requests the highest supported priority for
+the CUDA backbone's launch stream. Media streams are unchanged. Default
+is OFF. Fresh 20-patch source/build, all five inputs, concurrent arrays,
+error recovery, reduced dimensions and 8192/8193 limits were byte-exact.
+Old text and media caches restored with zero inference; identities were
+unchanged. The device reported priority -5, with range -5..0.
+
+A private 16-pair run measured concurrent text 5.099 -> 4.694 ms, with
+14 wins. The actual deployed repeat did not reproduce it: text measured
+4.866 -> 4.944 ms, with eight wins and paired median ratio 1.0003x.
+Audio measured 8.133 -> 8.296 ms; video 311.197 -> 325.041 ms, with two
+wins. Video regressed in both orders and every balanced four-pair block.
+All 128 vectors were byte-exact, with actual media inference misses.
+These are shared-host OFF/ON comparisons, not llama.cpp results.
+
+The dev option was disabled. The same build with priority OFF passed
+all deployed journeys and cache restoration again. Windows was unchanged.
+The public option remains experimental and default OFF. A node trace
+showed unchanged isolated text spans but unequal concurrent audio overlap;
+it cannot attribute the private HTTP difference to GPU scheduling.
+
+
+## CPU audio F16 activation accuracy option
+
+The exact 1-second 660 Hz PCM fixture failed the original FP32 reference
+on native Xeon W-2135: Q8 audio cosine was 0.997836 on AVX2 and 0.998584
+on AVX-512. Matched dequantized GGUF weights in the independent FP32
+reference retained encoder cosine 0.999907; adding the actual Q8 activation
+quantizer reduced it to 0.992746. Early convolution/layout and matched RMS
+and pointwise computations did not explain the drift. Selective tail-layer
+precision was insufficient after the native backbone.
+
+Default-OFF `EI_CPU_AUDIO_F16_2=1` replaces 132 Conformer Q8_0 matrices
+with F16 before CPU allocation, without retaining duplicate weights.
+Weights grow from 306 to 576 MiB (+270 MiB); convolution/norm weights and
+the two output projections retain their types. GPU/default-OFF paths are
+unchanged. Only an active loaded CPU audio encoder changes cache identity.
+
+Actual native AVX2 and AVX-512 passed all four 1-second 330/440/550/660 Hz
+fixtures against the original FP32 reference (minimum cosine 0.999322),
+128/256/512 dimensions (minimum 0.999347), changed 2-second 330 Hz and
+5-second 660 Hz clips (minimum 0.999304). All five modalities, mixed 8192,
+8193 rejection, deterministic output, and cache separation/restart passed.
+Same-ISA text/image/video were byte-exact. This does not qualify ARM.
+
+Same-build native AVX-512, six threads, Q8-pair/PAD enabled, cache disabled:
+20 fixture-balanced paired requests per duration measured 1-second audio
+142.321 -> 126.733 ms (19/20 wins; paired median 1.098x), and 2-second
+230.920 -> 194.206 ms (20/20 wins; 1.198x). Aggregate ratios were 1.104x
+and 1.194x. Both orders remained positive (1-second 1.074x/1.135x;
+2-second 1.203x/1.185x). P95 was 156.295 -> 142.279 ms and
+250.031 -> 210.401 ms; all samples were retained, including the 1-second
+ON maximum 169.379 ms versus OFF 158.397 ms. Comparable warmed private
+memory increased by 270.61 MiB (1-second) and 271.25 MiB (2-second).
+These are shared-host accuracy-fix cost measurements with foreign CPU load,
+not quiet-host or llama.cpp comparisons; the OFF baseline fails quality.
+A locally synthesized 4.055-second English speech clip also passed the
+original properly masked FP32 SDPA reference: cosine 0.999866 on AVX2 and
+0.999859 on AVX-512 (106 tokens).
+
+The Windows dev service now enables this option. Its final installed
+runtime passed all five modalities (text/image/video byte-exact), all four
+tone references and reduced dimensions, longer audio and speech. The old
+numeric cache domain was rejected; the new domain restored a byte-exact
+speech response after restart with zero inference.
+
+The actual deployed comparison against the preserved OFF runtime used
+matched six-thread settings and 64 MiB response caches, fresh request keys,
+and 20 fixture-balanced paired requests per duration. All 48 deployed
+requests, including warmup, were proven inference misses. One-second audio
+measured 149.216 -> 137.264 ms (18/20 wins, paired median 1.109x,
+aggregate 1.095x); two-second audio 256.997 -> 217.319 ms (16/20 wins,
+1.187x and 1.184x). Both-order aggregate ratios were 1.096x/1.093x and
+1.136x/1.237x. P95 improved 174.124 -> 153.534 ms and
+391.185 -> 358.742 ms; all samples remained, including two-second maxima
+568.628 -> 476.830 ms. This remains a shared-host accuracy-fix comparison
+against a known failing baseline, not a quiet-host or llama.cpp claim.
+
+
+`tests/audio_reference2.py --q8-activation-regression` reproduced the exact
+660 Hz quantization failure on the preserved OFF runtime (0.998584)
+and passed on the actual deployed ON service (0.999322), using the original
+FP32 SDPA model with its boolean-mask guard.

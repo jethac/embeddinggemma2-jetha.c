@@ -69,6 +69,7 @@ typedef struct {
     bool vision_clip_metadata;
     bool metal_media_flash_attn;
     bool audio_multishape_graph;
+    bool cpu_audio_f16;
     bool jpeg_turbo;
     bool arm_dotprod_fp16;
     bool arm_fp16_acc_f32;
@@ -111,6 +112,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->vision_clip_metadata ? "embeddinggemma2-vision-clip-metadata-v1" : NULL,
         s->metal_media_flash_attn ? "embeddinggemma2-metal-media-flash-attn-v1" : NULL,
+        s->cpu_audio_f16 ? "embeddinggemma2-cpu-audio-f16-v1" : NULL,
         s->audio_multishape_graph ? "embeddinggemma2-audio-multishape-graph-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
         s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
@@ -804,6 +806,11 @@ bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmpr
     media_params.warmup = false;
     media_params.load_vision = load_vision;
     media_params.load_audio = load_audio;
+    const bool cpu_audio = load_audio && !media_params.use_gpu &&
+        ggml_backend_dev_type(ggml_backend_get_device(s->backends[0])) == GGML_BACKEND_DEVICE_TYPE_CPU;
+    const char *cpu_audio_f16 = cpu_audio ? getenv("EI_CPU_AUDIO_F16_2") : NULL;
+    if (cpu_audio_f16 && strcmp(cpu_audio_f16, "0") && strcmp(cpu_audio_f16, "1"))
+        return fail(err, err_len, "EI_CPU_AUDIO_F16_2 must be 0 or 1");
     if (s->metal_media_flash_attn) media_params.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED;
     s->media = mtmd_init_from_file(mmproj_path, s->vocab_model, media_params);
     if (!s->media) return fail(err, err_len, "cannot initialize modality encoders");
@@ -813,6 +820,7 @@ bool ei_engine_load_media(ei_engine *e, const char *model_path, const char *mmpr
         s->media = NULL;
         return fail(err, err_len, "mmproj does not contain the requested encoders");
     }
+    s->cpu_audio_f16 = cpu_audio_f16 && strcmp(cpu_audio_f16, "1") == 0;
     fprintf(stderr, "media encoders: vision=%d audio=%d video=%d\n",
             mtmd_support_vision(s->media), mtmd_support_audio(s->media),
             mtmd_helper_support_video(s->media));
