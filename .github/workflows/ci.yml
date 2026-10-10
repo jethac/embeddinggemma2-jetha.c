@@ -64,6 +64,7 @@ permissions:
 
 jobs:
   gemma2-linux:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (Linux CPU)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
@@ -184,7 +185,11 @@ jobs:
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   gemma2-linux-arm64:
-    name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || 'EmbeddingGemma 2 service (Linux ARM64 CPU)' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio","image","video","mixed"]' || '["full"]') }}
+    name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || (github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && format('Matched ARM CPU vs llama ({0})', matrix.modalities) || 'EmbeddingGemma 2 service (Linux ARM64 CPU)') }}
     runs-on: ubuntu-24.04-arm
     container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
     timeout-minutes: ${{ inputs.benchmark_arm_media && 120 || inputs.arm_cuda_compile && 90 || 60 }}
@@ -577,13 +582,15 @@ jobs:
         env:
           EI_CPU_AUDIO_F16_2: '1'
           EI_ARM_FP16_ACC_F32: '1'
+          ARM_MEDIA_MODALITIES: ${{ matrix.modalities }}
         run: |
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
-          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities text,image,audio,video,mixed)
+          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$ARM_MEDIA_MODALITIES")
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
-          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 3 --target-seconds 8 --quiet-total-cpu-percent 10
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
     timeout-minutes: 45
@@ -649,6 +656,7 @@ jobs:
           python tests/openai_media_model2.py
           python tests/media_json2.py
   gemma2-macos:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.benchmark_metal_media && 90 || 30 }}
@@ -846,6 +854,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: Legacy 300M CPU (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
