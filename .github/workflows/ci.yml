@@ -243,7 +243,7 @@ jobs:
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
           PYTHONPATH="$PWD/perf" python3 - <<'PY'
-          import json, math, os, signal, subprocess, tempfile, time, urllib.error, urllib.request
+          import base64, io, json, math, os, signal, struct, subprocess, tempfile, time, urllib.error, urllib.request, wave
           from pathlib import Path
           from types import SimpleNamespace
           from compare_llamacpp import Endpoint, cosine_similarity
@@ -329,6 +329,23 @@ jobs:
                       cosine = cosine_similarity(a, b)
                       assert ta == tb and cosine > .999, (kind, ta, tb, cosine)
                       print(json.dumps({'quality': kind, 'tokens': ta, 'cosine': cosine}), flush=True)
+                  # Longer audio exercises remaining half P*V accumulation.
+                  # Keep the original failed 330 Hz/1 s fixture above unchanged.
+                  for seconds, frequency in ((2, 330), (5, 660)):
+                      audio = io.BytesIO()
+                      with wave.open(audio, 'wb') as wav:
+                          wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(16000)
+                          wav.writeframes(b''.join(struct.pack('<h', round(4000 * math.sin(
+                              2 * math.pi * frequency * sample / 16000)))
+                              for sample in range(seconds * 16000)))
+                      url = 'data:audio/wav;base64,' + base64.b64encode(audio.getvalue()).decode()
+                      body = dict(cases['audio'][0][0], input={'content': [{'type': 'audio', 'data': url}]})
+                      a, ta = validate(endpoints['on'], body)
+                      b, tb = validate(endpoints['off'], body)
+                      cosine = cosine_similarity(a, b)
+                      assert ta == tb and ta > 29 and cosine > .999, (seconds, frequency, ta, tb, cosine)
+                      print(json.dumps({'ARM_longer_audio_seconds': seconds, 'frequency_hz': frequency,
+                                        'tokens': ta, 'cosine': cosine}), flush=True)
                   options = SimpleNamespace(cooldown=2, quiet_total_cpu_percent=150,
                                             rounds=3, target_seconds=3)
                   for kind in ('text', 'audio', 'image'):
