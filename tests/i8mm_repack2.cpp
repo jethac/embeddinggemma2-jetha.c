@@ -9,6 +9,9 @@
 #include <cstring>
 #include <vector>
 #include <stdexcept>
+#include <dlfcn.h>
+#include <string>
+static void * cpu_module;
 static void require(bool v,const char *s) { if(!v) throw std::runtime_error(s); }
 struct Q8 { ggml_fp16_t d; int8_t q[32]; }; static_assert(sizeof(Q8)==34,"Q8 layout");
 static std::vector<float> run(ggml_backend_t backend,ggml_backend_buffer_type_t buft,
@@ -26,12 +29,23 @@ static std::vector<float> run(ggml_backend_t backend,ggml_backend_buffer_type_t 
  ggml_backend_tensor_set(storage,a.data(),0,a.size()*sizeof(float));
  require(ggml_backend_graph_compute(backend,g)==GGML_STATUS_SUCCESS,"compute");
  std::vector<float> v(n*rows);ggml_backend_tensor_get(out,v.data(),0,v.size()*sizeof(float));
+ if(rows==1 && wt->extra) {
+  using gemv_t=void(*)(int,float*,size_t,const void*,const void*,int,int);
+  auto quant_traits=(const ggml_type_traits_cpu *(*)(ggml_type))dlsym(cpu_module,"ggml_get_type_traits_cpu");require(quant_traits,"module quantizer");std::vector<Q8>q(k/32);quant_traits(GGML_TYPE_Q8_0)->from_float(a.data(),q.data(),k);
+  for(const char*name:{"ggml_gemv_q8_0_4x8_q8_0","ggml_gemv_q8_0_4x8_q8_0_generic"}){
+   auto fn=(gemv_t)dlsym(cpu_module,name);require(fn,"direct GEMV symbol");std::vector<float>direct(n);fn(k,direct.data(),n,wt->data,q.data(),1,n);
+   double err=0;for(int c=0;c<n;c++)err=std::max(err,double(std::abs(direct[c]-v[c])));
+   std::printf("DIRECT_GEMV name=%s graph_maxerr=%.9g first4=%.9g,%.9g,%.9g,%.9g graph4=%.9g,%.9g,%.9g,%.9g\n",name,err,direct[0],direct[1],direct[2],direct[3],v[0],v[1],v[2],v[3]);
+  }
+ }
+
  std::printf("route buffer=%s rows=%d k=%d n=%d nb1=%zu extra=%d\n",ggml_backend_buft_name(buft),rows,k,n,x->nb[1],wt->extra!=nullptr);
  ggml_backend_buffer_free(buf);ggml_backend_buffer_free(wb);ggml_free(ctx);return v;
 }
 int main(int argc,char**argv) {try {
  require(argc==2,"runtime directory required");ggml_backend_load_all_from_path(argv[1]);
  auto dev=ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_CPU);require(dev,"CPU device");
+ cpu_module=dlopen((std::string(argv[1])+"/libggml-cpu-armv8_dotprod_fp16_i8mm.so").c_str(),RTLD_NOW|RTLD_NOLOAD);require(cpu_module,"selected module handle");
  auto reg=ggml_backend_dev_backend_reg(dev);auto backend=ggml_backend_dev_init(dev,nullptr);require(backend,"backend");
  auto threads=(ggml_backend_set_n_threads_t)ggml_backend_reg_get_proc_address(reg,"ggml_backend_set_n_threads");require(threads,"threads");threads(backend,2);
  auto features=(ggml_backend_get_features_t)ggml_backend_reg_get_proc_address(reg,"ggml_backend_get_features");require(features,"features");bool i8mm=false;for(auto f=features(reg);f&&f->name;f++){std::printf("feature %s=%s\n",f->name,f->value);if(std::strcmp(f->name,"MATMUL_INT8")==0&&std::strcmp(f->value,"1")==0)i8mm=true;}require(i8mm,"actual I8MM selection");
@@ -40,8 +54,8 @@ int main(int argc,char**argv) {try {
  const int k=512,n=768;std::vector<float> weights(k*n);for(size_t i=0;i<weights.size();i++)weights[i]=std::sin(i*.031f)+.37f*std::cos(i*.007f);
  std::vector<Q8>w(k*n/32);require(ggml_quantize_chunk(GGML_TYPE_Q8_0,weights.data(),w.data(),0,n,k,nullptr)==w.size()*sizeof(Q8),"weights quantization");
  auto quant=ggml_get_type_traits(GGML_TYPE_Q8_0)->from_float_ref;require(quant,"activation quantizer");bool good=true;
- for(int rows:{1,29})for(int pad:{0,16}) {
-  int stride=k+pad;std::vector<float>a(stride*rows,-99);for(int r=0;r<rows;r++)for(int j=0;j<k;j++)a[r*stride+j]=std::sin((r*k+j)*.017f)+.21f*std::cos(j*.043f);
+ for(int nt:{1,2})for(int rows:{1,29})for(int pad:{0}) {
+  threads(backend,nt);std::printf("THREADS %d\n",nt);int stride=k+pad;std::vector<float>a(stride*rows,-99);for(int r=0;r<rows;r++)for(int j=0;j<k;j++)a[r*stride+j]=std::sin((r*k+j)*.017f)+.21f*std::cos(j*.043f);
   std::vector<Q8> aq(k*rows/32);for(int r=0;r<rows;r++)quant(a.data()+r*stride,aq.data()+r*k/32,k);
   auto mapped=run(backend,ggml_backend_dev_buffer_type(dev),w,a,k,n,rows,stride);auto repack=run(backend,packed,w,a,k,n,rows,stride);
   for(int r=0;r<rows;r++) {double maxerr=0,maperr=0,dot=0,xnorm=0,ynorm=0;
