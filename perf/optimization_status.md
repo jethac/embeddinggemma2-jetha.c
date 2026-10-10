@@ -3531,3 +3531,10 @@ against a known failing baseline, not a quiet-host or llama.cpp claim.
 660 Hz quantization failure on the preserved OFF runtime (0.998584)
 and passed on the actual deployed ON service (0.999322), using the original
 FP32 SDPA model with its boolean-mask guard.
+
+
+Current 21-patch source, scalar-only x64 CPU runtime: F16 audio passed
+1s660 (cosine 0.999292438, 29 tokens) and 5s660 (0.999289557, 129 tokens),
+with finite unit vectors and 132 F16 matrices (+270 MiB weights).
+A stale private pre-PAD module was rebuilt; this was no product-code fix
+and establishes accuracy only, with no scalar performance claim.
