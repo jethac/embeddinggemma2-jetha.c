@@ -329,7 +329,15 @@ jobs:
                       cosine = cosine_similarity(a, b)
                       assert ta == tb and cosine > .999, (kind, ta, tb, cosine)
                       print(json.dumps({'quality': kind, 'tokens': ta, 'cosine': cosine}), flush=True)
-                  # Longer audio exercises remaining half P*V accumulation.
+                  # Compare the observed 5s/660Hz failure with pinned HF FP32 SDPA.
+                  # Its audio mask is boolean; the existing ISA parity gate stays intact.
+                  golden = json.loads((repo / 'tests/fixtures/audio-5s660-hf-f32.json').read_text())
+                  assert golden['revision'] == '914f7f89142e33e77833254d9c9b90c3cef7303b'
+                  assert (golden['seconds'], golden['frequency_hz'], golden['sample_rate'], golden['amplitude']) == (5, 660, 16000, 4000)
+                  assert (golden['reference_dtype'], golden['attention'], golden['audio_mask']) == ('float32', 'sdpa', 'boolean')
+                  reference = golden['embedding']
+                  assert len(reference) == 768 and all(math.isfinite(x) for x in reference)
+                  assert abs(sum(x*x for x in reference) - 1) < .002
                   # Keep the original failed 330 Hz/1 s fixture above unchanged.
                   for seconds, frequency in ((2, 330), (5, 660)):
                       audio = io.BytesIO()
@@ -343,6 +351,12 @@ jobs:
                       a, ta = validate(endpoints['on'], body)
                       b, tb = validate(endpoints['off'], body)
                       cosine = cosine_similarity(a, b)
+                      if seconds == golden['seconds'] and frequency == golden['frequency_hz']:
+                          assert ta == tb == golden['tokens'], (ta, tb, golden['tokens'])
+                          print(json.dumps({'ARM_5s660_HF_reference': golden['revision'],
+                                            'tokens': ta, 'baseline_cosine': cosine_similarity(b, reference),
+                                            'optimized_cosine': cosine_similarity(a, reference),
+                                            'ISA_cosine': cosine}), flush=True)
                       assert ta == tb and ta > 29 and cosine > .999, (seconds, frequency, ta, tb, cosine)
                       print(json.dumps({'ARM_longer_audio_seconds': seconds, 'frequency_hz': frequency,
                                         'tokens': ta, 'cosine': cosine}), flush=True)
