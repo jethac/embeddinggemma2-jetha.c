@@ -70,6 +70,7 @@ typedef struct {
     bool metal_media_flash_attn;
     bool audio_multishape_graph;
     bool jpeg_turbo;
+    bool arm_dotprod_fp16;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -99,6 +100,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // Numeric variants can change accumulation order. Keep persisted text
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
+        s->arm_dotprod_fp16 ? "embeddinggemma2-arm-dotprod-fp16-v1" : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
@@ -525,6 +527,21 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     }
     s->backends[s->n_backends++] = cpu;
     ggml_backend_reg_t cpu_reg = ggml_backend_dev_backend_reg(ggml_backend_get_device(cpu));
+#ifdef EI_ARM_PORTABLE_DISPATCH2
+    // Selected kernel features, rather than host capabilities, define arithmetic.
+    ggml_backend_get_features_t get_features = (ggml_backend_get_features_t)
+        ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_get_features");
+    if (!get_features) ei_die("ARM dispatch backend has no feature inventory");
+    bool dotprod = false, fp16 = false;
+    for (struct ggml_backend_feature *f = get_features(cpu_reg); f && f->name; f++) {
+        if (strcmp(f->name, "DOTPROD") == 0) dotprod = strcmp(f->value, "1") == 0;
+        if (strcmp(f->name, "FP16_VA") == 0) fp16 = strcmp(f->value, "1") == 0;
+    }
+    if (dotprod != fp16) ei_die("unexpected partial ARM numeric variant");
+    s->arm_dotprod_fp16 = dotprod && fp16;
+    fprintf(stderr, "ARM CPU numeric variant: %s\n",
+            s->arm_dotprod_fp16 ? "dotprod-fp16-v1" : "armv8-baseline");
+#endif
     ggml_backend_set_n_threads_t set_threads = (ggml_backend_set_n_threads_t)
         ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_set_n_threads");
     if (!set_threads) ei_die("CPU backend cannot configure threads");
