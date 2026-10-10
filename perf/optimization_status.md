@@ -3294,12 +3294,14 @@ projections on SM120 when the existing output grid has fewer tiles than SMs.
 Stream-K remains enabled. The default is OFF. Persisted text and media
 caches use a separate numeric identity.
 
-On RTX 5060 Ti, 32 warmed HTTP pairs in both orders used eight backbone
+On RTX 5060 Ti, an initial 32 warmed HTTP pairs used eight backbone
 cache slots, two audio slots, and no input or response caches. Adjacent raw
 lengths were 25, 27, 29, 31, 69, 71, 73, and 75 tokens. OFF/ON medians were
 14.538/13.961 ms; median paired ratio was 1.046x, with 26/32 ON wins.
 The 1.268x aggregate ratio includes large host outliers and is not a stable
 speed estimate. No graph rebuilt during measurement.
+Order alternated by request, so each fixture kept one engine order.
+This bias prevents using the initial run to qualify an HTTP speedup.
 
 An eight-request device trace measured backbone kernel sums of
 24.666/22.705 ms and encoder sums of 24.685/24.402 ms. Long-audio backbone
@@ -3312,6 +3314,14 @@ and 8192/8193-token limits passed. Minimum changed-input cosine was 0.999589.
 Reduced-dimension text and audio cosine remained above 0.999. OFF matched
 the dev service byte for byte. Actual persisted caches restored with the
 same flag and rejected the other numeric identity.
+
+The CUDA dev service now uses this option. All five input types and ten
+adjacent shapes passed; mixed 8192/8193-token limits, reduced dimensions,
+and fresh cache fill/hit passed. The first deployed 32-pair comparison had
+the same order bias: OFF/ON medians 13.849/13.282 ms, 18/32 ON wins, and
+1.003x aggregate ratio. All 32 deployed requests logged inference misses.
+These timings do not qualify a speedup. A corrected per-fixture comparison
+is required before the dev option is retained for performance.
 
 ## Native CPU ISA comparison
 
@@ -3328,6 +3338,11 @@ Stock media fixtures passed, but a changed one-second 660 Hz clip produced
 AVX2/AVX-512 cosine 0.997071. The unchanged 0.999 gate stopped audio timing.
 This comparison does not identify which route differs from the reference.
 The deployed AVX-512 service was unchanged.
+For that exact clip, cached FP32 SDPA reference cosine was 0.997836 for
+AVX2 and 0.998584 for AVX-512. Both routes differ from the reference.
+Actual encoder outputs already differed: cosine 0.995546 across 25×512
+values. The divergence starts before the backbone; its kernel cause is
+not yet established. No change was attributed to PAD copies or Q8 pairing.
 
 ## Rejected native ARM FP16 path
 
