@@ -138,6 +138,15 @@ def phase_costs(path, offset, require_encoder=True):
     return result
 
 
+def check_available_port(port):
+    with socket.socket() as check:
+        # Match the Unix servers: closed keep-alive connections may still be
+        # in TIME_WAIT. A live listener must continue to reject this bind.
+        if os.name != 'nt':
+            check.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        check.bind(('127.0.0.1', port))
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--model', type=Path, required=True)
@@ -173,7 +182,7 @@ def main():
         if a.backend != 'cpu' or not cpuinfo.is_file() or 'avx512_vnni' not in cpuinfo.read_text().split():
             p.error('VNNI experiment requires a Linux AVX-512 VNNI CPU')
     for port in ((a.port, a.port + 1, a.port + 2) if vnni_probe else (a.port, a.port + 1)):
-        with socket.socket() as check: check.bind(('127.0.0.1', port))
+        check_available_port(port)
     os.environ['EI_THREADS'] = str(a.threads)
     if a.profile_phases:
         os.environ['EI_PROFILE_MEDIA2'] = '1'
