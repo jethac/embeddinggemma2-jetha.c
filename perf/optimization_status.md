@@ -2920,7 +2920,7 @@ required. Keep phase profiling off for throughput measurements.
 | `EI_VISION_CLIP_METADATA2=1` | Omit vision clamps only if all four bound tensors are absent; audio unchanged |
 | `EI_METAL_MEDIA_FLASH_ATTN2=1` | Force encoder flash attention on Metal; unsupported operations can use CPU |
 | `EI_GRAPH_CACHE2=1` | CUDA text graph cache, at most 256 aggregate tokens |
-| `EI_GRAPH_CACHE_SLOTS2=2..4` | Default two shapes; hard limit four |
+| `EI_GRAPH_CACHE_SLOTS2=2..8` | Default two shapes; hard limit eight |
 | `EI_RAW_GRAPH_CACHE2=1` | Share graph slots with raw inputs up to 256 aggregate tokens |
 | `EI_TEXT_BUCKETS2=1` | Singleton CUDA text buckets 32/64/128/256; exclude padding from attention/pooling |
 | `EI_TEXT_BATCH_BUCKETS2=1` | Plain text batches up to 256 aggregate tokens; isolated sequence masks/pooling |
@@ -3180,3 +3180,34 @@ won (0.183023 versus 0.149453 emb/s); the reverse narrowly lost (0.200076 versus
 0.200952). The geometric mean of the two averaged image ratios was 1.139x.
 These results do not measure physical Apple hardware or all-GPU attention.
 Keep AUTO as the default until native hardware measurements support a change.
+
+## Eight CUDA backbone cache slots
+
+Xeon W-2135 / RTX 5060 Ti under WSL, six threads. Response caches and
+profiling were off. Audio used two encoder slots. Fresh HTTP keys, warmed
+shapes, persistent connections, and both engine orders compared four and
+eight backbone slots in the same executable.
+
+| Raw token shapes | Pairs | Four slots, median ms | Eight slots, median ms | Eight-slot wins |
+|---|---:|---:|---:|---:|
+| 28, 72 | 32 | 12.808 | 13.003 | 15 |
+| 25, 69, 27, 71, 29, 73, 31, 75 | 32 | 28.464 | 10.373 | 32 |
+
+All 128 measured vectors were byte-identical to the dev service. All five
+input types also matched. Four slots rebuilt 32 varied-shape graphs; eight
+rebuilt none. Repeated shapes rebuilt none in either configuration. These
+shared-host results support retaining eight exact shapes for this workload;
+they are not a llama.cpp comparison.
+
+A private near-limit probe retained eight singleton raw shapes of 249–256
+tokens. Scheduler buffers totaled 215,121,920 bytes; static inputs used
+2,084,864 bytes, graph metadata 13,380,352 bytes, and static metadata 11,776
+bytes. GPU free memory fell from 10,235 to 8,974 MiB. These figures exclude
+opaque CUDA executable storage and internal scheduler bookkeeping.
+The default remains two slots. Eligibility remains at most 256 tokens.
+
+Twelve-shape eviction and reentry, changed same-shape data, unequal arrays,
+and 258-token fallback matched the four-slot service byte for byte. Reduced
+dimensions matched normalized prefixes within 2.49e-8. Mixed 8192-token
+outputs were exact; both routes rejected 8193 tokens before backbone execution.
+Four- and eight-slot executables reused the same persisted result identity.

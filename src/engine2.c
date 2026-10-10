@@ -20,7 +20,7 @@
 #define FF 2048
 #define LAYERS 24
 #define GRAPH_NODES 4096
-#define MAX_GRAPH_CACHE2 4
+#define MAX_GRAPH_CACHE2 8
 
 static void dependency_log(enum ggml_log_level level, const char *text, void *debug) {
     // Tensor inventories and graph-reuse messages can make synchronous log
