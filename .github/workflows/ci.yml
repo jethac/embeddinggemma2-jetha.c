@@ -72,7 +72,7 @@ permissions:
 
 jobs:
   gemma2-linux:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (Linux CPU)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
@@ -603,7 +603,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
     timeout-minutes: 45
@@ -669,7 +669,7 @@ jobs:
           python tests/openai_media_model2.py
           python tests/media_json2.py
   gemma2-macos:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.benchmark_metal_media && 90 || 30 }}
@@ -867,7 +867,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: Legacy 300M CPU (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
