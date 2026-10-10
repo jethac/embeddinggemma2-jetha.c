@@ -529,6 +529,13 @@ Matryoshka methodology are in `perf/perf.md`. Every run writes structured data
 under `perf/results/`; append only durable decisions and representative numbers
 to `perf/optimization_status.md`.
 
+The public comparison scripts sample native Windows CPU use through Windows
+APIs over one second; no Unix `ps` or extra Python package is required.
+CPU load uses aggregate units: 100% means one busy logical core. Ignored server
+PIDs subtract their measured CPU time; inaccessible foreign processes still
+count in total load. The standalone Windows regression is
+`python tests/benchmark_windows_host2.py`.
+
 ## Style
 
 - Keep portable code at C11. Backend translation units may use Objective-C,

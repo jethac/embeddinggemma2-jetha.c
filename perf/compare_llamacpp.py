@@ -56,9 +56,150 @@ def run_output(command: list[str], cwd: Path | None = None) -> str:
     ).strip()
 
 
+def _windows_host_snapshot() -> tuple[float, list[tuple[int, float, float, str]]]:
+    """One actual interval, in aggregate CPU percent (100 = one busy core).
+
+    GetSystemTimes includes idle in kernel time. Use its global active delta,
+    so processes denied query access or created during sampling still count.
+    https://learn.microsoft.com/windows/win32/api/processthreadsapi/nf-processthreadsapi-getsystemtimes
+    """
+    import ctypes
+    from ctypes import wintypes as w
+
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    psapi = ctypes.WinDLL('psapi', use_last_error=True)
+    kernel.GetActiveProcessorCount.argtypes = [w.WORD]
+    kernel.GetActiveProcessorCount.restype = w.DWORD
+    if kernel.GetActiveProcessorCount(0xffff) > 64:
+        raise RuntimeError('Windows CPU sampler cannot cover multiple processor groups')
+    kernel.GetSystemTimes.argtypes = [ctypes.POINTER(w.FILETIME)] * 3
+    kernel.GetSystemTimes.restype = w.BOOL
+    kernel.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
+    kernel.OpenProcess.restype = w.HANDLE
+    kernel.CloseHandle.argtypes = [w.HANDLE]
+    kernel.CloseHandle.restype = w.BOOL
+    kernel.GetProcessTimes.argtypes = [w.HANDLE] + [ctypes.POINTER(w.FILETIME)] * 4
+    kernel.GetProcessTimes.restype = w.BOOL
+    kernel.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)]
+    kernel.QueryFullProcessImageNameW.restype = w.BOOL
+    psapi.EnumProcesses.argtypes = [ctypes.POINTER(w.DWORD), w.DWORD, ctypes.POINTER(w.DWORD)]
+    psapi.EnumProcesses.restype = w.BOOL
+
+    class MemoryStatus(ctypes.Structure):
+        _fields_ = [('length', w.DWORD), ('load', w.DWORD)] + [
+            (name, ctypes.c_ulonglong) for name in (
+                'total_phys', 'avail_phys', 'total_page', 'avail_page',
+                'total_virtual', 'avail_virtual', 'avail_extended')]
+
+    class ProcessMemory(ctypes.Structure):
+        _fields_ = [('cb', w.DWORD), ('faults', w.DWORD)] + [
+            (name, ctypes.c_size_t) for name in (
+                'peak_working_set', 'working_set', 'peak_paged', 'paged',
+                'peak_nonpaged', 'nonpaged', 'pagefile', 'peak_pagefile')]
+
+    kernel.GlobalMemoryStatusEx.argtypes = [ctypes.POINTER(MemoryStatus)]
+    kernel.GlobalMemoryStatusEx.restype = w.BOOL
+    psapi.GetProcessMemoryInfo.argtypes = [w.HANDLE, ctypes.POINTER(ProcessMemory), w.DWORD]
+    psapi.GetProcessMemoryInfo.restype = w.BOOL
+    memory = MemoryStatus()
+    memory.length = ctypes.sizeof(memory)
+    if not kernel.GlobalMemoryStatusEx(ctypes.byref(memory)) or not memory.total_phys:
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    def ticks(value):
+        return value.dwLowDateTime | (value.dwHighDateTime << 32)
+
+    def system_times():
+        values = [w.FILETIME() for _ in range(3)]
+        if not kernel.GetSystemTimes(*(ctypes.byref(v) for v in values)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return [ticks(v) for v in values]
+
+    def process_time(handle):
+        values = [w.FILETIME() for _ in range(4)]
+        if not kernel.GetProcessTimes(handle, *(ctypes.byref(v) for v in values)):
+            return None
+        return ticks(values[2]) + ticks(values[3])
+
+    size = 1024
+    while True:
+        pids = (w.DWORD * size)()
+        needed = w.DWORD()
+        if not psapi.EnumProcesses(pids, ctypes.sizeof(pids), ctypes.byref(needed)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        if needed.value < ctypes.sizeof(pids):
+            break
+        size *= 2
+
+    handles = []
+    entries = []
+    try:
+        # Query handles survive exit/PID reuse. Process intervals are contained
+        # in the global interval, so ignored CPU is conservatively subtracted.
+        before = system_times()
+        started = time.perf_counter()
+        for pid in pids[:needed.value // ctypes.sizeof(w.DWORD)]:
+            handle = kernel.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not handle:
+                continue
+            handles.append((pid, handle, process_time(handle)))
+        time.sleep(1)
+        for pid, handle, initial in handles:
+            final = process_time(handle)
+            if initial is None or final is None or final < initial:
+                continue
+            counters = ProcessMemory()
+            counters.cb = ctypes.sizeof(counters)
+            memory_percent = (100.0 * counters.working_set / memory.total_phys
+                if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb) else 0.0)
+            name = ctypes.create_unicode_buffer(32768)
+            length = w.DWORD(len(name))
+            basename = (os.path.basename(name.value)
+                if kernel.QueryFullProcessImageNameW(handle, 0, name, ctypes.byref(length)) else 'unknown')
+            entries.append((pid, final - initial, memory_percent, basename))
+        after = system_times()
+        elapsed = time.perf_counter() - started
+        idle, kernel_ticks, user = [end - start for start, end in zip(before, after)]
+        active = kernel_ticks + user - idle
+        if (not math.isfinite(elapsed) or elapsed <= 0 or
+                min(idle, kernel_ticks, user, active) < 0 or kernel_ticks + user <= 0):
+            raise RuntimeError('invalid Windows CPU sampling interval')
+        scale = 100.0 / (10_000_000.0 * elapsed)
+        total_cpu = active * scale
+        if not math.isfinite(total_cpu):
+            raise RuntimeError('invalid Windows CPU sample')
+        return total_cpu, [(pid, cpu * scale, mem, name) for pid, cpu, mem, name in entries]
+    finally:
+        for _, handle, _ in handles:
+            kernel.CloseHandle(handle)
+
+
+def _windows_host_summary(snapshot, ignore_pids, cpu_threshold, memory_threshold):
+    total_cpu, entries = snapshot
+    violations = []
+    top_cpu = 0.0
+    top_line = ''
+    for pid, cpu, memory, name in entries:
+        if pid in ignore_pids:
+            total_cpu -= cpu
+            continue
+        if cpu > top_cpu:
+            top_cpu = cpu
+            top_line = f'pid {pid}: {cpu:.1f}% CPU, {name}'
+        if cpu >= cpu_threshold or memory >= memory_threshold:
+            violations.append(f'pid {pid}: {cpu:.1f}% CPU, {memory:.1f}% memory, {name}')
+    return violations, max(0.0, total_cpu), top_line
+
+
 def sample_host(ignore_pids: set[int], cpu_threshold: float,
                 memory_threshold: float) -> tuple[list[str], float, str]:
-    """One ps snapshot: (per-process violations, aggregate CPU %, top line)."""
+    """Windows interval or Unix ps snapshot: (violations, aggregate CPU %, top).
+
+    CPU percent is summed across cores: 100 means one fully busy logical core.
+    """
+    if os.name == 'nt':
+        return _windows_host_summary(_windows_host_snapshot(), ignore_pids,
+                                     cpu_threshold, memory_threshold)
     output = run_output(["ps", "-axo", "pid=,%cpu=,%mem=,command="])
     violations: list[str] = []
     total_cpu = 0.0
