@@ -166,6 +166,63 @@ jobs:
           if [ "$MEDIA_VALIDATE_ONLY" = 1 ]; then args+=(--validate-only); fi
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
+  gemma2-linux-arm64:
+    name: EmbeddingGemma 2 service (Linux ARM64 CPU)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build the portable ARM64 CPU service
+        run: |
+          uname -m
+          test "$(uname -m)" = aarch64
+          lscpu
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
+      - name: Stage and install the ARM64 CPU application
+        run: |
+          cmake --install build-cmake --prefix "$PWD/build-stage"
+          python3 scripts/stage-release2.py --build build-cmake --prefix build-stage --dist build-release-assets --target linux-arm64 --backend cpu
+          python3 tests/installer_runtime2.py --assets build-release-assets
+          mkdir -p build-packaged/bin
+          tar -xzf build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu.runtime.tar.gz -C build-packaged
+          cp build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu build-packaged/bin/embeddinggemma2-jetha
+          python3 tests/installed_service2.py --prefix build-packaged
+          readelf --version-info build-packaged/bin/embeddinggemma2-jetha | grep -oE 'GLIBC(XX)?_[0-9.]+' | sort -Vu
+      - name: Run all five modalities from the packaged ARM64 application
+        env:
+          EI_THREADS: '2'
+        run: |
+          python3 scripts/download-model2.py
+          unset LD_LIBRARY_PATH GGML_BACKEND_PATH
+          build-packaged/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 0 > build-cmake/dev.stdout.log 2> build-cmake/dev.stderr.log &
+          service_pid=$!
+          trap 'kill "$service_pid" 2>/dev/null || true' EXIT
+          ready=0
+          for attempt in $(seq 1 120); do
+            if curl -fsS http://127.0.0.1:42667/healthz; then ready=1; break; fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then cat build-cmake/dev.stderr.log; exit 1; fi
+          python3 examples/journey2.py
+          python3 - <<'PY'
+          import json, math, subprocess, urllib.request
+          text = 'task: search result | query: what powers the cell'
+          reference = json.loads(subprocess.check_output(['build-cmake/bin/reference2',
+              'model/embeddinggemma-2-Q8_0.gguf', text]))
+          request = urllib.request.Request('http://127.0.0.1:42667/api/embed',
+              json.dumps({'input': text}).encode(), headers={'Content-Type': 'application/json'})
+          with urllib.request.urlopen(request, timeout=180) as response:
+              actual = json.load(response)['embeddings'][0]
+          assert len(reference) == len(actual) == 768
+          cosine = sum(x*y for x,y in zip(reference, actual)) / math.sqrt(
+              sum(x*x for x in reference) * sum(x*x for x in actual))
+          print(f'Linux ARM64 text versus pinned native Q8 reference cosine: {cosine:.8f}')
+          assert cosine > 0.999, 'packaged ARM64 text differs from the pinned reference'
+          PY
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
