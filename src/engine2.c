@@ -46,6 +46,7 @@ typedef struct {
 typedef struct {
     struct ggml_context *weights;
     ggml_backend_buffer_t weight_buffer;
+    ggml_backend_buffer_t cpu_projection_buffer;
     ggml_backend_buffer_t *cpu_repack_buffers;
     size_t cpu_repack_count;
     struct ggml_context *qkv_ctx;
@@ -104,6 +105,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // Numeric variants can change accumulation order. Keep persisted text
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
+        s->cpu_projection_buffer ? "embeddinggemma2-cpu-projection-f32-v1" : NULL,
         s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cpu_repack_count ? "embeddinggemma2-cpu-q8-repack-v1" : NULL,
@@ -484,6 +486,32 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     return true;
 }
 
+static void widen_cpu_projection(engine2 *s) {
+    const char *enabled = getenv("EI_CPU_BF16_F32_2");
+    if (s->n_backends != 1 || !enabled || strcmp(enabled, "1") != 0) return;
+    struct ggml_tensor *w = weight(s, "per_layer_model_proj.weight");
+    if (w->type != GGML_TYPE_BF16) {
+        fprintf(stderr, "CPU projection F32: source is not BF16\n");
+        return;
+    }
+    const ggml_bf16_t *mapped = w->data;
+    // Widen stored values exactly. The F32 matmul also avoids rounding its
+    // activations to BF16; this is a separate, opt-in numeric cache domain.
+    w->type = GGML_TYPE_F32;
+    for (int j = 0; j < 4; ++j) w->nb[j] *= 2;
+    ggml_backend_buffer_type_t buft = ggml_backend_cpu_buffer_type();
+    s->cpu_projection_buffer = ggml_backend_buft_alloc_buffer(buft, ggml_backend_buft_get_alloc_size(buft, w));
+    if (!s->cpu_projection_buffer) ei_die("cannot allocate CPU projection F32 weights");
+    w->data = NULL; w->buffer = NULL;
+    if (ggml_backend_tensor_alloc(s->cpu_projection_buffer, w,
+            ggml_backend_buffer_get_base(s->cpu_projection_buffer)) != GGML_STATUS_SUCCESS)
+        ei_die("cannot initialize CPU projection F32 weights");
+    ggml_backend_buffer_set_usage(s->cpu_projection_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    ggml_bf16_to_fp32_row(mapped, w->data, ggml_nelements(w));
+    fprintf(stderr, "CPU projection F32 active: %s, %.2f MiB\n",
+            w->name, ggml_backend_buffer_get_size(s->cpu_projection_buffer) / (1024.0 * 1024.0));
+}
+
 static void repack_cpu_weights(engine2 *s, ggml_backend_reg_t cpu_reg) {
     const char *enabled = getenv("EI_CPU_REPACK2");
     if (s->n_backends != 1 || !enabled || strcmp(enabled, "1") != 0) return;
@@ -650,6 +678,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     }
     ggml_backend_buffer_set_usage(s->weight_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
     repack_cpu_weights(s, cpu_reg);
+    widen_cpu_projection(s);
     const char *qkv_flag = getenv("EI_QKV2");
     if (qkv_flag && strcmp(qkv_flag, "1") == 0 &&
         (s->n_backends == 1 || strncmp(e->backend_name, "CUDA", 4) == 0)) {
@@ -823,6 +852,7 @@ void ei_engine_free(ei_engine *e) {
         if (s->qkv_buffer) ggml_backend_buffer_free(s->qkv_buffer);
         if (s->qkv_ctx) ggml_free(s->qkv_ctx);
         ggml_backend_buffer_free(s->weight_buffer);
+        if (s->cpu_projection_buffer) ggml_backend_buffer_free(s->cpu_projection_buffer);
         for (size_t i = 0; i < s->cpu_repack_count; ++i) ggml_backend_buffer_free(s->cpu_repack_buffers[i]);
         free(s->cpu_repack_buffers);
         ggml_free(s->weights);

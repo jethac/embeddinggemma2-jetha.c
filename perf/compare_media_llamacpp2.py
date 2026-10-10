@@ -304,6 +304,9 @@ def main():
                             raise RuntimeError(f'ARM comparison loaded different GGML modules: {modules}')
                         print(json.dumps({'matched_arm_precision': 'dotprod-fp16-acc-f32-v2',
                                           'shared_module': str(modules[0])}), flush=True)
+                    if os.environ.get('EI_CPU_BF16_F32_2') == '1':
+                        if 'CPU projection F32 active:' not in op.log_path.read_text():
+                            raise RuntimeError('native F32 projection did not activate')
                     if a.audio_reference and not references_checked:
                         for reference_path in a.audio_reference:
                             golden = json.loads(reference_path.read_text())
