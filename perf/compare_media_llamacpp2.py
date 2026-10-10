@@ -174,6 +174,8 @@ def main():
     p.add_argument('--quiet-total-cpu-percent', type=float, default=150)
     p.add_argument('--cooldown', type=float, default=2)
     p.add_argument('--port', type=int, default=42674)
+    p.add_argument('--audio-reference', type=Path, action='append', default=[],
+                   help='Check both CPU engines against original FP32 SDPA audio before timing')
     p.add_argument('--validate-only', action='store_true', help='Check journeys and quality without timing')
     a = p.parse_args()
     modalities = a.modalities.split(',')
@@ -231,13 +233,18 @@ def main():
     cpu_audio_f16 = a.backend == 'cpu' and os.getenv('EI_CPU_AUDIO_F16_2') == '1'
     if cpu_audio_f16:
         llama_env['EI_CPU_AUDIO_F16_2'] = '1'
+    arm_precise = a.backend == 'cpu' and os.getenv('EI_ARM_FP16_ACC_F32') == '1'
+    if arm_precise:
+        llama_env['EI_ARM_FP16_ACC_F32'] = '1'
+    if a.audio_reference and not cpu_audio_f16:
+        p.error('audio references require the matched CPU audio F16 loader')
     if a.profile_phases:
         # The patched encoder's diagnostic timer is shared by both engines.
         # Keep optimization flags isolated even during a profiled comparison.
         llama_env['EI_PROFILE_MEDIA2'] = '1'
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
-    if a.profile_phases or cpu_audio_f16 or a.backend in ('metal', 'cuda'):
+    if a.profile_phases or cpu_audio_f16 or arm_precise or a.backend in ('metal', 'cuda'):
         llama_cmd.remove('--log-disable')
         llama_cmd += ['--log-verbosity', '4']
     print(json.dumps({'backend': a.backend, 'threads': a.threads,
@@ -250,6 +257,7 @@ def main():
         'rounds': a.rounds, 'target_seconds': a.target_seconds,
         'quiet_total_cpu_percent': a.quiet_total_cpu_percent}), flush=True)
     results = []
+    references_checked = False
     with tempfile.TemporaryDirectory(prefix='embeddinggemma2-media-comparison-') as tmp:
         root = Path(tmp); cases = fixtures(root, max(a.concurrency))
         for kind in modalities:
@@ -272,6 +280,54 @@ def main():
                         for name, process in (('native', op), ('llama.cpp', lp)):
                             if marker not in process.log_path.read_text(errors='replace'):
                                 raise RuntimeError(f'{name} did not enable the matched CPU audio F16 loader')
+                    if arm_precise:
+                        native_log = op.log_path.read_text(errors='replace')
+                        llama_log = lp.log_path.read_text(errors='replace')
+                        if 'ARM CPU numeric variant: dotprod-fp16-acc-f32-v2' not in native_log:
+                            raise RuntimeError('native ARM precise numeric variant did not activate')
+                        for feature in ('DOTPROD', 'FP16_VA', 'ARM_FP16_ACC_F32'):
+                            if not re.search(rf'\b{feature}\s*=\s*1\b', llama_log):
+                                raise RuntimeError(f'llama.cpp ARM feature did not activate: {feature}')
+                        modules = []
+                        for process in (op, lp):
+                            maps = Path(f'/proc/{process.process.pid}/maps').read_text()
+                            loaded = {Path(line.split()[-1]).resolve() for line in maps.splitlines()
+                                      if 'libggml-cpu-armv8_dotprod_fp16.so' in line}
+                            if len(loaded) != 1:
+                                raise RuntimeError('ARM comparison did not load exactly one optimized module')
+                            modules.append(loaded.pop())
+                        if modules[0] != modules[1]:
+                            raise RuntimeError(f'ARM comparison loaded different GGML modules: {modules}')
+                        print(json.dumps({'matched_arm_precision': 'dotprod-fp16-acc-f32-v2',
+                                          'shared_module': str(modules[0])}), flush=True)
+                    if a.audio_reference and not references_checked:
+                        for reference_path in a.audio_reference:
+                            golden = json.loads(reference_path.read_text())
+                            assert golden['revision'] == '914f7f89142e33e77833254d9c9b90c3cef7303b'
+                            assert (golden['reference_dtype'], golden['attention'], golden['audio_mask']) == ('float32', 'sdpa', 'boolean')
+                            reference = golden['embedding']
+                            assert len(reference) == 768 and all(math.isfinite(x) for x in reference)
+                            assert abs(sum(x*x for x in reference) - 1) < 1e-5
+                            audio = io.BytesIO()
+                            with wave.open(audio, 'wb') as wav:
+                                wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(golden['sample_rate'])
+                                wav.writeframes(b''.join(struct.pack('<h', round(golden['amplitude'] * math.sin(
+                                    2 * math.pi * golden['frequency_hz'] * i / golden['sample_rate'])))
+                                    for i in range(golden['seconds'] * golden['sample_rate'])))
+                            url = 'data:audio/wav;base64,' + base64.b64encode(audio.getvalue()).decode()
+                            parts = ({'type': 'audio', 'data': url},
+                                     {'type': 'input_audio', 'input_audio': {'data': url, 'format': 'wav'}})
+                            checked = []
+                            for name, endpoint, part in zip(('ours', 'llama'), (ours, llama), parts):
+                                vector, tokens = validate(endpoint, {'model': 'embeddinggemma-2',
+                                    'input': {'content': [part]}, 'dimensions': 768, 'encoding_format': 'float'})
+                                cosine = cosine_similarity(vector, reference)
+                                print(json.dumps({'original_hf_audio': str(reference_path), 'engine': name,
+                                                  'tokens': tokens, 'cosine': cosine}), flush=True)
+                                assert tokens == golden['tokens'] and cosine > .999
+                                checked.append(vector)
+                            assert cosine_similarity(*checked) > .999
+                        references_checked = True
                     if a.backend in ('metal', 'cuda'):
                         device = 'MTL' if a.backend == 'metal' else 'CUDA0'
                         native_log = op.log_path.read_text(errors='replace')
