@@ -2,6 +2,7 @@
 import difflib
 import importlib.util
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -36,3 +37,17 @@ with tempfile.TemporaryDirectory(prefix='dependency-patch-regression-') as tmp:
         assert 'preserving local edits' in str(error)
     assert (source / 'opts.h').read_text() == edited
 print('Overlapping patch upgrade, idempotence and local-edit preservation passed')
+
+# Existing 21-patch checkouts must remain a recognized prefix. Inserting the
+# ARM patches into that prefix caused valid upgrades to be rejected as edits.
+previous_prefix = '''mtmd-gemma2 ggml-cpu-dispatch mtmd-video-container
+mtmd-deadline ggml-cuda-mask-range mtmd-media-id mtmd-resize-rows
+mtmd-video-probe mtmd-encoder-profile ggml-cpu-q8-pair mtmd-audio-graph-cache
+mtmd-pixel-profile mtmd-pixel-reuse mtmd-vision-clip-metadata
+ggml-cuda-static-package mtmd-audio-multishape-cache ggml-cpu-pad-rows
+ggml-cuda-q8-width mtmd-singleton-batch-output ggml-cuda-stream-priority
+mtmd-cpu-audio-f16'''.split()
+cmake = (Path(__file__).resolve().parents[1] / 'CMakeLists.txt').read_text()
+sequence = re.findall(r'/deps/([^"\n]+)\.patch', cmake)
+assert sequence[:len(previous_prefix)] == previous_prefix, 'existing 21-patch upgrade prefix changed'
+print('Existing 21-patch upgrade prefix preserved')

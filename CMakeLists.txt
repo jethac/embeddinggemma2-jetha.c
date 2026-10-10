@@ -51,8 +51,6 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     --git "${GIT_EXECUTABLE}" --base de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-gemma2.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-dispatch.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-portable.patch"
-    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-fp16-acc-f32.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-video-container.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-deadline.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-mask-range.patch"
@@ -72,6 +70,8 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-singleton-batch-output.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-stream-priority.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-cpu-audio-f16.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-portable.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-arm-fp16-acc-f32.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")
