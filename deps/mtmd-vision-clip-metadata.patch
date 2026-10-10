@@ -1,0 +1,19 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -2688,6 +2688,16 @@
+                             string_replace_all(name_inp_min, ".weight", ".input_min");
+                             string_replace_all(name_out_max, ".weight", ".output_max");
+                             string_replace_all(name_out_min, ".weight", ".output_min");
++                            // Missing vision bounds mean unclipped linears in the reference.
++                            // Keep partially specified bounds on the original fallback path.
++                            const char * metadata_only = std::getenv("EI_VISION_CLIP_METADATA2");
++                            if (metadata_only && strcmp(metadata_only, "1") == 0 &&
++                                gguf_find_tensor(ctx_gguf.get(), name_inp_max.c_str()) < 0 &&
++                                gguf_find_tensor(ctx_gguf.get(), name_inp_min.c_str()) < 0 &&
++                                gguf_find_tensor(ctx_gguf.get(), name_out_max.c_str()) < 0 &&
++                                gguf_find_tensor(ctx_gguf.get(), name_out_min.c_str()) < 0) {
++                                continue;
++                            }
+                             model.clamp_info_map[name] = {
+                                 get_scalar(name_inp_max, FLT_MAX),
+                                 get_scalar(name_inp_min, -FLT_MAX),

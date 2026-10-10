@@ -64,6 +64,7 @@ typedef struct {
     bool fused_geglu;
     bool media_batch;
     bool media_pipeline;
+    bool vision_clip_metadata;
     bool jpeg_turbo;
     uint64_t graph_clock;
     int threads;
@@ -98,6 +99,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
         s->fused_geglu ? "embeddinggemma2-geglu-v1" : NULL,
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
+        s->vision_clip_metadata ? "embeddinggemma2-vision-clip-metadata-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
         s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
         s->text_batch_buckets ? "embeddinggemma2-text-batch-buckets-v1" : NULL,
@@ -655,6 +657,9 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     if (s->media_batch) fprintf(stderr, "Multimodal backbone batching: up to 1024 tokens, inputs up to 512\n");
     const char *media_pipeline = getenv("EI_MEDIA_PIPELINE2");
     s->media_pipeline = media_pipeline && strcmp(media_pipeline, "1") == 0;
+    const char *vision_clip_metadata = getenv("EI_VISION_CLIP_METADATA2");
+    s->vision_clip_metadata = vision_clip_metadata && strcmp(vision_clip_metadata, "1") == 0;
+    if (s->vision_clip_metadata) fprintf(stderr, "Vision clipping: explicit metadata only\n");
     if (s->media_pipeline) fprintf(stderr, "Multimodal pipeline: up to two singleton raw inputs\n");
     const char *jpeg_turbo = getenv("EI_JPEG_TURBO2");
     s->jpeg_turbo = jpeg_turbo && strcmp(jpeg_turbo, "1") == 0;
