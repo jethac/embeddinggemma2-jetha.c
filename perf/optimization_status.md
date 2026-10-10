@@ -3038,3 +3038,36 @@ was 2.66-16.42%. This does not establish a general Metal gain.
 Both llama.cpp comparisons lost; geometric mean 0.737x. Other CPU load was
 1.62-5.50%. Physical Apple Silicon performance remains unverified.
 The option remains off by default.
+
+## Metal encoder routing
+
+[Run 38018188119](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38018188119),
+source `f1609ab7`, used the same virtual Metal device with phase profiling on.
+Native AUTO disabled unsupported Metal flash attention. llama.cpp forced flash
+attention on and used CPU fallback. Both reported unsupported CLIP operators.
+These results compare different encoder attention paths.
+
+Image ratios were 0.733x at one client and 0.849x at four. Minimum cosine was
+0.999950; both inputs had 260 tokens. Other CPU load was 145.80-148.68% at
+one client and 1.14-6.10% at four. Native encoder compute medians were
+9973/6934 ms, versus 8035/5848 ms for llama.cpp. Native graph setup took
+under 5 ms. Compare forced native flash attention with AUTO before changing
+the default; graph capture does not address the measured setup cost.
+
+## CUDA two-input audio arrays
+
+RTX 5060 Ti, six threads, deployed CUDA options, caches off, fresh requests.
+Eight fixtures used 0.25/0.5/1/2-second audio at two tones, with short text.
+Four warmup pairs preceded 32 measured pairs. Each fixture pair used both
+orders twice. Timings cover completion of both inputs.
+
+Two concurrent requests had median 73.36 ms; one two-input array had 52.89 ms.
+Arrays won 22/32 pairs. Minimum cosine was 0.999861; token counts matched.
+Two fixture pairs had slower array medians. This shared-host measurement is
+not a llama.cpp comparison or evidence of cross-request batching.
+
+A separate profiled run logged 66 graph rebuilds and 30 reuses after warmup.
+Total backbone build/preparation was 196.4 ms; compute was 1855.1 ms.
+Rebuild medians were 1.77 ms build and 0.64 ms preparation. Reused preparation
+was 0.009 ms. These timers do not separate CUDA capture from compute.
+Raw-input padding is not justified by graph setup alone.
