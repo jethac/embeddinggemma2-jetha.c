@@ -4062,3 +4062,18 @@ activation casts; encoder totals also include graph setup. The control adds
 384 MiB of weights. These shared-host sparse whole-block phase observations
 justify no HTTP trial; no public option, model conversion, or deployment was
 retained.
+
+### CPU audio selective Q8 and mixed FFN controls (2026-10-11)
+
+Keeping only 48 FFN matrices at Q8_0 while the other 84 stayed F16 failed the
+first original FP32 gate: one-second 330 Hz cosine 0.998670 (<0.999); stopped.
+A separate private F16-weight/F32-activation tinyBLAS control required exact
+FFN names/shapes and F32←F16←F32 cast ancestry. Four one-second tones, two-second
+330 Hz and five-second 660 Hz produced exact retained-F16 vectors/tokens and
+passed original FP32 gates (minimum 0.999322). Weight bytes were unchanged;
+scheduler workspace stayed at 3,588,992 bytes. Casts/setup remained in timings.
+Eight six-thread phase pairs favored mixed aggregate totals in both orders:
+1208.002→552.900 and 2609.758→2231.629 ms. Severe shared-host variability
+(100–2168 ms encoder samples) and 71% of apparent savings in unchanged stages
+make performance inconclusive. The private build remains available for a quiet
+target; no speed claim, HTTP trial, public option, or deployment followed.
