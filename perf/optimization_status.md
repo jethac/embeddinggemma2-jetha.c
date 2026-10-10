@@ -3119,3 +3119,27 @@ service. Mixed 8192-token input passed; 8193 tokens were rejected before backbon
 execution on both routes. Normalized-prefix error was at most 2.49e-8.
 The default remains one slot. Slots two through four share a new result-cache
 identity; default identity is unchanged.
+
+The CUDA dev service now uses two slots. All five input types and 128 fresh
+audio/text outputs matched the preserved old executable byte for byte. The log
+confirmed 128 cache misses. These requests had varied text/audio token counts
+and a 28.60 ms median; this is a different workload from the fixed-input
+comparison above. Deployed prefixes, mixed 8192/8193-token limits, and response
+cache reuse passed. The Windows service remained unchanged.
+
+A fixed-input comparison then measured the actual dev service against the old
+executable with one slot. Each engine received 32 alternating requests, with
+four warmups per shape and both engine orders. Fresh keys bypassed the dev
+response cache; logs confirmed all 32 misses. Median latency fell from 21.937
+to 10.378 ms: 18.347 to 7.298 ms for 0.25-second audio, and 23.495 to 12.755 ms
+for two-second audio. All 32 vectors were byte-identical. Every balanced block
+improved (2.215–3.046x throughput). CPU experiment processes had exited before
+this run. These are shared-host results, not a llama.cpp comparison.
+
+A subsequent cache-disabled test used fixed 0.25/2-second audio at two tones.
+Two concurrent requests took 18.364 ms; a two-item array took 19.010 ms.
+Arrays won 7/32 balanced pairs and lost in both engine-order groups. All tokens
+matched (14+58=72); minimum cosine was 0.999878. Singleton outputs were exact
+against the dev service; array outputs differed. With two encoder shapes and
+three warmed backbone shapes, this workload does not justify an additional
+cross-request grouping queue. Other workloads require separate measurements.
