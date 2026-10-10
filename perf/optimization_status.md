@@ -3071,3 +3071,21 @@ Total backbone build/preparation was 196.4 ms; compute was 1855.1 ms.
 Rebuild medians were 1.77 ms build and 0.64 ms preparation. Reused preparation
 was 0.009 ms. These timers do not separate CUDA capture from compute.
 Raw-input padding is not justified by graph setup alone.
+
+Nsight then traced 32 serial requests in repeated/alternating/alternating/repeated
+blocks, after eight warmup requests. All 32 outputs were exact against the
+deployed service. Trace boundaries used the 40 final 3072-byte output copies;
+helper wall-clock timestamps did not align with the exported trace.
+
+Each repeated eight-request block had six encoder graph launches and 2230
+direct encoder kernels. Each alternating block had zero encoder graph launches
+and 8920 direct encoder kernels. Direct GPU compute was about 3 ms per encode
+in both cases. Direct-launch API time was 32.39/18.64 ms per repeated block,
+versus 124.14/143.53 ms per alternating block. The backbone used eight graph
+launches in every block.
+
+Repeated blocks each captured twice, at about 4.69 ms per capture, then paid
+5.08/6.83 ms per graph instantiation. Alternating blocks did not capture:
+shape changes reset warmup and used direct submission. This supports an
+encoder cache for multiple shapes. Retention requires an unprofiled HTTP gain;
+the trace is not a throughput comparison.
