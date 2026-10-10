@@ -64,7 +64,7 @@ permissions:
 
 jobs:
   gemma2-linux:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (Linux CPU)
     runs-on: ubuntu-24.04
     timeout-minutes: ${{ inputs.benchmark_media && 90 || inputs.benchmark_cpu && 45 || 30 }}
@@ -341,7 +341,7 @@ jobs:
               cases = fixtures(root, 1)
               processes = []
               persistent = set()
-              def start(name, label, cache=None, emulate=False, profile=False, precise=True, audio_f16=True):
+              def start(name, label, cache=None, emulate=False, profile=False, precise=True, audio_f16=True, optimize=True):
                   endpoint = endpoints[name]
                   command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
                              '--backend', 'cpu', '--model', str(model), '--mmproj', str(mmproj),
@@ -350,6 +350,10 @@ jobs:
                   if cache: command += ['--persistent-cache-path', str(cache)]
                   if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
                   child_env = env.copy()
+                  candidate = optimize and name == 'on' and not emulate and 'control' not in label
+                  if candidate:
+                      child_env['EI_CPU_REPACK2'] = '1'
+                      child_env['EI_CPU_BF16_F32_2'] = '1'
                   if precise: child_env['EI_ARM_FP16_ACC_F32'] = '1'
                   if audio_f16: child_env['EI_CPU_AUDIO_F16_2'] = '1'
                   if profile: child_env['EI_PROFILE_BACKBONE2'] = '1'
@@ -370,6 +374,11 @@ jobs:
                   expected = 'armv8-baseline' if name == 'off' or emulate else ('dotprod-fp16-acc-f32-v2' if precise else 'dotprod-fp16-v1')
                   assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
                   assert ('CPU audio F16 active: 132 Conformer matrices' in log.read_text()) == audio_f16, log.read_text()
+                  if candidate:
+                      assert 'CPU Q8 repack: 0 matrices' not in log.read_text(), log.read_text()
+                      assert 'CPU Q8 repack:' in log.read_text(), log.read_text()
+                      assert 'CPU projection F32 active:' in log.read_text(), log.read_text()
+                      print(log.read_text().split('CPU Q8 repack:', 1)[1].splitlines()[0], flush=True)
                   maps = Path(f'/proc/{process.pid}/maps').read_text()
                   selected = 'armv8.0_1' if expected == 'armv8-baseline' else 'armv8_dotprod_fp16'
                   assert f'libggml-cpu-{selected}.so' in maps, maps
@@ -449,13 +458,6 @@ jobs:
                       assert cosine > .999, (seconds, frequency, ta, tb, cosine)
                       print(json.dumps({'ARM_longer_audio_seconds': seconds, 'frequency_hz': frequency,
                                         'tokens': ta, 'cosine': cosine}), flush=True)
-                  options = SimpleNamespace(cooldown=2, quiet_total_cpu_percent=150,
-                                            rounds=3, target_seconds=3)
-                  for kind in ('text', 'audio', 'image'):
-                      bodies = [json.dumps(cases[kind][0][0]).encode()]
-                      measured = measure_native_pair(endpoints['on'], endpoints['off'], bodies,
-                                                     {on.pid, off.pid}, options)
-                      print(json.dumps({'native_ARM_C1': kind, **measured}), flush=True)
                   # Truncation must retain finite normalized results and ISA parity.
                   def request_vector(name, body, dimensions, tokens=None):
                       endpoint = endpoints[name]
@@ -561,6 +563,22 @@ jobs:
                   stop(native)
                   assert 'backbone:' not in log.read_text(), 'same-variant snapshot failed to restore'
                   print('ARM text and media persisted identities isolate ISA variants and restore on restart', flush=True)
+                  combined_text_id = shared.read_bytes()[16:24]
+                  combined_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'same-ISA-optimizations-OFF', cache=shared, profile=True, optimize=False)
+                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  stop(native)
+                  assert log.read_text().count('backbone:') >= 2, 'combined snapshots crossed OFF arithmetic'
+                  assert combined_text_id != shared.read_bytes()[16:24]
+                  assert combined_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'same-ISA-optimizations-ON', cache=shared, profile=True)
+                  validate(endpoints['on'], texts); validate(endpoints['on'], images)
+                  stop(native)
+                  assert log.read_text().count('backbone:') >= 2, 'OFF snapshots crossed combined arithmetic'
+                  assert combined_text_id == shared.read_bytes()[16:24]
+                  assert combined_response_id == Path(str(shared) + '.responses').read_bytes()[8:16]
+                  print('Combined ON/OFF arithmetic isolates both persistent cache layers', flush=True)
+
               finally:
                   for process in processes:
                       if process.poll() is None:
@@ -592,7 +610,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
           python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
     timeout-minutes: 45
@@ -658,7 +676,7 @@ jobs:
           python tests/openai_media_model2.py
           python tests/media_json2.py
   gemma2-macos:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: EmbeddingGemma 2 service (macOS ARM CPU)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.benchmark_metal_media && 90 || 30 }}
@@ -856,7 +874,7 @@ jobs:
           python3 perf/compare_media_llamacpp2.py --backend metal --threads 3 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-packaged-metal/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   # Retained foundation checks cover the inherited 300M implementation only.
   portable:
-    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
+    if: github.event_name != 'workflow_dispatch'
     name: Legacy 300M CPU (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
