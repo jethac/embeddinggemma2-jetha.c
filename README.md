@@ -134,6 +134,8 @@ The [Metal run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/3
 used Apple M1 (Virtual), three cores, 7 GB RAM, Apple Paravirtual GPU, and three
 threads. Minimum cosine: 0.999301. Other CPU load: 0.58-149.32%.
 Geometric mean: **0.801x; one win, nine losses.** Virtual GPU; order rates varied.
+A [later diagnostic](perf/optimization_status.md#metal-encoder-routing) found
+different encoder attention paths: native AUTO versus llama.cpp CPU flash fallback.
 
 | Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
 |---|---:|---:|---:|---:|
