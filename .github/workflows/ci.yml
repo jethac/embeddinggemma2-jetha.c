@@ -18,6 +18,10 @@ on:
         description: Compare the five-modality Metal service with pinned llama.cpp on macOS
         type: boolean
         default: false
+      mac_cpu_audio_f16:
+        description: Check native Mac CPU F16 audio against original FP32 SDPA
+        type: boolean
+        default: false
       cpu_pair_vnni:
         description: Enable experimental VNNI paired rows in the multimodal comparison
         type: boolean
@@ -388,6 +392,12 @@ jobs:
           python3 tests/text_context2.py
           python3 tests/video_container2.py
           python3 tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+      - name: Check native CPU F16 audio against the original model
+        if: github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16
+        run: |
+          uname -m
+          test "$(uname -m)" = arm64
+          python3 tests/audio_f16_reference2.py --binary build-packaged/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
       - name: Run Metal and compare all five modalities with CPU
         if: steps.metal.outputs.available == 'ON'
         env:
