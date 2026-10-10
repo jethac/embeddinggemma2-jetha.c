@@ -2717,3 +2717,280 @@ repeat/re-index/eval workloads.
 
 - CUDA and ROCm SwiGLU->quant fusion (neutral / -45%), ROCm default graph
   capture (neutral / -1.5% mixed). Kept opt-in-off or not landed.
+
+## EmbeddingGemma 2 development results
+
+These entries apply to EmbeddingGemma 2. Earlier entries apply to the inherited
+300M implementation. Baseline commit: `de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b`.
+Unless stated otherwise, llama.cpp comparisons use matching Q8_0 weights,
+installed GGML kernels, exact tokens, 768 dimensions, disabled caches,
+fresh servers, warmup, and both engine orders. A ratio above 1 favors this server.
+Do not combine different CPUs or virtual/physical devices.
+
+### Provisional WSL text
+
+Xeon W-2135 / RTX 5060 Ti 16 GB, Ubuntu WSL, GCC 13.3, CUDA 13.0, six threads. Q8_0, 768 dimensions, matching tokens/kernels, no encoders, caches off, fresh servers, both orders. The old guard missed Windows contention. CPU/CUDA geometric means: 1.01x/1.16x. Minimum cosine: 0.99997/0.99991. Rerun with the corrected host guard before using these rates.
+
+| Backend | Tokens | Concurrent clients | Ours embeddings/s | llama.cpp embeddings/s | Throughput ratio | Ratio by order |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| CPU AVX-512 | 32 | 1 | 16.00 | 16.37 | 0.98x | 0.94–1.01x |
+| CPU AVX-512 | 32 | 4 | 17.53 | 17.88 | 0.98x | 0.96–1.00x |
+| CPU AVX-512 | 256 | 1 | 2.11 | 2.18 | 0.97x | 0.95–0.99x |
+| CPU AVX-512 | 256 | 4 | 2.14 | 2.13 | 1.01x | 0.94–1.08x |
+| CPU AVX-512 | 1024 | 1 | 0.45 | 0.41 | 1.09x | 1.02–1.18x |
+| CPU AVX-512 | 1024 | 4 | 0.46 | 0.45 | 1.03x | 1.03–1.03x |
+| CUDA | 32 | 1 | 100.29 | 94.69 | 1.06x | 0.96–1.17x |
+| CUDA | 32 | 4 | 70.06 | 89.01 | 0.79x | 0.77–0.80x |
+| CUDA | 256 | 1 | 120.55 | 84.45 | 1.43x | 1.43–1.43x |
+| CUDA | 256 | 4 | 87.24 | 83.11 | 1.05x | 1.03–1.07x |
+| CUDA | 1024 | 1 | 43.82 | 28.35 | 1.55x | 1.51–1.59x |
+| CUDA | 1024 | 4 | 32.61 | 25.53 | 1.28x | 1.07–1.48x |
+
+### CPU text
+
+[Run 37892946034](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034). EPYC 9V74, four logical CPUs, two threads, Ubuntu 24.04/GCC 13.3, matching installed shared GGML. Other CPU load 0.8-0.9%. Geometric mean 1.003x; minimum cosine 0.999970.
+
+| Tokens | Clients | Ours embeddings/s | llama.cpp embeddings/s | Ratio | Ratio by order |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1 | 16.75 | 16.81 | 0.996x | 0.973–1.019x |
+| 32 | 4 | 18.31 | 18.16 | 1.008x | 1.007–1.009x |
+| 256 | 1 | 2.26 | 2.25 | 1.006x | 1.004–1.007x |
+| 256 | 4 | 2.26 | 2.24 | 1.008x | 1.005–1.010x |
+| 1024 | 1 | 0.44 | 0.44 | 1.008x | 1.003–1.014x |
+| 1024 | 4 | 0.41 | 0.41 | 0.994x | 0.991–0.998x |
+
+### Packed QKV CPU text
+
+[Run 37899814743](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37899814743). EI_QKV2=1, EPYC 7763, four logical CPUs, two threads, Ubuntu 24.04/GCC 13.3, matching shared GGML. Other CPU load 1.6-2.3%. Geometric mean 1.012x; minimum cosine 0.999927. Different CPUs prevent comparison with the previous run as a packing experiment.
+
+| Tokens | Clients | Packed ours embeddings/s | llama.cpp embeddings/s | Ratio | Ratio by order |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 1 | 11.73 | 11.82 | 0.993x | 0.949–1.036x |
+| 32 | 4 | 12.30 | 12.20 | 1.007x | 1.004–1.011x |
+| 256 | 1 | 1.48 | 1.48 | 0.999x | 0.989–1.008x |
+| 256 | 4 | 1.47 | 1.46 | 1.006x | 1.006–1.006x |
+| 1024 | 1 | 0.30 | 0.28 | 1.040x | 1.039–1.041x |
+| 1024 | 4 | 0.28 | 0.28 | 1.029x | 1.026–1.031x |
+
+### Partial CPU image/audio
+
+[Run 37984333628](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37984333628/job/114002416831), source 6e14b24. EPYC 7763, Ubuntu 24.04/GCC 13.3, two threads. Four-client audio failed cosine 0.999 at 0.998898; exclude its rate.
+
+| Modality | Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Image | 1 | 0.113128 | 0.113167 | 1.000x | 0.999971 |
+| Image | 4 | 0.112762 | 0.112719 | 1.000x | 0.999963 |
+| Audio | 1 | 4.479 | 4.587 | 0.976x | 0.999777 |
+
+### CPU video/mixed
+
+[Run 37989164220](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37989164220/job/114018620645), source 7de92b9. EPYC 9V74, Ubuntu 24.04/GCC 13.3, two threads, other CPU load 0.78-1.6%. Do not pool these cells with the EPYC 7763 results.
+
+| Modality | Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Video | 1 | 0.126597 | 0.127990 | 0.989x | 0.999929 |
+| Video | 4 | 0.124921 | 0.128824 | 0.970x | 0.999912 |
+| Mixed | 1 | 0.100246 | 0.102592 | 0.977x | 0.999914 |
+| Mixed | 4 | 0.100817 | 0.102479 | 0.984x | 0.999911 |
+
+### VNNI audio losses
+
+[Run 37998996923](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37998996923), source 3aba687. EPYC 9V74, four logical CPUs, two threads. One-second audio, 29 tokens, native on/off exact. Other CPU load 1.4-1.54%; minimum cosine 0.999773/0.999353. No native on/off timing.
+
+| Clients | Ours emb/s, VNNI paired rows | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|
+| 1 | 6.01 | 6.47 | 0.929× |
+| 4 | 5.74 | 6.64 | 0.864× |
+
+### Profiled VNNI audio
+
+[Run 38003813340](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38003813340), source 70a062c. EPYC 9V45, four logical CPUs, two threads, other CPU load 1.4-1.6%. Native on/off exact; native gains 18.9%/17.3%. Encoder compute medians 64.2/66.6 ms versus llama.cpp 72.9/76.9 ms. Profiling and llama.cpp info logging were on. These results do not replace the losses on other CPUs.
+
+| Clients | Ours emb/s | llama.cpp emb/s | Ratio | Minimum cosine |
+|---|---:|---:|---:|---:|
+| 1 | 9.44 | 8.57 | 1.103× | 0.999773 |
+| 4 | 9.29 | 8.56 | 1.085× | 0.999362 |
+
+### Deployed CUDA media pipeline
+
+Source fdd9dae, RTX 5060 Ti, six threads, one-second audio. Fresh-key requests bypassed the primary response cache; the comparison had caches off. Shared host; native on/off wave latency, not llama.cpp throughput.
+
+| Clients | Pipeline off, wave median | Deployed pipeline on | Paired wins |
+|---|---:|---:|---:|
+| 4 | 41.1 ms | 33.7 ms | 25/26 |
+| 8 | 79.4 ms | 62.4 ms | 26/26 |
+
+### Deployed CUDA audio graph cache
+
+Source 7871c42, RTX 5060 Ti, six threads, pipeline on, one-second audio. Fresh keys, comparison caches off. Encoder build/allocation 0.91 -> 0.002 ms; compute about 3.7 ms. Shared-host native on/off wave latency.
+
+| Clients | Encoder cache off, wave median | Deployed cache on | Paired wins |
+|---|---:|---:|---:|
+| 1 | 10.47 ms | 10.01 ms | 21/26 |
+| 4 | 29.02 ms | 26.91 ms | 24/26 |
+| 8 | 58.68 ms | 52.05 ms | 24/26 |
+
+### Deployed CUDA pixel reuse
+
+Source f413825, RTX 5060 Ti, six threads. Fresh keys, comparison caches off. Image/mixed improved; video lost. Pixel allocation 4.5 -> 0.001 ms. Shared-host native on/off HTTP latency.
+
+| Input | Reuse off, HTTP median | Deployed reuse on | Paired wins |
+|---|---:|---:|---:|
+| Image | 75.81 ms | 65.03 ms | 18/20 |
+| Text + image + audio | 82.20 ms | 75.78 ms | 16/20 |
+| Video | 223.50 ms | 227.06 ms | 9/20 |
+
+### Deployed CUDA vision clipping
+
+Source d87c9be, RTX 5060 Ti, six threads, pixel reuse on. Same Windows-mounted log sink, fresh keys, comparison caches off. Fixtures: 96-square PPM, one-second audio, two-second 160-square MPEG-4; image/mixed/video tokens 260/294/248. Initial mismatched-log comparison lost on image: 91.58 -> 130.49 ms; mixed 100.83 -> 100.79 ms. Host contention varied. These are native on/off HTTP measurements, not llama.cpp throughput.
+
+| Input | Run | Off HTTP median | Deployed on | Paired wins |
+|---|---|---:|---:|---:|
+| Image | 1 | 116.75 ms | 73.61 ms | 20/20 |
+| Image | 2 | 69.00 ms | 55.94 ms | 20/20 |
+| Text + image + audio | 1 | 84.55 ms | 67.51 ms | 18/20 |
+| Text + image + audio | 2 | 75.01 ms | 62.63 ms | 19/20 |
+| Video | 1 | 170.08 ms | 164.26 ms | 14/20 |
+| Video | 2 | 159.62 ms | 152.84 ms | 18/20 |
+
+### Complete virtual Metal comparison
+
+[Run 38004147312](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38004147312), source 8c8f48c. Apple M1 (Virtual), three cores, 7 GB, Apple Paravirtual GPU, three threads. Geometric mean 0.801x; one win/nine losses; minimum cosine 0.999301. Other CPU load 0.58-149.32%; substantial order variation. Physical Apple Silicon and all-GPU placement are unverified.
+
+| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|---:|
+| Text | 1 | 2.4354 | 2.6003 | 0.937× |
+| Text | 4 | 4.6006 | 6.6475 | 0.692× |
+| Image | 1 | 0.0898 | 0.1175 | 0.764× |
+| Image | 4 | 0.1129 | 0.1623 | 0.696× |
+| Audio | 1 | 1.1562 | 1.0309 | 1.122× |
+| Audio | 4 | 1.5689 | 2.0867 | 0.752× |
+| Video | 1 | 0.1368 | 0.1565 | 0.874× |
+| Video | 4 | 0.1264 | 0.1713 | 0.738× |
+| Mixed | 1 | 0.0980 | 0.1180 | 0.831× |
+| Mixed | 4 | 0.0959 | 0.1382 | 0.694× |
+
+### Profiled virtual Metal encoders
+
+[Run 38012325160](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38012325160), source 9a451e6. Apple M1 (Virtual), three cores, 7 GB, Apple Paravirtual GPU, three threads, native optimizations off. Both encoders had timers on. Minimum cosine 0.999374; other CPU load 0.92-145.36%. Native image encoder compute medians 9121/6556 ms versus llama.cpp 5277/5160 ms; native setup under 4 ms. Audio encoder 327/225 ms, backbone 228/175 ms. Graph setup does not explain these image losses.
+
+| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|---:|
+| Image | 1 | 0.1157 | 0.1502 | 0.770× |
+| Image | 4 | 0.1336 | 0.1610 | 0.830× |
+| Audio | 1 | 1.6199 | 1.7857 | 0.907× |
+| Audio | 4 | 2.2997 | 2.8890 | 0.796× |
+
+### Quality failures and separate VNNI measurements
+
+The four-client EPYC 7763 audio failure also reproduced on local AVX2 at
+cosine 0.998898. Native concurrent/serial outputs agreed closely; llama.cpp
+changed at cosine 0.999443 on the 660 Hz fixture. AVX-512 passed the cross-engine
+probe at 0.999399. Separate FP32 SDPA comparisons over four tones gave
+native Q8 cosine 0.998170-0.999622 and llama.cpp 0.998248-0.999656.
+Q8 engine parity does not prove FP32 reference parity.
+
+[Run 38000840284](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38000840284),
+source f0bfc06, used Xeon 6973P-C, four logical CPUs, two threads, caches off,
+both orders, exact native on/off outputs. Other CPU load was 1.3-1.5%.
+Native paired VNNI gains: 4.83 -> 5.23 emb/s at C1 and 4.36 -> 4.68 at C4.
+Against llama.cpp, rates were 4.69/6.29 (0.746x) and 4.65/6.36 (0.731x).
+Minimum cosines: 0.999758/0.999155. Retain both losses.
+
+[Run 38005434026](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38005434026),
+source 1add5c4, validated all five input types at C1/C4 on Xeon Platinum 8573C
+with two threads. Native VNNI on/off outputs were exact; minimum llama.cpp
+cosine was 0.999399. No rates were measured.
+
+### Optional EmbeddingGemma 2 paths
+
+These options default off, except debug logging controls. Development services
+can enable them. Measurements below are shared-host native comparisons, not
+quiet-host llama.cpp throughput. All numeric modes have cache identities where
+required. Keep phase profiling off for throughput measurements.
+
+| Option | Path and limit |
+|---|---|
+| `EI_CPU_Q8_PAIR2=1` | Paired Q8 rows on non-VNNI AVX-512 BW/DQ; original reduction order |
+| `EI_CPU_Q8_PAIR_VNNI2=1` | Paired Q8 rows on VNNI hardware; separate opt-in |
+| `EI_MEDIA_PIPELINE2=1` | Overlap media encoder/backbone; two singleton raw inputs, 32 MiB total |
+| `EI_AUDIO_GRAPH_CACHE2=1` | Reuse one audio shape/workspace; refill all inputs |
+| `EI_PIXEL_REUSE2=1` | Reuse vision CPU pixel buffer up to 16 MiB; rewrite all pixels |
+| `EI_VISION_CLIP_METADATA2=1` | Omit vision clamps only if all four bound tensors are absent; audio unchanged |
+| `EI_GRAPH_CACHE2=1` | CUDA text graph cache, at most 256 aggregate tokens |
+| `EI_GRAPH_CACHE_SLOTS2=2..4` | Default two shapes; hard limit four |
+| `EI_RAW_GRAPH_CACHE2=1` | Share graph slots with raw inputs up to 256 aggregate tokens |
+| `EI_TEXT_BUCKETS2=1` | Singleton CUDA text buckets 32/64/128/256; exclude padding from attention/pooling |
+| `EI_TEXT_BATCH_BUCKETS2=1` | Plain text batches up to 256 aggregate tokens; isolated sequence masks/pooling |
+| `EI_QKV2=1` | Packed Q8_0 projections on CPU/CUDA; 27.62 MiB additional weights |
+| `EI_CUDA_GLOBAL_ATTN2=1` | CUDA global-attention fallback; scores capped at 64 MiB through 2048 tokens, padded flash above |
+| `EI_CUDA_LOCAL_ATTN2=1` | Pad local keys to 256 stride from 1024 aggregate tokens; mask all padding |
+| `EI_CUDA_LOCAL_RANGE2=1` | Skip fully masked leading local key tiles from 1024 aggregate tokens |
+| `EI_REUSE_INPUTS2=1` | Reuse positions/masks/pooling while graph boundaries match; refill token/media data |
+| `EI_GEGLU2=1` | CUDA GELU/multiply fusion |
+| `EI_MEDIA_BATCH2=1` | Request-array backbone groups: 1024 aggregate tokens, 512 per input, 2 MiB pending rows |
+| `EI_IMAGE_THREADS2=2..16` | Parallel horizontal resize; default one thread; minimum 128 rows and 262144 intermediate pixels |
+| `EI_JPEG_TURBO2=1` | libjpeg-turbo for supported 8-bit JPEGs; pixels can differ |
+| `EI_VIDEO_PROBE2=/absolute/path` | Optional libavformat metadata companion built with `-DEI_VIDEO_PROBE=ON`; Linux CUDA only verified |
+| `EI_PROFILE_BACKBONE2=1`, `EI_PROFILE_MEDIA2=1` | Diagnostic phase timers |
+| `EI_DEBUG_LOG2=1` | Restore dependency debug logs; warnings remain visible by default |
+
+### Other deployed latency observations
+
+Windows Xeon W-2135, six threads, paired Q8 rows: one-second audio
+188.7 -> 166.3 ms and two-second audio 307.0 -> 254.0 ms, 19/20 paired wins
+for each. Image 5.832 -> 4.727 seconds, 6/6 wins. Vectors were exact.
+
+CUDA graph caching reduced graph rebuilds from 64 to 2 in a 120-request,
+32-token/four-client trace. Four slots improved a rotating-shape workload
+16.5 -> 5.0 ms and 25.5 -> 5.1 ms in reverse order, with 23.91 MiB compute
+workspace. Raw graph reuse had variable deployed audio medians:
+96.3 -> 94.6 ms and 73.6 -> 53.7 ms. Text buckets measured 16.1 -> 6.2 ms
+and 20.6 -> 6.3 ms; batch buckets 30.4 -> 17.8 ms and 28.3 -> 13.4 ms.
+Batch p95 was mixed: 54.0 -> 61.3 ms and 58.4 -> 17.0 ms.
+
+CUDA global attention reduced 32-token medians 11.6 -> 5.0 ms and
+12.9 -> 5.0 ms. At 2049 tokens, padded flash measured 2094 -> 152 ms and
+2515 -> 338 ms. Padding lost at 32 tokens and is not used for that path.
+At 8191 tokens, input reuse measured 2106 -> 392 ms and 1207 -> 413 ms;
+local padding 514 -> 402 ms and 362 -> 282 ms; local key-range skipping
+259 -> 196 ms and 264 -> 195 ms; GELU fusion 195.4 -> 182.2 ms and
+200.1 -> 188.4 ms. Each step used its documented earlier options; do not
+multiply the gains or compare their different host-load states.
+The [earlier README](https://github.com/jethac/embeddinggemma2-jetha.c/blob/e7c2ec3/README.md)
+records exact flags and request counts.
+
+Eight-audio request arrays with bounded backbone batching measured
+141.5 -> 125.0 ms and 139.1 -> 120.9 ms on CUDA; 1426 -> 1319 ms and
+1376 -> 1289 ms on Windows. A Windows mixed-array pass lost:
+15.36 -> 15.70 seconds. Larger 4096-token groups were rejected.
+This does not implement cross-request media batching.
+
+Separating media encoding from the backbone changed a short Windows text
+request during a four-image request from 26.7 seconds to 0.87 seconds.
+A stalled external video probe previously delayed CUDA text 10.60 seconds;
+text now finished in 0.40 seconds, before the probe deadline.
+These are responsiveness fixes, not throughput comparisons.
+
+Transport and upload work used fresh keys on the shared RTX 5060 Ti host.
+Windows-to-WSL reused-connection audio measured 56.6 -> 19.4 ms and
+55.7 -> 14.4 ms after immediate body acknowledgements. Native Linux 1800-square
+PPM uploads measured 780 -> 611 ms and 645 -> 542 ms after base64 lookup;
+595 -> 548 ms and 436 -> 416 ms after quartet decoding;
+397 -> 305 ms and 405 -> 299 ms after simdjson parsing;
+292 -> 261 ms and 293 -> 253 ms after xxHash indexing;
+249 -> 209 ms and 240 -> 199 ms after unused media-ID hashing was removed.
+These are separate paired rounds. No compounded or Windows inference gain is
+established. All five input types remained exact for these changes.
+
+JPEG decoding measured 226 -> 191 ms and 245 -> 215 ms for a 3.49 MB upload;
+sampled cosine 0.999528, nine further cases minimum 0.999808. Six resize threads
+measured 284 -> 268 ms and 290 -> 261 ms with exact output. Later contended
+resize timings varied. Windows quality passed; Windows speedup is unproven.
+
+Video debug-log filtering measured 1755 -> 710 ms (96-square MP4),
+1506 -> 897 ms (1080p MP4), and 1057 -> 499 ms (Matroska), with matching
+Windows-mounted log sinks. The optional metadata probe measured smaller gains:
+240.6 -> 232.0 ms, 356.5 -> 350.2 ms, and 224.3 -> 212.7 ms.
+Earlier blocked-order probe timing was inconsistent. Release staging does not
+include this companion; system FFmpeg libraries are not bundled.
