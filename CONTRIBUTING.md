@@ -43,6 +43,10 @@ For Linux ARM64 portable dispatch, build with `-DEI_CPU_DISPATCH=ON` and
 `-DGGML_CPU_ARM_PORTABLE=ON`, then set both `EI_CPU_AUDIO_F16_2=1` and
 `EI_ARM_FP16_ACC_F32=1` for the guarded DOTPROD/FP16 module. Both numeric
 options default OFF; the armv8-a module provides runtime fallback.
+For ARM CPU weight optimizations, set `EI_CPU_REPACK2=1` and
+`EI_CPU_BF16_F32_2=1`. Repacking requires a CPU module with Q8 support.
+The F32 projection adds a 24 MiB buffer. Both options default OFF and
+use separate persistent cache identities.
 For text only, omit `--mmproj`. Use a separate build directory for each backend.
 
 | Platform | Changes to the commands above |
