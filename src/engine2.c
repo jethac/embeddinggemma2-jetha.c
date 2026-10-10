@@ -65,6 +65,7 @@ typedef struct {
     bool fused_geglu;
     bool media_batch;
     bool media_pipeline;
+    bool media_isolation;
     bool vision_clip_metadata;
     bool metal_media_flash_attn;
     bool audio_multishape_graph;
@@ -74,6 +75,8 @@ typedef struct {
     bool profile;
     pthread_mutex_t mutex;
     pthread_mutex_t media_mutex;
+    pthread_mutex_t vision_mutex;
+    pthread_mutex_t audio_mutex;
     pthread_cond_t media_slot;
     size_t media_inflight;
     struct llama_model *vocab_model;
@@ -488,6 +491,8 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     s->profile = getenv("EI_PROFILE_BACKBONE2") != NULL;
     pthread_mutex_init(&s->mutex, NULL);
     pthread_mutex_init(&s->media_mutex, NULL);
+    pthread_mutex_init(&s->vision_mutex, NULL);
+    pthread_mutex_init(&s->audio_mutex, NULL);
     pthread_cond_init(&s->media_slot, NULL);
     s->threads = 6;
     const char *threads = getenv("EI_THREADS");
@@ -671,6 +676,10 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     if (s->media_batch) fprintf(stderr, "Multimodal backbone batching: up to 1024 tokens, inputs up to 512\n");
     const char *media_pipeline = getenv("EI_MEDIA_PIPELINE2");
     s->media_pipeline = media_pipeline && strcmp(media_pipeline, "1") == 0;
+    const char *media_isolation = getenv("EI_MEDIA_ISOLATION2");
+    s->media_isolation = media_isolation && strcmp(media_isolation, "1") == 0 &&
+        s->media_pipeline && strncmp(e->backend_name, "CUDA", 4) == 0;
+    if (s->media_isolation) fprintf(stderr, "Media isolation: independent vision/audio preparation, two admitted requests\n");
     const char *vision_clip_metadata = getenv("EI_VISION_CLIP_METADATA2");
     s->vision_clip_metadata = vision_clip_metadata && strcmp(vision_clip_metadata, "1") == 0;
     if (s->vision_clip_metadata) fprintf(stderr, "Vision clipping: explicit metadata only\n");
@@ -747,6 +756,8 @@ void ei_engine_free(ei_engine *e) {
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);
         pthread_mutex_destroy(&s->mutex);
         pthread_mutex_destroy(&s->media_mutex);
+        pthread_mutex_destroy(&s->vision_mutex);
+        pthread_mutex_destroy(&s->audio_mutex);
         pthread_cond_destroy(&s->media_slot);
         free(s);
     }
@@ -839,8 +850,9 @@ static int read_video_frame2(size_t index, void *user, mtmd_bitmap **bitmap, cha
     return result;
 }
 
-/* Caller holds media_mutex. Only one decoded input and one bounded pending raw
- * batch are resident; encoder contexts never execute concurrently. */
+/* Caller holds media_mutex, or the selected modality locks in isolation mode.
+ * Each encoder context executes serially; separate vision/audio contexts may
+ * overlap under the two-request admission bound. */
 static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
                           float **prepared, size_t *tokens, double *encoder_ms,
                           char *err, size_t err_len) {
@@ -862,8 +874,8 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
     mtmd_input_chunks *chunks = mtmd_input_chunks_init();
     float *raw = NULL;
     bool ok = false;
-    /* Keep one media request's decoded/preprocessed buffers resident at a time.
-     * The media encoder has its own backend/scheduler. Its graph and immutable
+    /* Admission and modality locks bound decoded/preprocessed residency before
+     * allocation. The media encoder has its own backend/scheduler. Its graph and immutable
      * token-table reads do not use the backbone's scratch buffers; text can
      * progress during decoding and encoding. Lock order is media, then backbone,
      * and text takes only the backbone lock. */
@@ -955,6 +967,19 @@ static bool prepare_parts(ei_engine *e, const ei_media_part *parts, size_t n_par
                 fail(err, err_len, "invalid media boundary tokens"); goto done;
             }
         } else {
+            if (s->media_isolation) {
+                // Request-owned output avoids mtmd_context's shared out_embd.
+                mtmd_batch *encoded = mtmd_batch_init(s->media);
+                bool encoded_ok = encoded && mtmd_batch_add_chunk(encoded, chunk) == 0 &&
+                    mtmd_batch_encode(encoded) == 0;
+                float *rows = encoded_ok ? mtmd_batch_get_output_embd(encoded, chunk) : NULL;
+                bool have_rows = rows != NULL;
+                if (rows) memcpy(raw + cursor * HIDDEN, rows, nt * HIDDEN * sizeof *raw);
+                if (encoded) mtmd_batch_free(encoded);
+                if (!have_rows) { fail(err, err_len, "modality encoder failed"); goto done; }
+                cursor += nt;
+                continue;
+            }
             if (mtmd_encode_chunk(s->media, chunk) != 0) {
                 fail(err, err_len, "modality encoder failed"); goto done;
             }
@@ -1001,12 +1026,59 @@ static bool compute_media(ei_engine *e, const float *raw, const size_t *offsets,
     return ok;
 }
 
+static unsigned media_locks2(const ei_media_part *parts, size_t count) {
+    unsigned locks = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (parts[i].type == EI_PART_IMAGE || parts[i].type == EI_PART_VIDEO) locks |= 1;
+        if (parts[i].type == EI_PART_AUDIO) locks |= 2;
+    }
+    return locks;
+}
+
+static void media_enter2(engine2 *s, unsigned locks) {
+    // No allocation before admission. A queued second vision request cannot
+    // consume the slot needed by audio. Mixed inputs always lock vision first.
+    if (locks & 1) pthread_mutex_lock(&s->vision_mutex);
+    if (locks & 2) pthread_mutex_lock(&s->audio_mutex);
+    pthread_mutex_lock(&s->media_mutex);
+    while (s->media_inflight == 2) pthread_cond_wait(&s->media_slot, &s->media_mutex);
+    s->media_inflight++;
+    pthread_mutex_unlock(&s->media_mutex);
+}
+
+static void media_unlock2(engine2 *s, unsigned locks) {
+    if (locks & 2) pthread_mutex_unlock(&s->audio_mutex);
+    if (locks & 1) pthread_mutex_unlock(&s->vision_mutex);
+}
+
+static void media_leave2(engine2 *s) {
+    pthread_mutex_lock(&s->media_mutex);
+    s->media_inflight--;
+    pthread_cond_signal(&s->media_slot);
+    pthread_mutex_unlock(&s->media_mutex);
+}
+
 bool ei_engine_embed_parts(ei_engine *e, const ei_media_part *parts, size_t n_parts,
                            float out[EI_N_EMBD], size_t *tokens, double *encoder_ms,
                            double *backbone_ms, char *err, size_t err_len) {
     engine2 *s = e->gemma2;
     float *raw = NULL;
     *backbone_ms = 0;
+    if (s->media_isolation) {
+        if (!parts || !n_parts || n_parts > 64)
+            return fail(err, err_len, "content must contain 1..64 parts");
+        unsigned locks = media_locks2(parts, n_parts);
+        media_enter2(s, locks);
+        bool ok = prepare_parts(e, parts, n_parts, &raw, tokens, encoder_ms, err, err_len);
+        media_unlock2(s, locks);
+        if (ok) {
+            size_t offsets[] = {0, *tokens};
+            ok = compute_media(e, raw, offsets, 1, out, backbone_ms, err, err_len);
+        }
+        free(raw);
+        media_leave2(s);
+        return ok;
+    }
     pthread_mutex_lock(&s->media_mutex);
     if (s->media_pipeline) {
         // Reserve before decoding. Two owned raw inputs cost at most 32 MiB;
@@ -1052,7 +1124,15 @@ bool ei_engine_embed_parts_batch(ei_engine *e, const ei_media_part *const *parts
     size_t count = 0, first = 0;
     bool ok = true;
     *encoder_ms = *backbone_ms = 0;
-    pthread_mutex_lock(&s->media_mutex);
+    unsigned locks = 0;
+    if (s->media_isolation) {
+        for (size_t i = 0; i < batch; i++) {
+            if (!parts[i] || !n_parts[i] || n_parts[i] > 64)
+                return fail(err, err_len, "content must contain 1..64 parts");
+            locks |= media_locks2(parts[i], n_parts[i]);
+        }
+        media_enter2(s, locks);
+    } else pthread_mutex_lock(&s->media_mutex);
     pending = ei_xmalloc(limit * HIDDEN * sizeof *pending);
     for (size_t i = 0; ok && i < batch; i++) {
         float *raw = NULL;
@@ -1080,7 +1160,10 @@ bool ei_engine_embed_parts_batch(ei_engine *e, const ei_media_part *const *parts
     }
     if (ok && count) ok = compute_media(e, pending, offsets, count, out + first * EI_N_EMBD,
                                         backbone_ms, err, err_len);
-    pthread_mutex_unlock(&s->media_mutex);
     free(pending);
+    if (s->media_isolation) {
+        media_unlock2(s, locks);
+        media_leave2(s);
+    } else pthread_mutex_unlock(&s->media_mutex);
     return ok;
 }

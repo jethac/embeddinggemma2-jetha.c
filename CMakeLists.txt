@@ -65,6 +65,7 @@ execute_process(COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scr
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-audio-multishape-cache.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cpu-pad-rows.patch"
     "${CMAKE_CURRENT_SOURCE_DIR}/deps/ggml-cuda-q8-width.patch"
+    "${CMAKE_CURRENT_SOURCE_DIR}/deps/mtmd-singleton-batch-output.patch"
     RESULT_VARIABLE EI_PATCH_RESULT ERROR_VARIABLE EI_PATCH_ERROR)
 if(NOT EI_PATCH_RESULT EQUAL 0)
     message(FATAL_ERROR "Cannot apply pinned dependency patches: ${EI_PATCH_ERROR}")

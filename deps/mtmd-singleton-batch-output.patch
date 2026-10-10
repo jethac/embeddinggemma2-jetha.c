@@ -1,0 +1,14 @@
+--- a/tools/mtmd/mtmd.cpp
++++ b/tools/mtmd/mtmd.cpp
+@@ -2130,6 +2130,11 @@
+             LOG_ERR("%s: chunk is placeholder\n", __func__);
+             return 1;
+         }
++    }
++
++    // Preserve singleton chunk storage and encode math; output is batch-owned.
++    if (batch->entries.size() == 1) {
++        return mtmd_encode_chunk_impl(batch->ctx, batch->entries[0], batch->output_embd);
+     }
+ 
+     // represent the whole batch as one single chunk
