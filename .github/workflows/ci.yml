@@ -214,7 +214,13 @@ jobs:
           test "$(uname -m)" = aarch64
           lscpu
           /usr/local/cuda/bin/nvcc --version
-          cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda -DCMAKE_CUDA_ARCHITECTURES=121a-real -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          # Use GCC11 symbol versions at link time. Do not install or package this library.
+          mkdir -p build-gcc11-link
+          curl --fail --location --retry 3 -o build-gcc11-link/runtime.deb https://old-releases.ubuntu.com/ubuntu/pool/main/g/gcc-11/libstdc++6_11.2.0-7ubuntu2_arm64.deb
+          dpkg-deb -x build-gcc11-link/runtime.deb build-gcc11-link
+          link_dir="$PWD/build-gcc11-link/usr/lib/aarch64-linux-gnu"
+          ln -s libstdc++.so.6.0.29 "$link_dir/libstdc++.so"
+          cmake -S . -B build-cmake "-DCMAKE_EXE_LINKER_FLAGS=-L$link_dir" -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda -DCMAKE_CUDA_ARCHITECTURES=121a-real -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha -j 2
       - name: Stage ARM64 CUDA assets without loading a GPU driver
         if: env.ARM_CUDA_COMPILE == '1'
@@ -242,6 +248,9 @@ jobs:
                   if not versions: continue
                   maximum = max(versions)
                   print(f'{path}: {namespace}_' + '.'.join(map(str, maximum)))
+                  if maximum > limit:
+                      imports = subprocess.check_output(['readelf', '--wide', '--dyn-syms', str(path)], text=True)
+                      print('\n'.join(line for line in imports.splitlines() if ' UND ' in line and namespace + '_' in line), flush=True)
                   assert maximum <= limit, f'{path}: {namespace} exceeds the Ubuntu 22.04 build baseline'
           PY
       - name: Check packaged CUDA dependencies and 121a code objects
@@ -254,7 +263,9 @@ jobs:
           dynamic = subprocess.check_output(['readelf', '--dynamic', str(binary)], text=True)
           needed = set(re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic))
           print('ARM64 CUDA DT_NEEDED:', sorted(needed))
-          assert {'libcuda.so.1', 'libcudart.so.13', 'libcublas.so.13'} <= needed, 'missing CUDA runtime dependency'
+          assert {'libcuda.so.1', 'libcudart.so.13', 'libcublas.so.13', 'libstdc++.so.6'} <= needed, 'missing CUDA runtime dependency'
+          imports = subprocess.check_output(['readelf', '--wide', '--dyn-syms', str(binary)], text=True)
+          print('\n'.join(line for line in imports.splitlines() if ' UND ' in line and 'condition_variable' in line))
           objects = subprocess.check_output(['/usr/local/cuda/bin/cuobjdump', '--list-elf', str(binary)], text=True)
           print(objects)
           assert set(re.findall(r'sm_[0-9]+[a-z]?', objects)) == {'sm_121a'}, 'unexpected CUDA code architecture'
