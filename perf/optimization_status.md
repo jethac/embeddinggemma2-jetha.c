@@ -3797,7 +3797,6 @@ passed all five modalities at C1/C4, 128/256/512/768 dimensions, original-FP32
 was 0.999268. Persisted cache flip/restart separated/restored both numeric
 variants; flag ON on unsupported Cortex-A53 retained baseline fallback.
 
-<<<<<<< HEAD
 ### CUDA cold-request profiling (2026-10-10)
 
 Warmed 1-second 660 Hz audio used identical encoder kernels in both engines:
@@ -3811,7 +3810,7 @@ A cold native trace spent 507 ms in 31 CUDA library loads; kernel work was
 audio response took 23.46/23.46 seconds, versus LAZY's 4.06/7.35 seconds.
 These are busy-host diagnostics; profiler overhead and order variation prevent
 a throughput or precise latency-savings claim.
-=======
+
 ### Optional CUDA audio startup prime (2026-10-10)
 
 Isolated native Windows RTX 5060 Ti services used the deployed CUDA F16
@@ -3831,6 +3830,5 @@ ON retained all five modalities and original HF audio gates. Five-second
 660 Hz passed 128/256/512/768 dimensions, minimum cosine 0.9991466. Invalid
 values, CPU selection and missing audio failed before readiness.
 
-The candidate remains isolated and default OFF. It primes only a common
-one-second audio shape, uses no cache entries and changes no numeric domain.
->>>>>>> 537a31c (Add optional CUDA audio prime before readiness)
+The option defaults OFF. It primes only a common one-second audio shape,
+uses no cache entries and changes no numeric domain.
