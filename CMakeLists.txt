@@ -38,20 +38,10 @@ set(GGML_NATIVE OFF CACHE BOOL "Portable CPU baseline")
 set(GGML_AVX512 OFF CACHE BOOL "Local AVX-512 experiment")
 FetchContent_Declare(llama
     GIT_REPOSITORY https://github.com/ggml-org/llama.cpp.git
-    GIT_TAG de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b)
+    GIT_TAG de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b
+    SOURCE_SUBDIR embeddinggemma2-populate-only)
 # Populate first: dependency CMake patches must precede its configuration.
-# CMake 3.30 deprecates this explicit population API but still supports it.
-if(POLICY CMP0169)
-    cmake_policy(PUSH)
-    cmake_policy(SET CMP0169 OLD)
-endif()
-FetchContent_GetProperties(llama)
-if(NOT llama_POPULATED)
-    FetchContent_Populate(llama)
-endif()
-if(POLICY CMP0169)
-    cmake_policy(POP)
-endif()
+FetchContent_MakeAvailable(llama)
 # Keep media fixes and CPU/OS dispatch guards as separate, adoptable patches
 # against the pinned dependency.
 find_package(Git REQUIRED)
