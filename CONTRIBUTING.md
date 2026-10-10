@@ -219,6 +219,12 @@ Diagnostic controls:
 - `EI_CPU_FUSED_RMS_QUANT=0`: materialize normalized activations before Q8.
 - `EI_CPU_MULTIROW_MIN_TOKENS=0..65536`: disable or move the multirow boundary.
 - `EI_CPU_FUSED_GELU_QUANT=1`: enable the rejected fused activation experiment.
+- `EI_CPU_AUDIO_F16_2=1`: replace the 132 Gemma4 audio Conformer Q8_0
+  matrices with F16 at load time, avoiding Q8 activation rounding. Default
+  OFF; applies only to a loaded CPU audio encoder. Adds 270 MiB of weights
+  and separates the numeric cache domain. Output projections remain Q8_0.
+  Native Windows AVX2/AVX-512 passed the original FP32 audio gate; other
+  CPU platforms require qualification.
 
 ### Metal
 

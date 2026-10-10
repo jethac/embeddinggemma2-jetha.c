@@ -3468,3 +3468,40 @@ all deployed journeys and cache restoration again. Windows was unchanged.
 The public option remains experimental and default OFF. A node trace
 showed unchanged isolated text spans but unequal concurrent audio overlap;
 it cannot attribute the private HTTP difference to GPU scheduling.
+
+
+## CPU audio F16 activation accuracy option
+
+The exact 1-second 660 Hz PCM fixture failed the original FP32 reference
+on native Xeon W-2135: Q8 audio cosine was 0.997836 on AVX2 and 0.998584
+on AVX-512. Matched dequantized GGUF weights in the independent FP32
+reference retained encoder cosine 0.999907; adding the actual Q8 activation
+quantizer reduced it to 0.992746. Early convolution/layout and matched RMS
+and pointwise computations did not explain the drift. Selective tail-layer
+precision was insufficient after the native backbone.
+
+Default-OFF `EI_CPU_AUDIO_F16_2=1` replaces 132 Conformer Q8_0 matrices
+with F16 before CPU allocation, without retaining duplicate weights.
+Weights grow from 306 to 576 MiB (+270 MiB); convolution/norm weights and
+the two output projections retain their types. GPU/default-OFF paths are
+unchanged. Only an active loaded CPU audio encoder changes cache identity.
+
+Actual native AVX2 and AVX-512 passed all four 1-second 330/440/550/660 Hz
+fixtures against the original FP32 reference (minimum cosine 0.999322),
+128/256/512 dimensions (minimum 0.999347), changed 2-second 330 Hz and
+5-second 660 Hz clips (minimum 0.999304). All five modalities, mixed 8192,
+8193 rejection, deterministic output, and cache separation/restart passed.
+Same-ISA text/image/video were byte-exact. This does not qualify ARM.
+
+Same-build native AVX-512, six threads, Q8-pair/PAD enabled, cache disabled:
+20 fixture-balanced paired requests per duration measured 1-second audio
+142.321 -> 126.733 ms (19/20 wins; paired median 1.098x), and 2-second
+230.920 -> 194.206 ms (20/20 wins; 1.198x). Aggregate ratios were 1.104x
+and 1.194x. Both orders remained positive (1-second 1.074x/1.135x;
+2-second 1.203x/1.185x). P95 was 156.295 -> 142.279 ms and
+250.031 -> 210.401 ms; all samples were retained, including the 1-second
+ON maximum 169.379 ms versus OFF 158.397 ms. Comparable warmed private
+memory increased by 270.61 MiB (1-second) and 271.25 MiB (2-second).
+These are shared-host accuracy-fix cost measurements with foreign CPU load,
+not quiet-host or llama.cpp comparisons; the OFF baseline fails quality.
+The option remains undeployed pending review.
