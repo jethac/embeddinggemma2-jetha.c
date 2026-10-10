@@ -188,7 +188,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio","image","video","mixed"]' || '["full"]') }}
+        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && (inputs.media_profile_phases && '["text,audio"]' || '["text,audio","image","video","mixed"]') || '["full"]') }}
     name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || (github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && format('Matched ARM CPU vs llama ({0})', matrix.modalities) || 'EmbeddingGemma 2 service (Linux ARM64 CPU)') }}
     runs-on: ubuntu-24.04-arm
     container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
@@ -583,12 +583,17 @@ jobs:
           EI_CPU_AUDIO_F16_2: '1'
           EI_ARM_FP16_ACC_F32: '1'
           ARM_MEDIA_MODALITIES: ${{ matrix.modalities }}
+          ARM_PROFILE_PHASES: ${{ inputs.media_profile_phases && '1' || '0' }}
         run: |
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
           args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$ARM_MEDIA_MODALITIES")
-          python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
-          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
+          if [ "$ARM_PROFILE_PHASES" = 1 ]; then
+            python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --profile-phases --concurrency 1,4
+          else
+            python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
+            python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
+          fi
   gemma2-windows:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)

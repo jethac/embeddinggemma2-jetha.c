@@ -135,6 +135,9 @@ def phase_costs(path, offset, require_encoder=True):
                             'median_ms': dict(zip(fields, map(statistics.median, zip(*samples))))}
     if require_encoder and 'encoder' not in result:
         raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
+    result['backbone_messages'] = [line for line in lines if 'backbone:' in line]
+    result['llama_eval_messages'] = [line for line in lines if
+                                   'prompt eval time' in line or 'eval time =' in line]
     # AUTO can disable unsupported flash attention while the reference forces
     # it on. Preserve the actual encoder decisions before choosing kernel work.
     # llama.cpp warms the encoder during startup, before the phase offset.
@@ -274,7 +277,6 @@ def main():
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env=llama_env) as lp:
-                    log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     if cpu_audio_f16:
                         marker = 'CPU audio F16 active: 132 Conformer matrices'
                         for name, process in (('native', op), ('llama.cpp', lp)):
@@ -347,6 +349,12 @@ def main():
                         raise RuntimeError('vision metadata experiment was not enabled')
                     if a.metal_media_flash_attn and 'Metal media flash attention: forced on;' not in op.log_path.read_text(errors='replace'):
                         raise RuntimeError('Metal encoder flash attention experiment was not enabled')
+                    if a.validate_only and a.profile_phases:
+                        for engine, endpoint in enumerate((ours, llama)):
+                            warm_bodies = [json.dumps(pair[engine], separators=(',', ':')).encode()
+                                           for pair in inputs[:concurrency]]
+                            run_requests(endpoint, warm_bodies, 2, 0)
+                    log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     rows = {'ours': [], 'llama': []}; quality = []
                     for engine, endpoint in enumerate((ours, llama)):
                         with ThreadPoolExecutor(max_workers=concurrency) as pool:
