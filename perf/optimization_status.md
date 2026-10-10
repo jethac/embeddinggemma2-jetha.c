@@ -3323,6 +3323,18 @@ the same order bias: OFF/ON medians 13.849/13.282 ms, 18/32 ON wins, and
 These timings do not qualify a speedup. A corrected per-fixture comparison
 is required before the dev option is retained for performance.
 
+The corrected run asserted two OFF-first and two ON-first pairs for each
+of eight fixtures. All 32 deployed requests were inference misses and no
+graph rebuilt. OFF/ON medians were 13.866/13.110 ms; aggregate ratio was
+1.020x, with 20/32 ON wins. All four cycle aggregates improved. However,
+OFF-first aggregate was 0.970x and ON-first was 1.076x; host load remained
+variable. Both order groups had positive median paired ratios.
+Long two-second cases had a 1.046x median paired ratio and 13/16 ON wins.
+Short cases had a 0.991x median paired ratio and 7/16 wins; their arithmetic
+was unchanged. The dev option is retained for the measured long-case gain,
+supported by device timings. It remains OFF by default. No general or
+quiet-host speedup is established.
+
 ## Native CPU ISA comparison
 
 On Xeon W-2135, isolated Haswell and SkylakeX runtimes each loaded only the
