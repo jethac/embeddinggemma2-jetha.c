@@ -243,7 +243,7 @@ jobs:
           python3 scripts/download-model2.py
           unset LD_LIBRARY_PATH GGML_BACKEND_PATH
           PYTHONPATH="$PWD/perf" python3 - <<'PY'
-          import json, os, subprocess, tempfile, time, urllib.request
+          import json, os, signal, subprocess, tempfile, time, urllib.request
           from pathlib import Path
           from types import SimpleNamespace
           from compare_llamacpp import Endpoint, cosine_similarity
@@ -264,6 +264,7 @@ jobs:
               root = Path(tmp)
               cases = fixtures(root, 1)
               processes = []
+              persistent = set()
               def start(name, label, cache=None, emulate=False, profile=False, precise=True):
                   endpoint = endpoints[name]
                   command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
@@ -280,6 +281,7 @@ jobs:
                       process = subprocess.Popen(command, cwd=root, env=child_env,
                                                  stdout=subprocess.DEVNULL, stderr=stderr)
                   processes.append(process)
+                  if cache: persistent.add(process.pid)
                   deadline = time.monotonic() + (600 if emulate else 180)
                   while time.monotonic() < deadline:
                       if process.poll() is not None: raise AssertionError(log.read_text())
@@ -298,10 +300,15 @@ jobs:
                   return process, log
               def stop(process):
                   process.terminate()
-                  try: assert process.wait(timeout=60) == 0, 'cache shutdown failed'
+                  try:
+                      status = process.wait(timeout=60)
+                      # Only persistent-cache servers install graceful stop handlers.
+                      expected = (0,) if process.pid in persistent else (0, -signal.SIGTERM)
+                      assert status in expected, ('ARM service shutdown failed', status, expected)
                   except subprocess.TimeoutExpired:
                       process.kill(); process.wait(); raise
                   processes.remove(process)
+                  persistent.discard(process.pid)
               try:
                   # Same 330 Hz/1 s fixture that failed at cosine .9987010972.
                   # Reproduce with the precision flag absent before testing the fix.
