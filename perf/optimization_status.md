@@ -3356,6 +3356,23 @@ Actual encoder outputs already differed: cosine 0.995546 across 25×512
 values. The divergence starts before the backbone; its kernel cause is
 not yet established. No change was attributed to PAD copies or Q8 pairing.
 
+A private F32 control changed only the two audio subsampling convolutions
+from F16 to F32 im2col. Cross-ISA encoder cosine improved from 0.995546 to
+0.999675, but final cosine was 0.998535. FP32 reference cosine was 0.998370
+for AVX2 and 0.998638 for AVX-512. All remain below the final 0.999 gate.
+The control was not retained. Convolution rounding explains much of the
+encoder difference; identical-feature replay will isolate the remaining
+backbone difference. The reference uses FP32 weights, so its difference
+from Q8 weights does not alone prove an implementation error.
+
+## GB10 device compilation
+
+CUDA 13.0.88 compiled the pinned GGML CUDA source with the 16 patches from
+`d899e52` for `121a-real`. The build completed. The 69,861,068-byte archive
+contains 144 ELF code objects, all `sm_121a`.
+The host objects are x86-64. This is a device compilation result, not an
+ARM64 link, GB10 runtime check, or performance result.
+
 ## Rejected native ARM FP16 path
 
 [Run 38026098520](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38026098520)
