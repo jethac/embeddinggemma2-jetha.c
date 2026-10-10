@@ -3366,6 +3366,13 @@ gave cross-ISA final cosine 0.999246 and 0.999397. Both passed, although
 neither reached 0.999 against FP32. Encoder variation and backbone drift
 combine in the failing full request. The reference uses FP32 weights, so
 its difference from Q8 weights does not alone prove an implementation error.
+An exact 660 Hz SDPA reference encoder check used a boolean attention mask.
+Both stored BF16 convolution tensors, expanded to FP32, matched the GGUF
+F32 weights exactly. Baseline encoder cosine against HF was 0.994790 for
+AVX2 and 0.998819 for AVX-512. The F32 convolution control reduced these
+to 0.992368 and 0.990991. It improved ISA agreement but worsened reference
+agreement. It is rejected as an accuracy fix; the next comparison starts
+with preprocessing and subsampling outputs.
 
 ## GB10 device compilation
 
