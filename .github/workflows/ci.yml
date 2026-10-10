@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
+      arm_cuda_compile:
+        description: Compile and stage native ARM64 CUDA121a code; no GPU runtime check
+        type: boolean
+        default: false
       benchmark_cpu:
         description: Run the matched uncached CPU comparison against pinned llama.cpp
         type: boolean
@@ -16,6 +20,10 @@ on:
         default: false
       benchmark_metal_media:
         description: Compare the five-modality Metal service with pinned llama.cpp on macOS
+        type: boolean
+        default: false
+      mac_cpu_audio_f16:
+        description: Check native Mac CPU F16 audio against original FP32 SDPA
         type: boolean
         default: false
       cpu_pair_vnni:
@@ -151,9 +159,14 @@ jobs:
           lscpu
           cc --version
           python perf/compare_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --token-counts 32,256,1024 --concurrency 1,4 --rounds 5 --target-seconds 8
+      - name: Check CPU audio against the original model before media timing
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
+        run: |
+          python tests/audio_f16_reference2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --threads 2
       - name: Measure matched multimodal CPU journeys in both engine orders
         if: github.event_name == 'workflow_dispatch' && inputs.benchmark_media
         env:
+          EI_CPU_AUDIO_F16_2: '1'
           EI_QKV2: ${{ inputs.packed_qkv && '1' || '0' }}
           MEDIA_MODALITIES: ${{ inputs.media_modalities || 'image,audio,video,mixed' }}
           EI_CPU_Q8_PAIR_VNNI2: ${{ inputs.cpu_pair_vnni && '1' || '0' }}
@@ -167,10 +180,12 @@ jobs:
           if [ "$MEDIA_PROFILE_PHASES" = 1 ]; then args+=(--profile-phases); fi
           python perf/compare_media_llamacpp2.py --backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-installed/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$MEDIA_MODALITIES" --concurrency 1,4 --rounds 5 --target-seconds 8 "${args[@]}"
   gemma2-linux-arm64:
-    name: EmbeddingGemma 2 service (Linux ARM64 CPU)
+    name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || 'EmbeddingGemma 2 service (Linux ARM64 CPU)' }}
     runs-on: ubuntu-24.04-arm
-    container: ubuntu:22.04
-    timeout-minutes: 60
+    container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
+    timeout-minutes: ${{ inputs.arm_cuda_compile && 90 || 60 }}
+    env:
+      ARM_CUDA_COMPILE: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && '1' || '0' }}
     defaults:
       run:
         shell: bash
@@ -185,6 +200,7 @@ jobs:
           cmake --version
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build the portable ARM64 CPU service
+        if: env.ARM_CUDA_COMPILE != '1'
         run: |
           uname -m
           test "$(uname -m)" = aarch64
@@ -206,6 +222,7 @@ jobs:
           fi
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
       - name: Stage and install the ARM64 CPU application
+        if: env.ARM_CUDA_COMPILE != '1'
         run: |
           cmake --install build-cmake --prefix "$PWD/build-stage"
           python3 scripts/stage-release2.py --build build-cmake --prefix build-stage --dist build-release-assets --target linux-arm64 --backend cpu
@@ -220,13 +237,39 @@ jobs:
           mkdir build-arm-held
           mv build-arm-baseline/bin/libggml-cpu-armv8_dotprod_fp16.so build-arm-held/
           python3 tests/installed_service2.py --prefix build-arm-baseline
+      - name: Compile and link native ARM64 CUDA121a code
+        if: env.ARM_CUDA_COMPILE == '1'
+        run: |
+          test "$(uname -m)" = aarch64
+          lscpu
+          /usr/local/cuda/bin/nvcc --version
+          # Use GCC11 symbol versions at link time. Do not install or package this library.
+          mkdir -p build-gcc11-link
+          curl --fail --location --retry 3 -o build-gcc11-link/runtime.deb https://old-releases.ubuntu.com/ubuntu/pool/main/g/gcc-11/libstdc++6_11.2.0-7ubuntu2_arm64.deb
+          dpkg-deb -x build-gcc11-link/runtime.deb build-gcc11-link
+          link_dir="$PWD/build-gcc11-link/usr/lib/aarch64-linux-gnu"
+          ln -s libstdc++.so.6.0.29 "$link_dir/libstdc++.so"
+          cmake -S . -B build-cmake "-DCMAKE_EXE_LINKER_FLAGS=-L$link_dir" -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=ON -DGGML_CUDA_NCCL=OFF -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc -DCUDAToolkit_ROOT=/usr/local/cuda -DCMAKE_CUDA_ARCHITECTURES=121a-real -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          cmake --build build-cmake --target embeddinggemma2-jetha -j 2
+      - name: Stage ARM64 CUDA assets without loading a GPU driver
+        if: env.ARM_CUDA_COMPILE == '1'
+        run: |
+          cmake --install build-cmake --prefix "$PWD/build-stage"
+          python3 scripts/stage-release2.py --build build-cmake --prefix build-stage --dist build-release-assets --target linux-arm64 --backend cuda
+          mkdir -p build-packaged/bin
+          tar -xzf build-release-assets/embeddinggemma2-jetha-linux-arm64-cuda.runtime.tar.gz -C build-packaged
+          cp build-release-assets/embeddinggemma2-jetha-linux-arm64-cuda build-packaged/bin/embeddinggemma2-jetha
+      - name: Check packaged ARM64 ELF and Ubuntu 22.04 ABI
+        run: |
           python3 - <<'PY'
           from pathlib import Path
           import re, subprocess
           for path in Path('build-packaged').rglob('*'):
               if not path.is_file(): continue
               with path.open('rb') as stream:
-                  if stream.read(4) != b'\x7fELF': continue
+                  header = stream.read(20)
+              if header[:4] != b'\x7fELF': continue
+              assert header[4:6] == b'\x02\x01' and int.from_bytes(header[18:20], 'little') == 183, f'{path}: not AArch64 ELF64'
               symbols = subprocess.check_output(['readelf', '--version-info', str(path)], text=True)
               for namespace, limit in [('GLIBC', (2, 34)), ('GLIBCXX', (3, 4, 29))]:
                   versions = [tuple(map(int, v.split('.'))) for v in
@@ -234,9 +277,31 @@ jobs:
                   if not versions: continue
                   maximum = max(versions)
                   print(f'{path}: {namespace}_' + '.'.join(map(str, maximum)))
+                  if maximum > limit:
+                      imports = subprocess.check_output(['readelf', '--wide', '--dyn-syms', str(path)], text=True)
+                      print('\n'.join(line for line in imports.splitlines() if ' UND ' in line and namespace + '_' in line), flush=True)
                   assert maximum <= limit, f'{path}: {namespace} exceeds the Ubuntu 22.04 build baseline'
           PY
+      - name: Check packaged CUDA dependencies and 121a code objects
+        if: env.ARM_CUDA_COMPILE == '1'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          binary = Path('build-packaged/bin/embeddinggemma2-jetha')
+          dynamic = subprocess.check_output(['readelf', '--dynamic', str(binary)], text=True)
+          needed = set(re.findall(r'\(NEEDED\).*?\[(.*?)\]', dynamic))
+          print('ARM64 CUDA DT_NEEDED:', sorted(needed))
+          assert {'libcuda.so.1', 'libcudart.so.13', 'libcublas.so.13', 'libstdc++.so.6'} <= needed, 'missing CUDA runtime dependency'
+          imports = subprocess.check_output(['readelf', '--wide', '--dyn-syms', str(binary)], text=True)
+          print('\n'.join(line for line in imports.splitlines() if ' UND ' in line and 'condition_variable' in line))
+          objects = subprocess.check_output(['/usr/local/cuda/bin/cuobjdump', '--list-elf', str(binary)], text=True)
+          print(objects)
+          assert set(re.findall(r'sm_[0-9]+[a-z]?', objects)) == {'sm_121a'}, 'unexpected CUDA code architecture'
+          print('Native ARM64 CUDA compile/link/staging passed; GPU load and inference remain untested.')
+          PY
       - name: Compare installed ARM kernels and exercise baseline ISA safety
+        if: env.ARM_CUDA_COMPILE != '1'
         env:
           EI_THREADS: '2'
         run: |
@@ -632,6 +697,45 @@ jobs:
           python3 tests/text_context2.py
           python3 tests/video_container2.py
           python3 tests/media_persistence2.py --binary build-cmake/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+      - name: Check native CPU F16 audio against the original model
+        if: github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16
+        run: |
+          uname -m
+          test "$(uname -m)" = arm64
+          python3 tests/audio_f16_reference2.py --binary build-packaged/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+      - name: Run the native CPU F16 modality, prefix and cache journeys
+        if: github.event_name == 'workflow_dispatch' && inputs.mac_cpu_audio_f16
+        env:
+          EI_THREADS: '3'
+          EI_CPU_AUDIO_F16_2: '1'
+        run: |
+          binary="$PWD/build-packaged/bin/embeddinggemma2-jetha"
+          "$binary" --bind 127.0.0.1 --port 42670 --backend cpu --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --cache-entries 0 --response-cache-mb 16 > build-cmake/f16-journey.stdout.log 2> build-cmake/f16-journey.stderr.log &
+          service_pid=$!
+          trap 'status=$?; if [ "$status" -ne 0 ]; then tail -n 120 build-cmake/f16-journey.stderr.log; fi; kill "$service_pid" 2>/dev/null || true; exit "$status"' EXIT
+          ready=0
+          for attempt in $(seq 1 180); do
+            if curl -fsS --max-time 2 http://127.0.0.1:42670/healthz; then ready=1; break; fi
+            if ! kill -0 "$service_pid" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          grep 'CPU audio F16 active: 132 Conformer matrices' build-cmake/f16-journey.stderr.log
+          if grep -q 'ggml_metal_library_init' build-cmake/f16-journey.stderr.log; then exit 1; fi
+          python3 examples/journey2.py --url http://127.0.0.1:42670 --check-prefixes
+          python3 - <<'PY'
+          from pathlib import Path
+          calls = Path('build-cmake/f16-journey.stderr.log').read_text().count('multimodal request:')
+          print('F16 modality/prefix journey: media inference calls=', calls)
+          assert calls == 16, 'repeated requests missed the response cache'
+          PY
+          kill "$service_pid"
+          # A nonpersistent service uses the default SIGTERM exit status.
+          stop_status=0
+          wait "$service_pid" || stop_status=$?
+          test "$stop_status" = 0 || test "$stop_status" = 143
+          trap - EXIT
+          python3 tests/qkv_cache2.py --binary "$binary" --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode cpu-audio-f16
       - name: Run Metal and compare all five modalities with CPU
         if: steps.metal.outputs.available == 'ON'
         env:

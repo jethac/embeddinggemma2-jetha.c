@@ -3443,8 +3443,8 @@ both-order throughput ratios were 1.552x text, 1.780x audio and 1.691x image.
 Other CPU load was 0.0% in all measured windows. QEMU Cortex-A53 selected
 the baseline module with the optimized module present. Persisted caches
 separated baseline, half accumulation and FP32 accumulation; same-mode
-restart restored responses. The candidate remains unmerged pending
-reduced-dimension and full-context checks. Other ARM extensions remain open.
+restart restored responses. At this stage, the candidate remained unmerged
+pending reduced-dimension and full-context checks.
 
 ## CUDA backbone stream priority
 
@@ -3527,7 +3527,68 @@ aggregate 1.095x); two-second audio 256.997 -> 217.319 ms (16/20 wins,
 against a known failing baseline, not a quiet-host or llama.cpp claim.
 
 
+Native macOS ARM CPU, three threads, current 21-patch source: F16 audio
+passed the original FP32 SDPA reference in
+[run 38034039814](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38034039814).
+For 660 Hz PCM, 1-second cosine improved from 0.998006751 to 0.999280925
+(29 tokens); 5-second improved from 0.998469465 to 0.999005756 (129 tokens).
+The 5-second result narrowly clears 0.999. The packaged ON service passed
+all five modalities and 128/256/512/768 dimensions with normalized prefixes.
+Repeated media requests hit the response cache. The F16 cache domain differs
+from OFF; ON responses matched fresh inference and survived restart with
+zero inference. These are quality and cache checks, with no Mac speed claim.
+
 `tests/audio_reference2.py --q8-activation-regression` reproduced the exact
 660 Hz quantization failure on the preserved OFF runtime (0.998584)
 and passed on the actual deployed ON service (0.999322), using the original
 FP32 SDPA model with its boolean-mask guard.
+
+
+Current 21-patch source, scalar-only x64 CPU runtime: F16 audio passed
+1s660 (cosine 0.999292438, 29 tokens) and 5s660 (0.999289557, 129 tokens),
+with finite unit vectors and 132 F16 matrices (+270 MiB weights).
+A stale private pre-PAD module was rebuilt; this was no product-code fix
+and establishes accuracy only, with no scalar performance claim.
+
+Native ARM64 CUDA compilation, linking, and staging passed for the 21-patch
+source in [run 38032908897](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38032908897).
+Packaged ELF imports meet GLIBC 2.34 / GLIBCXX 3.4.29; 144 cubins target sm_121a.
+NCCL was disabled; the GCC11 link library was not packaged. GPU execution is untested.
+
+
+Current 21-patch Windows runtime loaded only the Sandy Bridge CPU module,
+compiled with `-mavx` and without AVX2/F16C. F16 audio passed the original
+FP32 gate (>0.999): 1s660 cosine 0.999148055 (29 tokens), and 5s660
+0.999246229 (129 tokens). Both vectors were finite and unit-normalized.
+This is AVX-only accuracy qualification, with no speed claim.
+
+## Linux ARM64 precise accumulation and F16 audio
+
+[Run 38033932019](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38033932019),
+source 0f1596b, qualified the 23-patch Ubuntu 22.04/GCC 11 build on native
+Neoverse-N2. Both modules used default-OFF `EI_CPU_AUDIO_F16_2=1`; the
+guarded DOTPROD/FP16 module also used default-OFF `EI_ARM_FP16_ACC_F32=1`
+(precise cache domain v2). On the original FP32 SDPA 5-second 660 Hz audio
+reference, baseline/optimized cosine improved from Q8 0.998456/0.998266
+to F16 0.999157/0.999126. The original Q8 1-second 330 Hz mutual failure
+remained reproducible at 0.998701.
+
+All five modalities, all 15 reduced-dimension comparisons and normalized
+audio reference prefixes passed >0.999. Full 8192-token cosine was
+0.999948; both public routes rejected 8193 tokens. Three-way numeric cache
+isolation and same-mode restart restoration passed. A real Cortex-A53
+QEMU request selected the baseline with the optimized module present.
+
+Native C1, two-thread, cache-OFF timing used both orders, cooldowns and
+quiet-host windows (other CPU load 0.0-0.1%). These ratios compare the
+optimized module with this application's ARM baseline, not llama.cpp.
+
+| Input | Baseline embeddings/s | Optimized embeddings/s | Ratio |
+|---|---:|---:|---:|
+| Text | 4.6169 | 7.0364 | 1.524x |
+| Audio | 1.5170 | 1.5481 | 1.021x |
+| Image | 0.03551 | 0.06043 | 1.702x |
+
+Audio throughput improved 2.05%; the larger change is corrected reference
+quality. Half accumulation is not qualified by these results. SVE, I8MM
+and SME remain open.

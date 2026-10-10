@@ -1,7 +1,7 @@
 # Contributing
 
 This project serves EmbeddingGemma 2 on CPU and accelerator backends.
-See [GOAL.md](GOAL.md) for scope and [README.md](README.md) for build commands.
+See [GOAL.md](GOAL.md) for scope.
 The original 300M implementation is retained.
 
 ## Before Starting
@@ -22,7 +22,35 @@ repository and remain subject to the model provider's terms.
 
 ## Development Setup
 
-For EmbeddingGemma 2, use the downloader and CMake commands in `README.md`.
+Install CMake >=3.24, a C/C++ compiler, Git, Python >=3.9, and NASM (x86).
+For video and WebP, add `ffmpeg` and `ffprobe` to `PATH`.
+
+```sh
+git clone https://github.com/jethac/embeddinggemma2-jetha.c.git
+cd embeddinggemma2-jetha.c
+python3 scripts/download-model2.py
+cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release \
+  -DGGML_NATIVE=OFF -DGGML_METAL=OFF -DGGML_OPENMP=OFF
+cmake --build build-cmake --target embeddinggemma2-jetha -j 6
+cmake --install build-cmake --prefix local-install
+local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
+  --backend cpu --model model/embeddinggemma-2-Q8_0.gguf \
+  --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
+```
+
+For Windows/macOS CPU audio, set `EI_CPU_AUDIO_F16_2=1` (+270 MiB).
+For Linux ARM64 portable dispatch, build with `-DEI_CPU_DISPATCH=ON` and
+`-DGGML_CPU_ARM_PORTABLE=ON`, then set both `EI_CPU_AUDIO_F16_2=1` and
+`EI_ARM_FP16_ACC_F32=1` for the guarded DOTPROD/FP16 module. Both numeric
+options default OFF; the armv8-a module provides runtime fallback.
+For text only, omit `--mmproj`. Use a separate build directory for each backend.
+
+| Platform | Changes to the commands above |
+|---|---|
+| Windows | Use MSYS2 MinGW64, `python`, `-G Ninja`, and the `.exe` suffix. |
+| CUDA | Install the CUDA toolkit and driver. Add `-DGGML_CUDA=ON`. Start with `--backend cuda`. |
+| Metal | On macOS, replace `-DGGML_METAL=OFF` with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`. Start with `--backend metal`. |
+
 The cache path and Make commands below apply to the original 300M implementation.
 
 The default model path is:
@@ -226,8 +254,14 @@ Diagnostic controls:
   matrices with F16 at load time, avoiding Q8 activation rounding. Default
   OFF; applies only to a loaded CPU audio encoder. Adds 270 MiB of weights
   and separates the numeric cache domain. Output projections remain Q8_0.
-  Native Windows AVX2/AVX-512 passed the original FP32 audio gate; other
-  CPU platforms require qualification.
+  Windows scalar, AVX-only (without F16C), AVX2 and AVX-512, plus macOS
+  ARM CPU, passed the original FP32 audio checks. Linux ARM64 baseline
+  and guarded DOTPROD/FP16 also passed, with the latter using
+  `EI_ARM_FP16_ACC_F32=1`. Other CPU platforms require qualification.
+- `EI_ARM_FP16_ACC_F32=1`: use FP32 accumulation in F16 dot products,
+  F16 matrix products and local flash-attention updates in the Linux ARM64
+  portable DOTPROD/FP16 module. Default OFF; separates its numeric cache
+  domain. SVE, I8MM and SME variants remain unimplemented.
 
 ### Metal
 
