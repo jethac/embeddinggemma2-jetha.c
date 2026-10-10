@@ -23,7 +23,7 @@ local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
   --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
 ```
 
-Windows: use MSYS2 MinGW64, `python`, `-G Ninja`, and `.exe`. For CPU audio, set `EI_CPU_AUDIO_F16_2=1` (+270 MiB of weights).
+Windows: use MSYS2 MinGW64, `python`, `-G Ninja`, and `.exe`. For Windows/macOS CPU audio, set `EI_CPU_AUDIO_F16_2=1` (+270 MiB of weights).
 For text only, omit `--mmproj`. [CUDA, Metal, and build options](CONTRIBUTING.md).
 
 ## Use
