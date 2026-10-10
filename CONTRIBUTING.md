@@ -57,6 +57,24 @@ For text only, omit `--mmproj`. Use a separate build directory for each backend.
 | CUDA | Install the CUDA toolkit and driver. Add `-DGGML_CUDA=ON`. Start with `--backend cuda`. |
 | Metal | On macOS, replace `-DGGML_METAL=OFF` with `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`. Start with `--backend metal`. |
 
+For native Windows CUDA, build the application with MinGW first. Use native
+Windows Python, a CUDA-supported Visual Studio C++ toolchain, Ninja, and the
+MSVC runtime. Build the CUDA plugin separately against that runtime's
+`ggml-base.dll` C exports, using the same patched dependency source:
+
+```powershell
+python scripts/build-windows-cuda-plugin2.py `
+  --source build-cmake/_deps/llama-src --cpu-runtime local-install/bin `
+  --output D:/build/embeddinggemma2-cuda --cuda-arch 120a `
+  --cuda-root "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.2"
+```
+
+The supplied MinGW runtime must already contain the application and its DLLs.
+The script builds only `ggml-cuda.dll`, keeps one MinGW `ggml-base.dll`, and
+copies CUDA runtime DLLs into the separate output `runtime` directory. Start
+its application with `--backend cuda` and `EI_CUDA_AUDIO_F16_2=1`. This
+native developer build does not change the release asset contract.
+
 The cache path and Make commands below apply to the original 300M implementation.
 
 The default model path is:
