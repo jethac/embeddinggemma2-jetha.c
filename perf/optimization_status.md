@@ -4077,3 +4077,16 @@ Eight six-thread phase pairs favored mixed aggregate totals in both orders:
 (100–2168 ms encoder samples) and 71% of apparent savings in unchanged stages
 make performance inconclusive. The private build remains available for a quiet
 target; no speed claim, HTTP trial, public option, or deployment followed.
+
+### CPU audio K/V copy elision (2026-10-11)
+
+Rejected [experiment 2fd4eef](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38067309664).
+On AMD EPYC 9V74 with two threads, fresh servers, caches disabled and both
+orders, native ON/OFF throughput ratios were 0.95205/1.00416 for audio C1/C4
+and 1.00177/1.00308 for mixed C1/C4. Audio C1 lost in both orders; the other
+gains were only 0.2–0.4%. Foreign CPU samples were 0.6–1.7%.
+All three original FP32 audio gates passed for both engines (minimum cosine
+0.999006637); native ON/OFF vectors and token counts were exact in all cells.
+Candidate throughput versus pinned llama.cpp was 0.93698/0.90979 for audio
+C1/C4 and 0.99559/0.99789 for mixed C1/C4. No runtime option or deployment
+was retained. The selected CPU ISA module was not recorded.
