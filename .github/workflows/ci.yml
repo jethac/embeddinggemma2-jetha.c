@@ -194,12 +194,16 @@ jobs:
           for compiler in gcc g++; do
             language=c
             if [ "$compiler" = g++ ]; then language=c++; fi
-            for arch in armv8-a armv8-a+dotprod+fp16; do
+            for arch in armv8-a armv8.2-a+dotprod+fp16; do
               echo "$compiler $arch macros"
               "$compiler" -march="$arch" -dM -E -x "$language" /dev/null | sort | grep -E '__ARM_(ARCH|FEATURE|FP|NEON)'
             done
           done
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=ON -DGGML_CPU_ARM_PORTABLE=ON -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
+          if ! grep -q '^GGML_ARM_PORTABLE_C_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt || ! grep -q '^GGML_ARM_PORTABLE_CXX_SUPPORTED:INTERNAL=1$' build-cmake/CMakeCache.txt; then
+            cat build-cmake/CMakeFiles/CMakeConfigureLog.yaml
+            exit 1
+          fi
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
       - name: Stage and install the ARM64 CPU application
         run: |

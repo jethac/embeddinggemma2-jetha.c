@@ -33,7 +33,7 @@
  
  if (GGML_CPU_ALL_VARIANTS)
      if (NOT GGML_BACKEND_DL)
-@@ -521,6 +530,38 @@
+@@ -521,6 +530,41 @@
              # Many of these features are optional so we build versions with popular
              # combinations and name the backends based on the version they were
              # first released with
@@ -43,14 +43,17 @@
 +                include(CheckCSourceCompiles)
 +                include(CheckCXXSourceCompiles)
 +                set(GGML_ARM_REQUIRED_FLAGS_SAVE "${CMAKE_REQUIRED_FLAGS}")
-+                set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8-a+dotprod+fp16")
++                set(CMAKE_REQUIRED_FLAGS "${CMAKE_REQUIRED_FLAGS} -march=armv8.2-a+dotprod+fp16")
 +                set(GGML_ARM_PORTABLE_PROBE [=[
 +                    #include <arm_neon.h>
 +                    #include <arm_fp16.h>
 +                    #if !defined(__aarch64__) || !defined(__ARM_NEON) || !defined(__ARM_FEATURE_DOTPROD) || !defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC) || !defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
 +                    #error missing scored feature
 +                    #endif
-+                    #if defined(__ARM_FEATURE_ATOMICS) || defined(__ARM_FEATURE_CRC32) || defined(__ARM_FEATURE_QRDMX) || defined(__ARM_FEATURE_FP16_FML) || defined(__ARM_FEATURE_MATMUL_INT8) || defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_SME)
++                    #if !defined(__ARM_FEATURE_ATOMICS) || !defined(__ARM_FEATURE_CRC32) || !defined(__ARM_FEATURE_QRDMX)
++                    #error missing guarded ARMv8.1 feature
++                    #endif
++                    #if defined(__ARM_FEATURE_FP16_FML) || defined(__ARM_FEATURE_MATMUL_INT8) || defined(__ARM_FEATURE_BF16_VECTOR_ARITHMETIC) || defined(__ARM_FEATURE_SVE) || defined(__ARM_FEATURE_SME)
 +                    #error unscored feature
 +                    #endif
 +                    int main(void) {
@@ -72,7 +75,7 @@
              ggml_add_cpu_backend_variant(armv8.0_1)
              ggml_add_cpu_backend_variant(armv8.2_1    DOTPROD)
              ggml_add_cpu_backend_variant(armv8.2_2    DOTPROD FP16_VECTOR_ARITHMETIC)
-@@ -529,6 +570,7 @@
+@@ -529,6 +573,7 @@
              ggml_add_cpu_backend_variant(armv8.6_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2)
              ggml_add_cpu_backend_variant(armv9.2_1    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SME)
              ggml_add_cpu_backend_variant(armv9.2_2    DOTPROD FP16_VECTOR_ARITHMETIC SVE MATMUL_INT8 SVE2 SME)
@@ -82,15 +85,36 @@
              ggml_add_cpu_backend_variant(android_armv8.0_1)
 --- a/ggml/src/ggml-cpu/CMakeLists.txt
 +++ b/ggml/src/ggml-cpu/CMakeLists.txt
-@@ -250,6 +250,11 @@
+@@ -250,6 +250,15 @@
                          set(ARCH_TAGS "${ARCH_TAGS}+sme")
                          list(APPEND ARCH_DEFINITIONS GGML_USE_SME)
                      endif()
 +                    if (GGML_CPU_ARM_PORTABLE)
-+                        # Explicit extensions match every runtime score requirement.
-+                        # Do not inherit unscored ARMv8.1+ features such as LSE.
++                        # GCC11's FP16/DOTPROD intrinsics require ARMv8.2 target attributes.
++                        # Score every inherited optional ARMv8.1 feature before selection.
 +                        set(ARM_MCPU "armv8-a")
++                        if (GGML_INTERNAL_DOTPROD AND GGML_INTERNAL_FP16_VECTOR_ARITHMETIC)
++                            set(ARM_MCPU "armv8.2-a")
++                            list(APPEND ARCH_DEFINITIONS GGML_USE_ARMV82_BASELINE)
++                        endif()
 +                    endif()
                      list(APPEND ARCH_FLAGS "-march=${ARM_MCPU}${ARCH_TAGS}")
                      ggml_add_cpu_backend_features(${GGML_CPU_NAME} arm ${ARCH_DEFINITIONS})
                  endif()
+--- a/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp
++++ b/ggml/src/ggml-cpu/arch/arm/cpu-feats.cpp
+@@ -7,6 +7,14 @@
+     int score = 1;
+     const ggml_feats_arch64_runtime_t af = ggml_feats_get_arch64_runtime();
+     GGML_UNUSED(af);
++
++#ifdef GGML_USE_ARMV82_BASELINE
++    // Linux ARMv8.2 variants inherit CRC32, LSE atomics and RDM from ARMv8.1.
++    // These are optional on older CPUs even when DOTPROD/FP16 are available.
++    const unsigned long hwcap = getauxval(AT_HWCAP);
++    const unsigned long required = (1UL << 7) | (1UL << 8) | (1UL << 12);
++    if ((hwcap & required) != required) { return 0; }
++#endif
+ 
+ #ifdef GGML_USE_DOTPROD
+     if (!af.has_dotprod) { return 0; }
