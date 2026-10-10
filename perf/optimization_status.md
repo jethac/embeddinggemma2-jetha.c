@@ -3951,3 +3951,19 @@ change was retained. GPU residency was unchanged, private memory within 4 MiB.
 
 The deployed video companion also rejected malformed video with HTTP 400 in
 96 ms; following text and video requests succeeded with normalized outputs.
+
+
+### CPU vision F16 kept private (2026-10-11)
+
+The existing private F16 vision weights selected AVX-512 F16/F16 SGEMM with
+FP32 accumulation on native Windows SkylakeX. Original image HF cosine passed
+at 0.999893; 32 changed image/mixed responses passed, minimum cross-mode cosine
+0.999814, with unchanged token counts. Preparation was only 7-9 ms versus
+seconds in the encoder, ruling out horizontal resize as the next CPU target.
+
+Unprofiled Q8/F16 HTTP medians in the first order were 4702/5790 ms for image
+and 4600/4040 ms for mixed. In reverse order, Q8/F16 were 6127/3713 ms and
+7626/4174 ms. All outliers were retained. Mixed improved in both orders;
+image's first block regressed 23%, so the consistency gate failed. Private
+memory and working set rose about 141 MiB. No loader option or deployment
+change was retained. These shared-host results do not compare against llama.cpp.
