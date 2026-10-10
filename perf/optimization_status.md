@@ -2994,3 +2994,17 @@ Windows-mounted log sinks. The optional metadata probe measured smaller gains:
 240.6 -> 232.0 ms, 356.5 -> 350.2 ms, and 224.3 -> 212.7 ms.
 Earlier blocked-order probe timing was inconsistent. Release staging does not
 include this companion; system FFmpeg libraries are not bundled.
+
+## 2026-10-10: EmbeddingGemma 2 Paired Q8 Scale Conversion
+
+Status: rejected; candidate removed, deployed kernels unchanged.
+
+Stored Xeon W-2135 audio samples attributed 61.89% of user CPU samples to
+the paired Q8 kernel. An isolated candidate converted four B-side FP16 scales
+with F16C instead of separate lookup-table reads, preserving integer saturation
+and each row's FP32 accumulation. All finite half patterns matched the installed
+CPU table in 16,252,928 bit checks across rounding, DAZ and FTZ settings. Ten
+existing service cases, changed image shapes, audio lengths and tones were exact.
+Alternating cache-disabled OFF/ON requests on the shared host nevertheless
+measured one-second audio 260.3 -> 262.0 ms (7/20 paired wins) and two-second
+audio 438.2 -> 470.9 ms (1/20). No flag, source path or service change was retained.
