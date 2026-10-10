@@ -3719,3 +3719,17 @@ selected CPU through AUTO and returned byte-identical text/image/audio/video/mix
 results to the same package with SYCL omitted. Runtime closure and Ubuntu 22.04
 ABI checks passed. F16 original-FP32 audio cosine was 0.999182406/0.999060411
 at 1/5 seconds. This qualifies CPU fallback, not Intel GPU execution or speed.
+
+### Current ARM CUDA build and x86 profile (2026-10-10)
+
+[ARM CUDA run 38045267198](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38045267198)
+built the main runtime with all 24 dependency patches on Ubuntu 22.04 ARM64.
+Installed assets passed dependency and ABI checks (GLIBC 2.34, GLIBCXX 3.4.29),
+with 144 SM121a code objects. GPU loading and GB10 inference remain untested.
+
+[x86 profile 38044428376](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38044428376)
+used an EPYC 7763, two threads, and OpenMP. One warm 18-token graph took
+56.339 ms versus llama.cpp's 48.372 ms; matrix work took 48.792/41.241 ms.
+Both engines used mapped Q8/BF16 weights. Pool creation/free took 1/1 microsecond;
+pool reuse is not the next optimization. This single profile is not a paired
+throughput result and does not test Xeon AMX or VNNI.
