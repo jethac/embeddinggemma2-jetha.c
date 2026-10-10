@@ -1,13 +1,13 @@
 # Contributing
 
-Contributions should preserve the project's narrow scope: standalone inference
-and serving for `embeddinggemma-300M-qat-Q4_0.gguf` on CPU, Metal, CUDA, ROCm,
-and Intel XPU SYCL.
+This project serves EmbeddingGemma 2 on CPU and accelerator backends.
+See [GOAL.md](GOAL.md) for scope and [README.md](README.md) for build commands.
+The original 300M implementation is retained.
 
 ## Before Starting
 
-- Open an issue before changing the HTTP contract, model graph, quantization
-  format, dependency policy, supported platform matrix, or release artifacts.
+- Follow `GOAL.md` for experimental port work. Do not contact upstream without
+  the user's instruction.
 - Keep changes scoped. Do not combine kernel work with unrelated server or
   formatting changes.
 - Do not commit GGUF files, model weights, generated benchmark runs, build
@@ -21,6 +21,9 @@ The project is MIT licensed. Model acquisition and use are separate from this
 repository and remain subject to the model provider's terms.
 
 ## Development Setup
+
+For EmbeddingGemma 2, use the downloader and CMake commands in `README.md`.
+The cache path and Make commands below apply to the original 300M implementation.
 
 The default model path is:
 
