@@ -30,6 +30,16 @@ bool ei_multimodal_request(ei_engine *engine, const char *body, size_t len,
     return true;
 }
 
+/* The controlled admission callback must never enter cache preparation. */
+bool ei_media_request_prepare(const char *body, size_t len, bool openai, size_t max_batch,
+    ei_media_request **out, char *err, size_t err_len) { abort(); }
+size_t ei_media_request_key_size(const ei_media_request *request) { abort(); }
+bool ei_media_request_write_key(const ei_media_request *request, char *key, size_t len,
+    char *err, size_t err_len) { abort(); }
+bool ei_media_request_execute(ei_media_request *request, ei_engine *engine, char **response,
+    char *err, size_t err_len) { abort(); }
+void ei_media_request_free(ei_media_request *request) { abort(); }
+
 typedef struct {
     ei_media_service *service;
     const char *key;
@@ -43,7 +53,7 @@ typedef struct {
 static void *submit(void *opaque) {
     caller *c = opaque;
     c->result = ei_media_service_submit(c->service, c->key, strlen(c->key),
-        c->openai, &c->response, c->error, sizeof(c->error));
+        c->openai, NULL, &c->response, c->error, sizeof(c->error));
     return NULL;
 }
 
@@ -80,13 +90,13 @@ int main(void) {
     ei_media_service *s = ei_media_service_create(&engine, 256, 1, 4096);
     close_gate();
     caller first = {.service=s, .key="first"}; launch(&first); wait_started(1);
-    check(ei_media_service_submit(s, "second", 6, false, &text, err, sizeof(err)) == EI_MEDIA_BUSY,
+    check(ei_media_service_submit(s, "second", 6, false, NULL, &text, err, sizeof(err)) == EI_MEDIA_BUSY,
           "unique job capacity was exceeded");
     open_gate(); join(&first, "native");
-    check(ei_media_service_submit(s, "second", 6, false, &text, err, sizeof(err)) == EI_MEDIA_OK,
+    check(ei_media_service_submit(s, "second", 6, false, NULL, &text, err, sizeof(err)) == EI_MEDIA_OK,
           "completed job did not release capacity");
     free(text);
-    check(ei_media_service_submit(s, "!", 1, false, &text, err, sizeof(err)) == EI_MEDIA_INVALID &&
+    check(ei_media_service_submit(s, "!", 1, false, NULL, &text, err, sizeof(err)) == EI_MEDIA_INVALID &&
           text == NULL && !strcmp(err, "controlled failure"), "inference error was not preserved");
     ei_media_service_free(s);
 
@@ -96,7 +106,7 @@ int main(void) {
     s = ei_media_service_create(&engine, 256, 64, 4096);
     close_gate();
     caller large = {.service=s, .key=large_a}; launch(&large); wait_started(1);
-    check(ei_media_service_submit(s, large_b, 2048, false, &text, err, sizeof(err)) == EI_MEDIA_BUSY,
+    check(ei_media_service_submit(s, large_b, 2048, false, NULL, &text, err, sizeof(err)) == EI_MEDIA_BUSY,
           "encoded key byte capacity was exceeded");
     open_gate(); join(&large, "native"); ei_media_service_free(s);
 

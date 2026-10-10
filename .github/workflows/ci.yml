@@ -128,6 +128,7 @@ jobs:
           python tests/installer_runtime2.py --assets build-release-assets
           python tests/media_batch2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
           python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode media-batch
+          python tests/media_canonical_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
           python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --mode jpeg-turbo
           python tests/qkv_cache2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf
           python tests/reuse_inputs2.py --binary build-installed/bin/embeddinggemma2-jetha --model model/embeddinggemma-2-Q8_0.gguf

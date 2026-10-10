@@ -846,7 +846,7 @@ static void handle_embed(ei_socket fd, ei_inference_service *service,
             ei_response_cache_release(response_cache, &cached);
         } else {
             ei_media_result result = ei_media_service_submit(opts->media_service,
-                body, body_len, api == EMBEDDING_API_OPENAI, &response, err, sizeof err);
+                body, body_len, api == EMBEDDING_API_OPENAI, response_cache, &response, err, sizeof err);
             if (result == EI_MEDIA_OK) {
                 ei_response_cache_insert(response_cache, key, body_len + 1, response, strlen(response));
                 http_response(fd, 200, "OK", response, keep_alive);

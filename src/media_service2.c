@@ -23,7 +23,7 @@ struct ei_media_service {
     ei_engine *engine;
     size_t max_batch, max_jobs, max_key_bytes;
     size_t jobs, key_bytes;
-    bool stopping;
+    bool stopping, canonical_cache;
     media_job *buckets[128];
     pthread_mutex_t mutex;
     pthread_cond_t idle;
@@ -53,6 +53,10 @@ ei_media_service *ei_media_service_create(ei_engine *engine, size_t max_batch,
                                          size_t max_jobs, size_t max_key_bytes) {
     if (!engine || !max_batch || !max_jobs || !max_key_bytes) return NULL;
     ei_media_service *s = ei_xcalloc(1, sizeof(*s));
+    const char *canonical = getenv("EI_MEDIA_CANONICAL_CACHE2");
+    if (canonical && strcmp(canonical, "0") && strcmp(canonical, "1"))
+        ei_die("EI_MEDIA_CANONICAL_CACHE2 must be 0 or 1");
+    s->canonical_cache = canonical && !strcmp(canonical, "1");
     s->engine = engine;
     s->max_batch = max_batch;
     s->max_jobs = max_jobs;
@@ -74,7 +78,7 @@ void ei_media_service_free(ei_media_service *s) {
 }
 
 ei_media_result ei_media_service_submit(ei_media_service *s,
-    const char *body, size_t len, bool openai, char **response,
+    const char *body, size_t len, bool openai, ei_response_cache *cache, char **response,
     char *err, size_t err_len) {
     *response = NULL;
     uint64_t hash = request_hash(body, len, openai);
@@ -110,8 +114,44 @@ ei_media_result ei_media_service_submit(ei_media_service *s,
 
         char *text = NULL;
         char error[256] = {0};
-        bool ok = ei_multimodal_request(s->engine, job->key, len, openai,
-                                        s->max_batch, &text, error, sizeof(error));
+        bool ok;
+        if (s->canonical_cache && cache) {
+            ei_media_request *prepared = NULL;
+            ok = ei_media_request_prepare(job->key, len, openai, s->max_batch,
+                                          &prepared, error, sizeof(error));
+            if (ok) {
+                size_t key_len = ei_media_request_key_size(prepared);
+                size_t reserved = 0;
+                char *key = NULL;
+                pthread_mutex_lock(&s->mutex);
+                if (key_len <= s->max_key_bytes - s->key_bytes) {
+                    s->key_bytes += key_len;
+                    reserved = key_len;
+                }
+                pthread_mutex_unlock(&s->mutex);
+                if (reserved) key = malloc(key_len);
+                if (key) ok = ei_media_request_write_key(prepared, key, key_len,
+                                                         error, sizeof(error));
+                ei_response_cache_value cached;
+                if (ok && key && ei_response_cache_acquire(cache, key, key_len, &cached)) {
+                    text = ei_xmalloc(cached.len + 1);
+                    memcpy(text, cached.data, cached.len);
+                    text[cached.len] = 0;
+                    ei_response_cache_release(cache, &cached);
+                } else if (ok) {
+                    ok = ei_media_request_execute(prepared, s->engine, &text, error, sizeof(error));
+                    if (ok && key) ei_response_cache_insert(cache, key, key_len, text, strlen(text));
+                }
+                free(key);
+                ei_media_request_free(prepared);
+                pthread_mutex_lock(&s->mutex);
+                s->key_bytes -= reserved;
+                pthread_mutex_unlock(&s->mutex);
+            }
+        } else {
+            ok = ei_multimodal_request(s->engine, job->key, len, openai,
+                                       s->max_batch, &text, error, sizeof(error));
+        }
         pthread_mutex_lock(&s->mutex);
         job->result = ok ? EI_MEDIA_OK : EI_MEDIA_INVALID;
         job->response = ok ? text : NULL;

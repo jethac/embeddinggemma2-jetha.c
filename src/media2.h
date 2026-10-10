@@ -27,6 +27,15 @@ bool ei_engine_embed_parts_batch(ei_engine *e, const ei_media_part *const *parts
                                  char *err, size_t err_len);
 bool ei_multimodal_request(ei_engine *e, const char *body, size_t body_len, bool openai,
                            size_t max_batch, char **response, char *err, size_t err_len);
+typedef struct ei_media_request ei_media_request;
+bool ei_media_request_prepare(const char *body, size_t len, bool openai, size_t max_batch,
+                             ei_media_request **out, char *err, size_t err_len);
+size_t ei_media_request_key_size(const ei_media_request *request);
+bool ei_media_request_write_key(const ei_media_request *request, char *key, size_t len,
+                                char *err, size_t err_len);
+bool ei_media_request_execute(ei_media_request *request, ei_engine *e, char **response,
+                              char *err, size_t err_len);
+void ei_media_request_free(ei_media_request *request);
 
 #ifdef __cplusplus
 }

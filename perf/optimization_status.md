@@ -3967,3 +3967,20 @@ and 4600/4040 ms for mixed. In reverse order, Q8/F16 were 6127/3713 ms and
 image's first block regressed 23%, so the consistency gate failed. Private
 memory and working set rose about 141 MiB. No loader option or deployment
 change was retained. These shared-host results do not compare against llama.cpp.
+
+### Canonical media response cache (2026-10-11)
+
+A deployed CPU formatting miss repeated 259 ms of encoder/backbone work for
+identical audio sent as bare base64 versus a pretty JSON data URL. The optional
+`EI_MEDIA_CANONICAL_CACHE2=1` validates once inside the existing admitted leader
+and keys exact parsed content before decoding media. Extra key bytes use the
+existing admission budget; raw cache hits and persisted raw keys remain valid.
+
+The isolated native Windows CPU candidate changed the equivalent request from
+212.146 to 26.409 ms, with identical vectors and zero repeat inference. These
+shared-host observations establish eliminated work, not a quiet throughput win.
+Default-OFF outputs were identical across text/image/audio/video/mixed against
+the current 28-patch dependency build. Malformed inputs and context overflow
+were rejected; dimension, encoding, layout, API/model keys stayed isolated.
+Canonical and raw restart hits performed no inference. The option defaults OFF;
+these results precede deployment.

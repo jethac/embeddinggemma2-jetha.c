@@ -480,6 +480,11 @@ Important production controls:
 - `--keepalive-connections N`, `--keepalive-max-requests N`, and
   `--keepalive-timeout-ms N`: control persistent HTTP connections.
 - `--response-cache-mb N`: size the exact float-JSON response LRU.
+- `EI_MEDIA_CANONICAL_CACHE2=1`: reuse validated media responses across JSON
+  formatting and data URL prefixes. Default OFF; requires a nonzero response
+  cache. Preserves exact text/base64 payloads, input order, API and output options.
+  Additional keys share the bounded admission byte budget. Raw hits stay fast;
+  no decoded media is allocated on a canonical hit.
 - `--persistent-cache-path PATH`: persist the exact-embedding cache to disk.
   The service loads matching entries at startup and flushes ready entries on
   graceful shutdown (SIGTERM/SIGINT), so re-indexing and eval workloads survive

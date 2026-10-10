@@ -7,6 +7,7 @@ extern "C" {
 #include <array>
 #include <cmath>
 #include <stdexcept>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -51,12 +52,17 @@ static json parse_media_json(const char *body, size_t len) {
     return json::parse(body, body + len);
 }
 
-static std::vector<unsigned char> decode_base64(std::string_view text) {
+static std::string_view base64_payload(std::string_view text) {
     if (text.rfind("data:", 0) == 0) {
         size_t split = text.find(";base64,");
         if (split == std::string::npos) throw std::runtime_error("media data URL must be base64 encoded");
         text.remove_prefix(split + 8);
     }
+    return text;
+}
+
+static std::vector<unsigned char> decode_base64(std::string_view text, bool validate_only = false) {
+    text = base64_payload(text);
     if (text.empty() || text.size() % 4) throw std::runtime_error("invalid base64 media");
     static const auto lookup = [] {
         std::array<signed char, 256> table;
@@ -67,11 +73,11 @@ static std::vector<unsigned char> decode_base64(std::string_view text) {
         return table;
     }();
     std::vector<unsigned char> bytes;
-    bytes.reserve(text.size() / 4 * 3);
+    if (!validate_only) bytes.reserve(text.size() / 4 * 3);
     // Only the final quartet can contain padding. Decode the bulk directly
     // into its bounded output, leaving the existing padding rules below.
     size_t bulk = text.size() - 4;
-    bytes.resize(bulk / 4 * 3);
+    if (!validate_only) bytes.resize(bulk / 4 * 3);
     for (size_t i = 0, out = 0; i < bulk; i += 4, out += 3) {
         int a = lookup[static_cast<unsigned char>(text[i])];
         int b = lookup[static_cast<unsigned char>(text[i + 1])];
@@ -79,9 +85,11 @@ static std::vector<unsigned char> decode_base64(std::string_view text) {
         int d = lookup[static_cast<unsigned char>(text[i + 3])];
         if ((a | b | c | d) < 0) throw std::runtime_error("invalid base64 media");
         unsigned value = (unsigned)a << 18 | (unsigned)b << 12 | (unsigned)c << 6 | (unsigned)d;
-        bytes[out] = (unsigned char)(value >> 16);
-        bytes[out + 1] = (unsigned char)(value >> 8);
-        bytes[out + 2] = (unsigned char)value;
+        if (!validate_only) {
+            bytes[out] = (unsigned char)(value >> 16);
+            bytes[out + 1] = (unsigned char)(value >> 8);
+            bytes[out + 2] = (unsigned char)value;
+        }
     }
     for (size_t i = bulk; i < text.size(); i += 4) {
         unsigned value = 0;
@@ -99,9 +107,11 @@ static std::vector<unsigned char> decode_base64(std::string_view text) {
             }
         }
         if (padding > 2) throw std::runtime_error("invalid base64 padding");
-        bytes.push_back((unsigned char)(value >> 16));
-        if (padding < 2) bytes.push_back((unsigned char)(value >> 8));
-        if (!padding) bytes.push_back((unsigned char)value);
+        if (!validate_only) {
+            bytes.push_back((unsigned char)(value >> 16));
+            if (padding < 2) bytes.push_back((unsigned char)(value >> 8));
+            if (!padding) bytes.push_back((unsigned char)value);
+        }
     }
     return bytes;
 }
@@ -123,10 +133,9 @@ static std::string encode_base64(const float *data, size_t count) {
     return out;
 }
 
-extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t body_len,
+static bool execute_media_json(ei_engine *e, const json &request,
     bool openai, size_t max_batch, char **response, char *err, size_t err_len) {
     try {
-        json request = parse_media_json(body, body_len);
         int dimensions = request.value("dimensions", 768);
         if (dimensions != 128 && dimensions != 256 && dimensions != 512 && dimensions != 768)
             throw std::runtime_error("dimensions must be 128, 256, 512, or 768");
@@ -221,3 +230,123 @@ extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t bod
         return false;
     }
 }
+
+extern "C" bool ei_multimodal_request(ei_engine *e, const char *body, size_t body_len,
+    bool openai, size_t max_batch, char **response, char *err, size_t err_len) {
+    try {
+        json request = parse_media_json(body, body_len);
+        return execute_media_json(e, request, openai, max_batch, response, err, err_len);
+    } catch (const std::exception &ex) {
+        snprintf(err, err_len, "%s", ex.what());
+        return false;
+    }
+}
+
+struct ei_media_request {
+    json document;
+    bool openai;
+    size_t max_batch, key_size;
+};
+
+// A length-delimited key retains exact text/media bytes and input ordering.
+// The existing cache hash only selects a bucket; equality still uses memcmp.
+class key_writer {
+    char *data;
+    size_t capacity, count = 0;
+public:
+    key_writer(char *data = nullptr, size_t capacity = SIZE_MAX) : data(data), capacity(capacity) {}
+    void bytes(const char *p, size_t n) {
+        if (n > capacity - count) throw std::runtime_error("media cache key exceeds its bound");
+        if (data && n) memcpy(data + count, p, n);
+        count += n;
+    }
+    void number(uint64_t value) {
+        char encoded[8];
+        for (unsigned i = 0; i < 8; i++) encoded[i] = char(value >> (8 * i));
+        bytes(encoded, sizeof encoded);
+    }
+    void field(std::string_view value) { number(value.size()); bytes(value.data(), value.size()); }
+    size_t size() const { return count; }
+};
+
+static void canonical_key(const ei_media_request &prepared, key_writer &key, bool validate) {
+    const json &request = prepared.document;
+    int dimensions = request.value("dimensions", 768);
+    if (dimensions != 128 && dimensions != 256 && dimensions != 512 && dimensions != 768)
+        throw std::runtime_error("dimensions must be 128, 256, 512, or 768");
+    std::string encoding = request.value("encoding_format", std::string("float"));
+    if (encoding != "float" && encoding != "base64") throw std::runtime_error("unsupported encoding_format");
+    std::string model = request.value("model", std::string("embeddinggemma-2"));
+    const json &input = request.at("input");
+    size_t count = input.is_object() ? 1 : input.size();
+    if ((!input.is_object() && !input.is_array()) || !count || count > prepared.max_batch)
+        throw std::runtime_error("input must be an object or a bounded array of objects");
+    static constexpr char domain[] = "\4EG2MEDIA1";
+    key.bytes(domain, sizeof domain - 1);
+    key.number(prepared.openai ? 3 : 2); key.number(dimensions);
+    key.field(model); key.field(encoding);
+    key.number(input.is_object() ? 0 : 1); key.number(count);
+    for (size_t index = 0; index < count; index++) {
+        const json &content = (input.is_object() ? input : input[index]).at("content");
+        if (!content.is_array() || content.empty() || content.size() > 64)
+            throw std::runtime_error("content must contain 1..64 parts");
+        key.number(content.size());
+        for (const json &part : content) {
+            std::string type = part.at("type").get<std::string>();
+            if (type == "text") {
+                key.number(EI_PART_TEXT); key.field(part.at("text").get_ref<const std::string &>());
+            } else {
+                ei_part_type kind;
+                if (type == "image") kind = EI_PART_IMAGE;
+                else if (type == "audio") kind = EI_PART_AUDIO;
+                else if (type == "video") kind = EI_PART_VIDEO;
+                else throw std::runtime_error("content type must be text, image, audio, or video");
+                const auto &data = part.at("data").get_ref<const std::string &>();
+                // Reuse every decoder rejection rule without allocating decoded bytes.
+                if (validate) decode_base64(data, true);
+                float fps = part.value("fps", 1.0f);
+                if (!std::isfinite(fps) || fps <= 0 || fps > 30) throw std::runtime_error("fps must be >0 and <=30");
+                uint32_t bits; memcpy(&bits, &fps, sizeof bits);
+                key.number(kind); key.number(bits); key.field(base64_payload(data));
+            }
+        }
+    }
+}
+
+extern "C" bool ei_media_request_prepare(const char *body, size_t len, bool openai, size_t max_batch,
+    ei_media_request **out, char *err, size_t err_len) {
+    *out = nullptr;
+    try {
+        auto request = std::make_unique<ei_media_request>();
+        request->document = parse_media_json(body, len);
+        request->openai = openai; request->max_batch = max_batch;
+        key_writer key;
+        canonical_key(*request, key, true);
+        request->key_size = key.size();
+        *out = request.release();
+        return true;
+    } catch (const std::exception &ex) {
+        snprintf(err, err_len, "%s", ex.what());
+        return false;
+    }
+}
+
+extern "C" size_t ei_media_request_key_size(const ei_media_request *request) { return request->key_size; }
+
+extern "C" bool ei_media_request_write_key(const ei_media_request *request, char *data, size_t len,
+    char *err, size_t err_len) {
+    try {
+        key_writer key(data, len); canonical_key(*request, key, false);
+        if (key.size() != len) throw std::runtime_error("media cache key size changed");
+        return true;
+    } catch (const std::exception &ex) {
+        snprintf(err, err_len, "%s", ex.what());
+        return false;
+    }
+}
+
+extern "C" bool ei_media_request_execute(ei_media_request *request, ei_engine *e, char **response,
+    char *err, size_t err_len) {
+    return execute_media_json(e, request->document, request->openai, request->max_batch, response, err, err_len);
+}
+extern "C" void ei_media_request_free(ei_media_request *request) { delete request; }
