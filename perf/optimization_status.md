@@ -2915,6 +2915,7 @@ required. Keep phase profiling off for throughput measurements.
 | `EI_CPU_Q8_PAIR_VNNI2=1` | Paired Q8 rows on VNNI hardware; separate opt-in |
 | `EI_MEDIA_PIPELINE2=1` | Overlap media encoder/backbone; two singleton raw inputs, 32 MiB total |
 | `EI_AUDIO_GRAPH_CACHE2=1` | Reuse one audio shape/workspace; refill all inputs |
+| `EI_AUDIO_GRAPH_CACHE_SLOTS2=2..4` | CUDA audio LRU; requires audio graph cache; default one slot; up to 256 frames/128 output tokens |
 | `EI_PIXEL_REUSE2=1` | Reuse vision CPU pixel buffer up to 16 MiB; rewrite all pixels |
 | `EI_VISION_CLIP_METADATA2=1` | Omit vision clamps only if all four bound tensors are absent; audio unchanged |
 | `EI_GRAPH_CACHE2=1` | CUDA text graph cache, at most 256 aggregate tokens |
@@ -3089,3 +3090,32 @@ Repeated blocks each captured twice, at about 4.69 ms per capture, then paid
 shape changes reset warmup and used direct submission. This supports an
 encoder cache for multiple shapes. Retention requires an unprofiled HTTP gain;
 the trace is not a throughput comparison.
+
+## CUDA audio graphs for multiple shapes
+
+RTX 5060 Ti, six threads, result caches and profiling off. Two fresh servers
+used one or two encoder slots. Requests contained short text and 0.25/2-second
+audio. Each shape had four warmup requests. Repeated and alternating blocks
+used both server orders. All 128 measured vectors were byte-identical.
+
+Alternating-request median latency fell from 27.607 to 10.153 ms. Each balanced
+block improved; throughput ratios were 2.738–3.997x. Repeated-request medians
+were 16.814 and 11.856 ms, with more variation. This shared-host run compares
+cache settings in this server, not llama.cpp.
+
+Two shapes retained 13.78 MiB of metadata and tensor workspace. Each slot has a
+16 MiB tensor-workspace limit; all slots have a 64 MiB metadata/workspace limit.
+These limits exclude weights and CUDA driver graph storage. Long inputs release
+the retained slot workspaces and use the original path. All inputs are refilled.
+
+The first implementation corrupted graph sources during dry-run allocation.
+Rebuilding only the graph then crashed because the dry-run allocator had no
+real buffers. The fix discards both before building the execution graph.
+The regression test failed before the fix and passed afterward.
+
+Slots two and four passed all five input types, 14 varied audio requests each,
+LRU eviction, and long-input fallback. Outputs were byte-identical to the dev
+service. Mixed 8192-token input passed; 8193 tokens were rejected before backbone
+execution on both routes. Normalized-prefix error was at most 2.49e-8.
+The default remains one slot. Slots two through four share a new result-cache
+identity; default identity is unchanged.

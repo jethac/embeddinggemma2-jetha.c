@@ -1,0 +1,237 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -144,6 +144,25 @@
+ #endif
+ 
+ 
++struct clip_audio_graph_slot {
++    // Metadata addresses stay fixed across LRU eviction: CUDA keys graphs by
++    // their first node. Schedulers own distinct tensor workspaces, not weights.
++    std::vector<uint8_t> meta;
++    ggml_context_ptr graph_ctx;
++    ggml_backend_sched_ptr sched;
++    ggml_cgraph * graph = nullptr;
++    int nx = 0, ny = 0;
++    uint64_t last_used = 0;
++    size_t workspace_bytes = 0;
++
++    void drop() {
++        sched.reset();
++        graph_ctx.reset();
++        graph = nullptr;
++        workspace_bytes = 0;
++    }
++};
++
+ struct clip_ctx {
+     clip_model model;
+ 
+@@ -154,6 +173,13 @@
+     ggml_context_ptr audio_graph_ctx;
+     ggml_cgraph * audio_graph = nullptr;
+     int audio_graph_nx = 0, audio_graph_ny = 0;
++    std::array<clip_audio_graph_slot, 4> audio_graph_slots;
++    std::vector<uint8_t> * audio_build_meta = nullptr;
++    int audio_graph_slot_count = 1;
++    uint64_t audio_graph_clock = 0;
++    bool audio_graph_slots_logged = false;
++    ggml_backend_sched_eval_callback audio_eval_callback = nullptr;
++    void * audio_eval_user_data = nullptr;
+ 
+     std::vector<ggml_backend_t> backend_ptrs;
+     std::vector<ggml_backend_buffer_type_t> backend_buft;
+@@ -182,6 +208,15 @@
+     uint32_t rng_seed = UINT32_MAX;
+ 
+     clip_ctx(clip_context_params & ctx_params) {
++        const char * slots = std::getenv("EI_AUDIO_GRAPH_CACHE_SLOTS2");
++        if (slots) {
++            if (slots[0] < '1' || slots[0] > '4' || slots[1] != '\0') {
++                throw std::runtime_error("EI_AUDIO_GRAPH_CACHE_SLOTS2 must be exactly 1, 2, 3 or 4");
++            }
++            audio_graph_slot_count = slots[0] - '0';
++        }
++        audio_eval_callback = ctx_params.cb_eval;
++        audio_eval_user_data = ctx_params.cb_eval_user_data;
+         flash_attn_type = ctx_params.flash_attn_type;
+         no_alloc = ctx_params.no_alloc;
+         backend_cpu = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
+@@ -232,6 +267,10 @@
+     }
+ 
+     ~clip_ctx() {
++        // Slot events/workspaces must be freed while their backends are alive.
++        for (auto & slot : audio_graph_slots) {
++            slot.drop();
++        }
+         ggml_backend_free(backend);
+         if (backend != backend_cpu) {
+             ggml_backend_free(backend_cpu);
+@@ -266,9 +305,11 @@
+         eps(hparams.eps),
+         kq_scale(d_head > 0 ? 1.0f / sqrtf((float)d_head) : 0.0f),
+         flash_attn_type(ctx->flash_attn_type) {
++    auto & meta = ctx->audio_build_meta ? *ctx->audio_build_meta : ctx->buf_compute_meta;
++    ctx->audio_build_meta = nullptr;
+     struct ggml_init_params params = {
+-        /*.mem_size   =*/ ctx->buf_compute_meta.size(),
+-        /*.mem_buffer =*/ ctx->buf_compute_meta.data(),
++        /*.mem_size   =*/ meta.size(),
++        /*.mem_buffer =*/ meta.data(),
+         /*.no_alloc   =*/ true,
+     };
+     ctx0_ptr.reset(ggml_init(params));
+@@ -4563,10 +4604,125 @@
+     const bool cache_audio = cache_flag && strcmp(cache_flag, "1") == 0 &&
+         ctx->proj_type() == PROJECTOR_TYPE_GEMMA4A && imgs.entries.size() == 1 &&
+         ctx->backend && strncmp(ggml_backend_name(ctx->backend), "CUDA", 4) == 0;
++    ggml_backend_sched_t encode_sched = ctx->sched.get();
++    clip_audio_graph_slot * multi_slot = nullptr;
++    const size_t slot_workspace_cap = 16 * 1024 * 1024;
++    const size_t retained_cap = 64 * 1024 * 1024;
++    const bool short_audio = cache_audio && imgs.entries[0].nx() > 0 &&
++        imgs.entries[0].nx() <= 256 && imgs.entries[0].ny() > 0 &&
++        clip_n_output_tokens(ctx, &imgs.entries[0]) <= 128;
++    if (cache_audio && ctx->audio_graph_slot_count > 1) {
++        if (!ctx->audio_graph_slots_logged) {
++            LOG_INF("audio graph cache: active slots=%d, max_frames=256, max_tokens=128, slot_workspace_cap=16 MiB, retained_metadata_workspace_cap=64 MiB\n",
++                ctx->audio_graph_slot_count);
++            ctx->audio_graph_slots_logged = true;
++        }
++        if (!short_audio) {
++            for (auto & slot : ctx->audio_graph_slots) {
++                slot.drop();
++            }
++        } else {
++            for (int i = 0; i < ctx->audio_graph_slot_count; ++i) {
++                auto & slot = ctx->audio_graph_slots[i];
++                if (slot.graph && slot.nx == imgs.entries[0].nx() && slot.ny == imgs.entries[0].ny()) {
++                    multi_slot = &slot;
++                    break;
++                }
++            }
++            if (!multi_slot) {
++                multi_slot = &ctx->audio_graph_slots[0];
++                for (int i = 0; i < ctx->audio_graph_slot_count; ++i) {
++                    auto & slot = ctx->audio_graph_slots[i];
++                    if (!slot.graph) { multi_slot = &slot; break; }
++                    if (slot.last_used < multi_slot->last_used) { multi_slot = &slot; }
++                }
++                multi_slot->drop();
++                size_t metadata_bytes = 0;
++                for (auto & slot : ctx->audio_graph_slots) { metadata_bytes += slot.meta.size(); }
++                if (multi_slot->meta.empty()) { metadata_bytes += ctx->buf_compute_meta.size(); }
++                if (metadata_bytes > retained_cap) {
++                    LOG_WRN("audio graph cache: metadata exceeds budget; using slots=1 path\n");
++                    multi_slot = nullptr;
++                } else {
++                    // Allocate once; never resize a live/recycled slot's metadata.
++                    if (multi_slot->meta.empty()) {
++                        multi_slot->meta.resize(ctx->buf_compute_meta.size());
++                    }
++                    multi_slot->sched.reset(ggml_backend_sched_new(ctx->backend_ptrs.data(),
++                        ctx->backend_buft.data(), ctx->backend_ptrs.size(), ctx->max_nodes, false, true));
++                    if (!multi_slot->sched) {
++                        LOG_WRN("audio graph cache: scheduler unavailable; using slots=1 path\n");
++                        multi_slot = nullptr;
++                    } else {
++                        ggml_backend_sched_set_eval_callback(multi_slot->sched.get(),
++                            ctx->audio_eval_callback, ctx->audio_eval_user_data);
++                        ctx->audio_build_meta = &multi_slot->meta;
++                        auto builder = clip_get_graph_builder(ctx, imgs, params);
++                        multi_slot->graph = builder->build();
++                        multi_slot->graph_ctx.reset(builder->ctx0_ptr.release());
++                        std::vector<size_t> sizes(ctx->backend_ptrs.size(), 0);
++                        // This API measures allocation without reserving device buffers.
++                        ggml_backend_sched_reserve_size(multi_slot->sched.get(), multi_slot->graph, sizes.data());
++                        size_t needed = 0, retained = 0;
++                        for (size_t size : sizes) { needed += size; }
++                        for (auto & slot : ctx->audio_graph_slots) {
++                            retained += slot.meta.size() + slot.workspace_bytes;
++                        }
++                        // Dry-run sizing rewrites graph sources and retains allocator
++                        // records without real buffers. Discard both before execution.
++                        multi_slot->sched.reset();
++                        multi_slot->graph_ctx.reset();
++                        multi_slot->sched.reset(ggml_backend_sched_new(ctx->backend_ptrs.data(),
++                            ctx->backend_buft.data(), ctx->backend_ptrs.size(), ctx->max_nodes, false, true));
++                        if (!multi_slot->sched) {
++                            LOG_ERR("audio graph cache: failed to create execution scheduler\n");
++                            multi_slot->graph = nullptr;
++                            return false;
++                        }
++                        ggml_backend_sched_set_eval_callback(multi_slot->sched.get(),
++                            ctx->audio_eval_callback, ctx->audio_eval_user_data);
++                        ctx->audio_build_meta = &multi_slot->meta;
++                        builder = clip_get_graph_builder(ctx, imgs, params);
++                        multi_slot->graph = builder->build();
++                        multi_slot->graph_ctx.reset(builder->ctx0_ptr.release());
++                        if (needed == 0 || needed > slot_workspace_cap || retained > retained_cap ||
++                            needed > retained_cap - retained ||
++                            !ggml_backend_sched_alloc_graph(multi_slot->sched.get(), multi_slot->graph)) {
++                            LOG_WRN("audio graph cache: nx=%d ny=%d measured_workspace=%zu bytes exceeds budget or allocation failed; using slots=1 path\n",
++                                imgs.entries[0].nx(), imgs.entries[0].ny(), needed);
++                            multi_slot->drop();
++                            multi_slot = nullptr;
++                        } else {
++                            // Check actual allocation as well as the preallocation estimate.
++                            size_t actual = 0;
++                            for (auto backend : ctx->backend_ptrs) {
++                                actual += ggml_backend_sched_get_buffer_size(multi_slot->sched.get(), backend);
++                            }
++                            if (actual > slot_workspace_cap || actual > retained_cap - retained) {
++                                LOG_WRN("audio graph cache: allocated workspace exceeds budget; using slots=1 path\n");
++                                multi_slot->drop();
++                                multi_slot = nullptr;
++                            } else {
++                                multi_slot->workspace_bytes = actual;
++                                multi_slot->nx = imgs.entries[0].nx();
++                                multi_slot->ny = imgs.entries[0].ny();
++                                LOG_INF("audio graph cache: retained nx=%d ny=%d workspace=%zu bytes total_metadata_workspace=%zu bytes\n",
++                                    multi_slot->nx, multi_slot->ny, actual, retained + actual);
++                            }
++                        }
++                    }
++                }
++            }
++            if (multi_slot) {
++                encode_sched = multi_slot->sched.get();
++                multi_slot->last_used = ++ctx->audio_graph_clock;
++            }
++        }
++    }
+     const bool reuse_audio = cache_audio && ctx->audio_graph &&
+         ctx->audio_graph_nx == imgs.entries[0].nx() && ctx->audio_graph_ny == imgs.entries[0].ny();
+-    ggml_cgraph * gf = ctx->audio_graph;
+-    if (!reuse_audio) {
++    ggml_cgraph * gf = multi_slot ? multi_slot->graph : ctx->audio_graph;
++    if (!multi_slot && !reuse_audio) {
+         ggml_backend_sched_reset(ctx->sched.get());
+         ctx->audio_graph = nullptr;
+         ctx->audio_graph_ctx.reset();
+@@ -4579,11 +4735,11 @@
+         }
+     }
+     const int64_t graph_built = phase_profile ? ggml_time_us() : 0;
+-    if (!reuse_audio && !ggml_backend_sched_alloc_graph(ctx->sched.get(), gf)) {
++    if (!multi_slot && !reuse_audio && !ggml_backend_sched_alloc_graph(ctx->sched.get(), gf)) {
+         LOG_ERR("%s: failed to allocate compute graph\n", __func__);
+         return false;
+     }
+-    if (cache_audio) {
++    if (cache_audio && !multi_slot) {
+         ctx->audio_graph = gf;
+         ctx->audio_graph_nx = imgs.entries[0].nx();
+         ctx->audio_graph_ny = imgs.entries[0].ny();
+@@ -5907,9 +6063,10 @@
+     }
+ 
+     const int64_t inputs_ready = phase_profile ? ggml_time_us() : 0;
+-    auto status = ggml_backend_sched_graph_compute(ctx->sched.get(), gf);
++    auto status = ggml_backend_sched_graph_compute(encode_sched, gf);
+     const int64_t compute_done = phase_profile ? ggml_time_us() : 0;
+     if (status != GGML_STATUS_SUCCESS) {
++        if (multi_slot) { multi_slot->drop(); }
+         ctx->audio_graph = nullptr;
+         LOG_ERR("%s: ggml_backend_sched_graph_compute failed with error %d\n", __func__, status);
+         return false;

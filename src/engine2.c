@@ -66,6 +66,7 @@ typedef struct {
     bool media_pipeline;
     bool vision_clip_metadata;
     bool metal_media_flash_attn;
+    bool audio_multishape_graph;
     bool jpeg_turbo;
     uint64_t graph_clock;
     int threads;
@@ -102,6 +103,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
         s->media_batch ? "embeddinggemma2-media-batch-v1" : NULL,
         s->vision_clip_metadata ? "embeddinggemma2-vision-clip-metadata-v1" : NULL,
         s->metal_media_flash_attn ? "embeddinggemma2-metal-media-flash-attn-v1" : NULL,
+        s->audio_multishape_graph ? "embeddinggemma2-audio-multishape-graph-v1" : NULL,
         s->jpeg_turbo ? "embeddinggemma2-jpeg-turbo-3.2.0-v1" : NULL,
         s->text_buckets ? "embeddinggemma2-text-buckets-v1" : NULL,
         s->text_batch_buckets ? "embeddinggemma2-text-batch-buckets-v1" : NULL,
@@ -627,6 +629,11 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     const char *raw_graph_cache = getenv("EI_RAW_GRAPH_CACHE2");
     s->raw_graph_cache = s->graph_cache && raw_graph_cache && strcmp(raw_graph_cache, "1") == 0;
     if (s->raw_graph_cache) fprintf(stderr, "CUDA raw-input graph cache: sharing the bounded short-input slots\n");
+    const char *audio_cache = getenv("EI_AUDIO_GRAPH_CACHE2");
+    const char *audio_slots = getenv("EI_AUDIO_GRAPH_CACHE_SLOTS2");
+    s->audio_multishape_graph = audio_cache && strcmp(audio_cache, "1") == 0 &&
+        audio_slots && audio_slots[0] >= '2' && audio_slots[0] <= '4' && !audio_slots[1] &&
+        strncmp(e->backend_name, "CUDA", 4) == 0;
     const char *text_buckets = getenv("EI_TEXT_BUCKETS2");
     s->text_buckets = text_buckets && strcmp(text_buckets, "1") == 0 &&
         strncmp(e->backend_name, "CUDA", 4) == 0;
