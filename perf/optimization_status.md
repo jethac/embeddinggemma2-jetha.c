@@ -4020,3 +4020,27 @@ retained (OFF 31.985–32.727 ms; ON 32.032–37.259 ms). Minimum output cosine 
 shared-host phase observations establish no material encoder benefit; HTTP
 comparison was skipped. Only one private host dispatch object was rebuilt;
 no public runtime option, numerical cache domain, or deployment was retained.
+
+### CPU audio concurrency: pipeline versus existing arrays (2026-10-11)
+
+On the Windows Xeon W-2135, the qualified 28-patch SkylakeX runtime used
+F16 audio, Q8 pair and PAD options, cache disabled, and four distinct one-second
+330/440/550/660 Hz inputs. Each comparison retained eight pairs with balanced
+orders and all outliers. The existing pipeline improved two-thread C4 median
+completion from 1000.245 to 749.270 ms (aggregate 1.332x, 8/8 wins), but lost
+at the deployed six-thread setting: 481.152 to 719.222 ms (0.664x, 0/8).
+Three-thread pipelining versus serial six-thread execution also lost:
+570.283 to 573.122 ms (0.967x, 2/8). Overlap tuning was rejected.
+
+Existing four-input arrays improved two-thread median completion from 933.928
+to 861.976 ms (1.067x aggregate, 8/8 wins), and six-thread completion from
+536.673 to 490.325 ms (1.141x, 7/8). Both order blocks improved. Two-thread
+backbone compute fell from 351.720 to 259.488 ms; six-thread compute did not
+improve (182.913 to 187.889 ms). One array request versus four singleton requests
+changes HTTP overhead; this gain does not justify a cross-request scheduler or
+flag/default change. CPU scheduler implementation was stopped. All four original
+FP32 audio reference gates and per-item parity passed
+for the six-thread arrays and pipeline controls; array cosine against singleton
+outputs was at least 0.999567, with 29 tokens per item and normalized vectors.
+These are shared-host observations, not matched llama.cpp results. No scheduler
+or deployed flag changed; the deployed array option remained unset/default OFF.
