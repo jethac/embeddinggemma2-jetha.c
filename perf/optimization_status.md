@@ -4001,3 +4001,22 @@ returned HTTP 400, followed by a valid canonical hit. Actual arguments, working
 directory, cache/persistence settings and every environment value were preserved
 except the new option. The CUDA service remained unchanged. These are deployed
 shared-host cache observations, not uncached throughput comparisons.
+
+### CUDA vision video MMQ J64 (2026-10-11)
+
+Rejected a private SM120 Q8 host-selection probe using already compiled J64
+kernels. It selected only eligible single-sequence `v.blk.*` matrices where
+tile efficiency increased from below 90% to at least 90%, preserving stream-K.
+The actual 1089-position video path activated Q/K/V, attention-output and
+FFN-down projections: 54 tiles / 75% efficiency became 108 tiles / 100%.
+Full-size image and FFN-up selections stayed unchanged. J64 and J128 both allow
+only one resident block per SM on the RTX 5060 Ti: their 256-thread blocks use
+254 and 255 registers per thread, respectively. There was no occupancy gain.
+
+After warmup, summed encoder compute for a two-frame video changed from
+32.114 to 32.371 ms (+0.8%). Each variant had 12 samples; all outliers were
+retained (OFF 31.985–32.727 ms; ON 32.032–37.259 ms). Minimum output cosine was
+0.999866681 against the unchanged path, with token counts unchanged. These
+shared-host phase observations establish no material encoder benefit; HTTP
+comparison was skipped. Only one private host dispatch object was rebuilt;
+no public runtime option, numerical cache domain, or deployment was retained.
