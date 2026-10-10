@@ -274,6 +274,9 @@ def main():
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env=llama_env) as lp:
+                    if os.getenv('EI_CPU_BF16_F32_2') == '1':
+                        if 'CPU projection F32 active: per_layer_model_proj.weight,' not in op.log_path.read_text(errors='replace'):
+                            raise RuntimeError('native CPU projection F32 did not activate')
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     if cpu_audio_f16:
                         marker = 'CPU audio F16 active: 132 Conformer matrices'
