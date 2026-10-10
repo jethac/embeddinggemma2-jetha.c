@@ -135,6 +135,10 @@ def phase_costs(path, offset, require_encoder=True):
                             'median_ms': dict(zip(fields, map(statistics.median, zip(*samples))))}
     if require_encoder and 'encoder' not in result:
         raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
+    result['cpu_graph_messages'] = [line for line in lines if any(marker in line for marker in
+        ('cpu graph profile:', 'cpu op profile:', 'cpu node profile:', 'cpu worker profile:'))]
+    if os.getenv('EI_CPU_GRAPH_PROFILE2') == '1' and not result['cpu_graph_messages']:
+        raise RuntimeError(f'CPU graph profiling produced no samples: {path}')
     # AUTO can disable unsupported flash attention while the reference forces
     # it on. Preserve the actual encoder decisions before choosing kernel work.
     # llama.cpp warms the encoder during startup, before the phase offset.
