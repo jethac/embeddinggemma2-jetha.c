@@ -10,6 +10,10 @@ on:
         description: Compile and stage native ARM64 CUDA121a code; no GPU runtime check
         type: boolean
         default: false
+      benchmark_arm_media:
+        description: Compare matched precise ARM CPU engines across five modalities at C1/C4
+        type: boolean
+        default: false
       benchmark_cpu:
         description: Run the matched uncached CPU comparison against pinned llama.cpp
         type: boolean
@@ -183,7 +187,7 @@ jobs:
     name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || 'EmbeddingGemma 2 service (Linux ARM64 CPU)' }}
     runs-on: ubuntu-24.04-arm
     container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
-    timeout-minutes: ${{ inputs.arm_cuda_compile && 90 || 60 }}
+    timeout-minutes: ${{ inputs.benchmark_arm_media && 120 || inputs.arm_cuda_compile && 90 || 60 }}
     env:
       ARM_CUDA_COMPILE: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && '1' || '0' }}
     defaults:
@@ -301,7 +305,7 @@ jobs:
           print('Native ARM64 CUDA compile/link/staging passed; GPU load and inference remain untested.')
           PY
       - name: Compare installed ARM kernels and exercise baseline ISA safety
-        if: env.ARM_CUDA_COMPILE != '1'
+        if: env.ARM_CUDA_COMPILE != '1' && !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media)
         env:
           EI_THREADS: '2'
         run: |
@@ -557,6 +561,28 @@ jobs:
                           try: process.wait(timeout=30)
                           except subprocess.TimeoutExpired: process.kill(); process.wait()
           PY
+      - name: Build the matched ARM comparison server with installed GGML
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
+        run: |
+          cmake --install build-cmake --prefix "$PWD/build-matched"
+          cmake -S build-cmake/_deps/llama-src -B build-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_USE_SYSTEM_GGML=ON -DCMAKE_PREFIX_PATH="$PWD/build-matched" -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DGGML_NATIVE=OFF
+          cmake --build build-llama --target llama-server -j 2
+          for plugin in "$PWD"/build-matched/bin/libggml-cpu-*.so; do
+            ln -s "$plugin" build-llama/bin/
+          done
+          ldd build-llama/bin/llama-server
+          ldd build-matched/bin/embeddinggemma2-jetha
+      - name: Qualify matched ARM engines then measure five modalities in both orders
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
+        env:
+          EI_CPU_AUDIO_F16_2: '1'
+          EI_ARM_FP16_ACC_F32: '1'
+        run: |
+          python3 scripts/download-model2.py
+          unset LD_LIBRARY_PATH GGML_BACKEND_PATH
+          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities text,image,audio,video,mixed)
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 3 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
     runs-on: windows-2022
