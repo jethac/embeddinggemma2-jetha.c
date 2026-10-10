@@ -2918,6 +2918,7 @@ required. Keep phase profiling off for throughput measurements.
 | `EI_AUDIO_GRAPH_CACHE_SLOTS2=2..4` | CUDA audio LRU; requires audio graph cache; default one slot; up to 256 frames/128 output tokens |
 | `EI_PIXEL_REUSE2=1` | Reuse vision CPU pixel buffer up to 16 MiB; rewrite all pixels |
 | `EI_VISION_CLIP_METADATA2=1` | Omit vision clamps only if all four bound tensors are absent; audio unchanged |
+| `EI_METAL_MEDIA_FLASH_ATTN2=1` | Force encoder flash attention on Metal; unsupported operations can use CPU |
 | `EI_GRAPH_CACHE2=1` | CUDA text graph cache, at most 256 aggregate tokens |
 | `EI_GRAPH_CACHE_SLOTS2=2..4` | Default two shapes; hard limit four |
 | `EI_RAW_GRAPH_CACHE2=1` | Share graph slots with raw inputs up to 256 aggregate tokens |
@@ -3153,3 +3154,29 @@ remained byte-identical. Twenty balanced HTTP pairs per case gave OFF/ON
 medians of 125.815/132.682 ms (0.25-second audio), 243.275/243.022 ms (one second),
 and 420.977/462.034 ms (two seconds). ON won 10/8/9 pairs respectively. Fewer
 instructions did not produce a reliable request-latency gain; the patch was removed.
+
+## Metal encoder flash attention
+
+[Run 38020441663](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663),
+source `71a253a`, used Apple M1 (Virtual), three cores, 7 GB RAM, and the Apple
+Paravirtual GPU. Q8_0, three threads, 768 dimensions, caches and profiling off.
+Fresh servers and both orders compared forced encoder flash attention with
+AUTO, then with pinned llama.cpp using flash attention. Vision flash attention
+used CPU fallback; AUTO disabled it. Audio already enabled it under AUTO.
+
+All five input types passed finite/unit-norm/token checks. Minimum reference
+cosine was 0.999769; minimum ON/AUTO cosine was 0.999849. Only image requests
+were timed. Each had 260 tokens.
+
+| Clients | ON emb/s | AUTO emb/s | ON/AUTO | Ours emb/s | llama.cpp emb/s | Ours/llama.cpp |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.123883 | 0.102292 | 1.211x | 0.130236 | 0.109748 | 1.187x |
+| 4 | 0.184388 | 0.111253 | 1.657x | 0.191549 | 0.175202 | 1.093x |
+
+ON beat AUTO in both orders at both client counts. Other CPU load was
+3.68–145.88% at one client and 1.36–5.80% at four. The llama.cpp comparison
+had 1.46–97.42% and 2.76–18.72% competing CPU load. At four clients, one order
+won (0.183023 versus 0.149453 emb/s); the reverse narrowly lost (0.200076 versus
+0.200952). The geometric mean of the two averaged image ratios was 1.139x.
+These results do not measure physical Apple hardware or all-GPU attention.
+Keep AUTO as the default until native hardware measurements support a change.

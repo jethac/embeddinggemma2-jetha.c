@@ -106,24 +106,22 @@ Minimum cosine: 0.999970. Geometric mean: **1.003x**.
 | 1024 | 1 | 0.44 | 0.44 | 1.008x | 1.003–1.014x |
 | 1024 | 4 | 0.41 | 0.41 | 0.994x | 0.991–0.998x |
 
-[Metal run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38004147312):
+[Metal image run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663):
 Apple M1 (Virtual), Paravirtual GPU, three threads, 7 GB RAM.
-Minimum cosine: 0.999301. Other CPU load: 0.58–149.32%.
-Geometric mean: **0.801x**. These results do not measure a physical Apple GPU.
-Encoder attention paths differ; see the [routing check](perf/optimization_status.md#metal-encoder-routing).
+`EI_METAL_MEDIA_FLASH_ATTN2=1` forces encoder flash attention. Vision attention
+uses CPU fallback on this device. The default remains AUTO.
+All five quality checks passed; minimum cosine: 0.999769.
+Other CPU load during the llama.cpp comparison: 1.46–97.42%.
 
-| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
-|---|---:|---:|---:|---:|
-| Text | 1 | 2.4354 | 2.6003 | 0.937× |
-| Text | 4 | 4.6006 | 6.6475 | 0.692× |
-| Image | 1 | 0.0898 | 0.1175 | 0.764× |
-| Image | 4 | 0.1129 | 0.1623 | 0.696× |
-| Audio | 1 | 1.1562 | 1.0309 | 1.122× |
-| Audio | 4 | 1.5689 | 2.0867 | 0.752× |
-| Video | 1 | 0.1368 | 0.1565 | 0.874× |
-| Video | 4 | 0.1264 | 0.1713 | 0.738× |
-| Mixed | 1 | 0.0980 | 0.1180 | 0.831× |
-| Mixed | 4 | 0.0959 | 0.1382 | 0.694× |
+| Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio | Ratio by order |
+|---|---:|---:|---:|---:|---:|
+| Image | 1 | 0.1302 | 0.1097 | 1.187x | 1.072–1.317x |
+| Image | 4 | 0.1915 | 0.1752 | 1.093x | 0.996–1.225x |
+
+These results use a virtual GPU. Other input types were not timed with this
+option. The [earlier AUTO run](perf/optimization_status.md#complete-virtual-metal-comparison)
+had a 0.801x geometric mean across all five input types.
+See [option measurements](perf/optimization_status.md#metal-encoder-flash-attention).
 
 No CUDA media result is available from a host with low competing load.
 See [other measurements and options](perf/optimization_status.md#embeddinggemma-2-development-results).
