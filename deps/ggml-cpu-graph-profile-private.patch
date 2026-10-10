@@ -1,0 +1,248 @@
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -477,6 +477,23 @@
+ 
+ #endif
+ 
++// Private diagnostic: worker-owned samples; printed only after graph completion.
++struct ei_cpu_node_sample {
++    int64_t work_us;
++    int64_t wait_us;
++    int64_t kernel_barrier_us;
++    int kernel_barrier_calls;
++    int tasks;
++    int fused;
++    bool visited;
++};
++
++#if defined(_MSC_VER)
++static __declspec(thread) struct ei_cpu_node_sample * ei_cpu_current_sample;
++#else
++static _Thread_local struct ei_cpu_node_sample * ei_cpu_current_sample;
++#endif
++
+ // Threadpool def
+ struct ggml_threadpool {
+     ggml_mutex_t mutex;       // mutex for cond.var
+@@ -484,6 +501,8 @@
+ 
+     struct ggml_cgraph * cgraph;
+     struct ggml_cplan  * cplan;
++    struct ei_cpu_node_sample * ei_profile;
++    int ei_profile_nodes;
+ 
+     // synchronization primitives
+     atomic_int n_graph;       // updated when there is work to be done (i.e each graph) holds graph and active thread counts.
+@@ -573,7 +592,7 @@
+ 
+ static struct ggml_state g_state = {0};
+ 
+-void ggml_barrier(struct ggml_threadpool * tp) {
++static void ei_ggml_barrier_impl(struct ggml_threadpool * tp) {
+     int n_threads = atomic_load_explicit(&tp->n_graph, memory_order_relaxed) & GGML_THREADPOOL_N_THREADS_MASK;
+     if (n_threads == 1) {
+         return;
+@@ -609,6 +628,16 @@
+     atomic_thread_fence(memory_order_seq_cst);
+     #endif
+ #endif
++}
++
++void ggml_barrier(struct ggml_threadpool * tp) {
++    struct ei_cpu_node_sample * sample = ei_cpu_current_sample;
++    const int64_t start = sample ? ggml_time_us() : 0;
++    ei_ggml_barrier_impl(tp);
++    if (sample) {
++        sample->kernel_barrier_us += ggml_time_us() - start;
++        ++sample->kernel_barrier_calls;
++    }
+ }
+ 
+ void ggml_threadpool_chunk_set(struct ggml_threadpool * tp, int value) {
+@@ -3138,6 +3167,10 @@
+             continue;
+         }
+ 
++        struct ei_cpu_node_sample * sample = tp->ei_profile ?
++            &tp->ei_profile[(size_t)state->ith * tp->ei_profile_nodes + node_n] : NULL;
++        ei_cpu_current_sample = sample;
++        const int64_t work_start = sample ? ggml_time_us() : 0;
+         // TODO: move fused-op detection into ggml_graph_plan so fusion decisions are made once at planning time
+         // Try fused ops, fall back to normal compute
+         const int n_fused = ggml_cpu_try_fuse_ops(cgraph, node_n, &params, cplan);
+@@ -3147,15 +3180,25 @@
+             ggml_compute_forward(&params, node);
+         }
+ 
++        const int64_t work_end = sample ? ggml_time_us() : 0;
++        ei_cpu_current_sample = NULL;
++        if (sample) {
++            sample->work_us = work_end - work_start;
++            sample->tasks = ggml_get_n_tasks(node, params.nth);
++            sample->fused = n_fused;
++            sample->visited = true;
++        }
+         if (state->ith == 0 && cplan->abort_callback &&
+                 cplan->abort_callback(cplan->abort_callback_data)) {
+             atomic_store_explicit(&tp->abort, node_n + 1, memory_order_relaxed);
+             tp->ec    = GGML_STATUS_ABORTED;
+         }
+ 
++        const int64_t wait_start = sample ? ggml_time_us() : 0;
+         if (node_n + 1 < cgraph->n_nodes) {
+             ggml_barrier(state->threadpool);
+         }
++        if (sample) sample->wait_us = ggml_time_us() - wait_start;
+     }
+ 
+ #ifdef GGML_USE_OPENMP
+@@ -3321,6 +3364,8 @@
+     {
+         threadpool->cgraph           = cgraph;
+         threadpool->cplan            = cplan;
++        threadpool->ei_profile       = NULL;
++        threadpool->ei_profile_nodes = 0;
+         threadpool->n_graph          = 0;
+         threadpool->n_barrier        = 0;
+         threadpool->n_barrier_passed = 0;
+@@ -3388,6 +3433,82 @@
+     return ggml_threadpool_new_impl(tpp, NULL, NULL);
+ }
+ 
++static void ei_cpu_profile_print(const struct ggml_cgraph * graph,
++        const struct ei_cpu_node_sample * samples, int threads,
++        int64_t graph_us, int64_t create_us, int64_t free_us, bool disposable) {
++    // Sum of per-node worker maxima is not additive with wait maxima.
++    // Worker0 work+wait is the attributable wall path; CPU sums size imbalance.
++    fprintf(stderr, "cpu graph profile: nodes=%d threads=%d disposable=%d graph_us=%" PRId64
++        " pool_create_us=%" PRId64 " pool_free_us=%" PRId64 "\n",
++        graph->n_nodes, threads, disposable, graph_us, create_us, free_us);
++    for (int bucket = 0; bucket <= GGML_OP_COUNT; ++bucket) {
++        int nodes = 0, fused = 0, kernel_barriers = 0;
++        int64_t kernel_wait = 0, w0_kernel_wait = 0;
++        int64_t work = 0, wait = 0, max_work = 0, max_wait = 0, w0_work = 0, w0_wait = 0;
++        const char * name = NULL;
++        for (int n = 0; n < graph->n_nodes; ++n) {
++            const struct ggml_tensor * node = graph->nodes[n];
++            int group = node->op;
++            if (node->op == GGML_OP_UNARY && ggml_get_unary_op(node) == GGML_UNARY_OP_GELU)
++                group = GGML_OP_COUNT;
++            if (group != bucket || !samples[n].visited) continue;
++            ++nodes;
++            fused += samples[n].fused;
++            name = bucket == GGML_OP_COUNT ? "GELU" : ggml_op_name(node->op);
++            int64_t mw = 0, mb = 0;
++            for (int t = 0; t < threads; ++t) {
++                const struct ei_cpu_node_sample * s = &samples[(size_t)t * graph->n_nodes + n];
++                work += s->work_us; wait += s->wait_us;
++                kernel_wait += s->kernel_barrier_us; kernel_barriers += s->kernel_barrier_calls;
++                if (s->work_us > mw) mw = s->work_us;
++                if (s->wait_us > mb) mb = s->wait_us;
++            }
++            max_work += mw; max_wait += mb;
++            w0_work += samples[n].work_us; w0_wait += samples[n].wait_us;
++            w0_kernel_wait += samples[n].kernel_barrier_us;
++        }
++        if (nodes) fprintf(stderr, "cpu op profile: op=%s nodes=%d fused_skips=%d work_cpu_us=%" PRId64
++            " wait_cpu_us=%" PRId64 " max_work_sum_us=%" PRId64 " max_wait_sum_us=%" PRId64
++            " worker0_work_us=%" PRId64 " worker0_wait_us=%" PRId64
++            " kernel_barrier_cpu_us=%" PRId64 " worker0_kernel_barrier_us=%" PRId64 " kernel_barrier_worker_calls=%d\n",
++            name, nodes, fused, work, wait, max_work, max_wait, w0_work, w0_wait,
++            kernel_wait, w0_kernel_wait, kernel_barriers);
++    }
++    // Keep a few concrete node geometries so dominant matmuls are actionable.
++    int chosen[8];
++    for (int rank = 0; rank < 8; ++rank) {
++        int best = -1;
++        int64_t longest = -1;
++        for (int n = 0; n < graph->n_nodes; ++n) {
++            if (!samples[n].visited) continue;
++            bool seen = false;
++            for (int r = 0; r < rank; ++r) if (chosen[r] == n) seen = true;
++            if (seen) continue;
++            int64_t span = 0;
++            for (int t = 0; t < threads; ++t) {
++                const struct ei_cpu_node_sample * s = &samples[(size_t)t * graph->n_nodes + n];
++                if (s->work_us + s->wait_us > span) span = s->work_us + s->wait_us;
++            }
++            if (span > longest) { best = n; longest = span; }
++        }
++        chosen[rank] = best;
++        if (best < 0) break;
++        const struct ggml_tensor * node = graph->nodes[best];
++        fprintf(stderr, "cpu node profile: rank=%d node=%d op=%s tasks=%d fused_skips=%d"
++            " ne=%" PRId64 ",%" PRId64 ",%" PRId64 ",%" PRId64 " src0=%s src1=%s src0_buffer=%s max_worker_span_us=%" PRId64 "\n",
++            rank, best, ggml_op_desc(node), samples[best].tasks, samples[best].fused,
++            node->ne[0], node->ne[1], node->ne[2], node->ne[3],
++            node->src[0] ? ggml_type_name(node->src[0]->type) : "none",
++            node->src[1] ? ggml_type_name(node->src[1]->type) : "none", node->src[0] && node->src[0]->buffer ? ggml_backend_buffer_name(node->src[0]->buffer) : "none", longest);
++        for (int t = 0; t < threads; ++t) {
++            const struct ei_cpu_node_sample * s = &samples[(size_t)t * graph->n_nodes + best];
++            fprintf(stderr, "cpu worker profile: node=%d worker=%d work_us=%" PRId64 " wait_us=%" PRId64
++                " kernel_barrier_us=%" PRId64 " kernel_barrier_calls=%d\n",
++                best, t, s->work_us, s->wait_us, s->kernel_barrier_us, s->kernel_barrier_calls);
++        }
++    }
++}
++
+ enum ggml_status ggml_graph_compute(struct ggml_cgraph * cgraph, struct ggml_cplan * cplan) {
+     ggml_cpu_init();
+ 
+@@ -3398,6 +3519,14 @@
+     int n_threads                               = cplan->n_threads;
+     struct ggml_threadpool * threadpool = cplan->threadpool;
+ 
++    const char * profile_flag = getenv("EI_CPU_GRAPH_PROFILE2");
++    struct ei_cpu_node_sample * samples = NULL;
++    if (profile_flag && strcmp(profile_flag, "1") == 0) {
++        GGML_ASSERT(cgraph->n_nodes >= 0 && cgraph->n_nodes <= 65536 && n_threads <= GGML_MAX_N_THREADS);
++        samples = calloc((size_t)n_threads * cgraph->n_nodes, sizeof(*samples));
++        GGML_ASSERT(samples || cgraph->n_nodes == 0);
++    }
++    int64_t create_us = 0, free_us = 0;
+     bool disposable_threadpool = false;
+ 
+     if (threadpool == NULL) {
+@@ -3405,7 +3534,9 @@
+         disposable_threadpool = true;
+ 
+         struct ggml_threadpool_params ttp = ggml_threadpool_params_default(n_threads);
++        const int64_t create_start = samples ? ggml_time_us() : 0;
+         threadpool = ggml_threadpool_new_impl(&ttp, cgraph, cplan);
++        if (samples) create_us = ggml_time_us() - create_start;
+     } else {
+         // Reset some of the parameters that need resetting
+         // No worker threads should be accessing the parameters below at this stage
+@@ -3416,6 +3547,9 @@
+         threadpool->ec               = GGML_STATUS_SUCCESS;
+     }
+ 
++    threadpool->ei_profile = samples;
++    threadpool->ei_profile_nodes = cgraph->n_nodes;
++    const int64_t graph_start = samples ? ggml_time_us() : 0;
+ #ifdef GGML_USE_OPENMP
+     if (n_threads > 1) {
+         #pragma omp parallel num_threads(n_threads)
+@@ -3453,13 +3587,22 @@
+     ggml_graph_compute_thread(&threadpool->workers[0]);
+ #endif
+ 
++    const int64_t graph_us = samples ? ggml_time_us() - graph_start : 0;
+     // don't leave affinity set on the main thread
+     clear_numa_thread_affinity();
+ 
+     enum ggml_status ret = threadpool->ec;
+ 
++    threadpool->ei_profile = NULL;
++    threadpool->ei_profile_nodes = 0;
+     if (disposable_threadpool) {
++        const int64_t free_start = samples ? ggml_time_us() : 0;
+         ggml_threadpool_free(threadpool);
++        if (samples) free_us = ggml_time_us() - free_start;
++    }
++    if (samples) {
++        ei_cpu_profile_print(cgraph, samples, n_threads, graph_us, create_us, free_us, disposable_threadpool);
++        free(samples);
+     }
+ 
+     return ret;

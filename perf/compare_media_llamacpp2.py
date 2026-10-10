@@ -136,6 +136,8 @@ def phase_costs(path, offset, require_encoder=True):
     if require_encoder and 'encoder' not in result:
         raise RuntimeError(f'encoder phase profiling produced no samples: {path}')
     result['backbone_messages'] = [line for line in lines if 'backbone:' in line]
+    result['cpu_graph_messages'] = [line for line in lines if any(marker in line for marker in
+        ('cpu graph profile:', 'cpu op profile:', 'cpu node profile:', 'cpu worker profile:'))]
     result['llama_eval_messages'] = [line for line in lines if
                                    'prompt eval time' in line or 'eval time =' in line]
     # AUTO can disable unsupported flash attention while the reference forces
@@ -245,6 +247,8 @@ def main():
         # The patched encoder's diagnostic timer is shared by both engines.
         # Keep optimization flags isolated even during a profiled comparison.
         llama_env['EI_PROFILE_MEDIA2'] = '1'
+        if os.getenv('EI_CPU_GRAPH_PROFILE2') == '1':
+            llama_env['EI_CPU_GRAPH_PROFILE2'] = '1'
     if a.backend == 'cpu':
         llama_cmd += ['--device', 'none', '--no-op-offload', '--no-kv-offload', '--no-mmproj-offload']
     if a.profile_phases or cpu_audio_f16 or arm_precise or a.backend in ('metal', 'cuda'):
