@@ -3759,6 +3759,13 @@ All five outputs stayed byte-identical, and the original FP32 audio gates
 remained unchanged. The grouped-upload build is deployed on port 42671;
 the README client passed all five inputs again after replacement.
 
+The deployed service now also uses the retained graph, attention and media
+preset. All seven cached original HF audio references passed; 660 Hz cosine
+was 0.999172/0.999147 at 1/5 seconds. Changed lengths, unequal arrays, JPEG,
+concurrent inputs and full context passed on the preset. The README client
+passed all five inputs again. No CUDA throughput claim: the observed host
+load exceeded the quiet limit. Benchmark CPU load uses 100% per logical core.
+
 ### I8MM candidate rejected (2026-10-10)
 
 [Run 38049027256](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38049027256)

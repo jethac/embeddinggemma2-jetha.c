@@ -21,7 +21,7 @@ Set the server address with `--url http://HOST:PORT`. API: `/api/embed` or `/v1/
 
 ## Performance versus llama.cpp
 
-Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b). Same weights, GGML revision, threads, and inputs. Q8_0; 768 dimensions; caches off; both orders; cosine >=0.999. Ratio >1 means faster.
+Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b). Same weights, GGML revision, threads, and inputs. Q8_0; 768 dimensions; caches off; both orders; cosine >=0.999. Ratio >1 means faster. CPU load: 100% = one logical core.
 
 - [CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38035288012): EPYC 9V74; two threads; other CPU load 0.5–1.6%. Both engines: `EI_CPU_AUDIO_F16_2=1`.
 - [ARM CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041835959): Linux ARM64 CI; two threads; other CPU load 0%. Both engines: `EI_CPU_AUDIO_F16_2=1`, `EI_ARM_FP16_ACC_F32=1`. This server: `EI_CPU_REPACK2=1`, `EI_CPU_BF16_F32_2=1`.
