@@ -291,7 +291,7 @@ def main():
                     if arm_precise:
                         native_log = op.log_path.read_text(errors='replace')
                         llama_log = lp.log_path.read_text(errors='replace')
-                        variant = 'i8mm-dotprod-fp16-acc-f32-v1' if i8mm_probe else 'dotprod-fp16-acc-f32-v2'
+                        variant = 'i8mm-dotprod-fp16-acc-f32-v2' if i8mm_probe else 'dotprod-fp16-acc-f32-v2'
                         module = 'armv8_dotprod_fp16_i8mm' if i8mm_probe else 'armv8_dotprod_fp16'
                         if f'ARM CPU numeric variant: {variant}' not in native_log:
                             raise RuntimeError('native ARM precise numeric variant did not activate')

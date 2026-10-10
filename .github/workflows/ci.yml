@@ -324,15 +324,174 @@ jobs:
           assert set(re.findall(r'sm_[0-9]+[a-z]?', objects)) == {'sm_121a'}, 'unexpected CUDA code architecture'
           print('Native ARM64 CUDA compile/link/staging passed; GPU load and inference remain untested.')
           PY
+      - name: Check I8MM opt-in fallback and numeric cache isolation
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
+        env:
+          EI_THREADS: '2'
+        run: |
+          python3 scripts/download-model2.py
+          unset LD_LIBRARY_PATH GGML_BACKEND_PATH
+          PYTHONPATH="$PWD/perf" python3 - <<'PY'
+          import base64, io, json, math, os, signal, struct, subprocess, tempfile, time, urllib.error, urllib.request, wave
+          from pathlib import Path
+          from types import SimpleNamespace
+          from compare_llamacpp import Endpoint, cosine_similarity
+          from compare_media_llamacpp2 import fixtures, validate, measure_native_pair
+
+          repo = Path.cwd()
+          binaries = {name: (repo / prefix / 'bin/embeddinggemma2-jetha').resolve()
+                      for name, prefix in [('on', 'build-packaged'), ('off', 'build-arm-baseline')]}
+          model = (repo / 'model/embeddinggemma-2-Q8_0.gguf').resolve()
+          mmproj = (repo / 'model/mmproj-embeddinggemma-2-Q8_0.gguf').resolve()
+          env = os.environ.copy()
+          for key in list(env):
+              if key.startswith('EI_') and key != 'EI_THREADS': env.pop(key)
+          for key in ('LD_LIBRARY_PATH', 'GGML_BACKEND_PATH'): env.pop(key, None)
+          endpoints = {name: Endpoint('127.0.0.1', port, '/v1/embeddings', 'openai')
+                       for name, port in [('on', 42667), ('off', 42668)]}
+          with tempfile.TemporaryDirectory(prefix='arm-installed-journey-') as tmp:
+              root = Path(tmp)
+              cases = fixtures(root, 1)
+              processes = []
+              persistent = set()
+              def start(name, label, cache=None, emulate=False, profile=False, precise=True, audio_f16=True, i8mm=False):
+                  endpoint = endpoints[name]
+                  command = [str(binaries[name]), '--bind', endpoint.host, '--port', str(endpoint.port),
+                             '--backend', 'cpu', '--model', str(model), '--mmproj', str(mmproj),
+                             '--cache-entries', '16' if cache else '0',
+                             '--response-cache-mb', '16' if cache else '0']
+                  if cache: command += ['--persistent-cache-path', str(cache)]
+                  if emulate: command = ['qemu-aarch64', '-cpu', 'cortex-a53'] + command
+                  child_env = env.copy()
+                  # Exercise unsupported-ISA fallback with the opt-in flag enabled.
+                  if emulate or i8mm: child_env['EI_CPU_ARM_I8MM2'] = '1'
+                  else: child_env.pop('EI_CPU_ARM_I8MM2', None)
+                  if precise: child_env['EI_ARM_FP16_ACC_F32'] = '1'
+                  if audio_f16: child_env['EI_CPU_AUDIO_F16_2'] = '1'
+                  if profile: child_env['EI_PROFILE_BACKBONE2'] = '1'
+                  log = root / (label + '.log')
+                  with log.open('w') as stderr:
+                      process = subprocess.Popen(command, cwd=root, env=child_env,
+                                                 stdout=subprocess.DEVNULL, stderr=stderr)
+                  processes.append(process)
+                  if cache: persistent.add(process.pid)
+                  deadline = time.monotonic() + (600 if emulate else 180)
+                  while time.monotonic() < deadline:
+                      if process.poll() is not None: raise AssertionError(log.read_text())
+                      try:
+                          with urllib.request.urlopen(f'http://{endpoint.host}:{endpoint.port}/healthz', timeout=1):
+                              break
+                      except OSError: time.sleep(.2)
+                  else: raise AssertionError('installed ARM service did not become ready')
+                  expected = 'armv8-baseline' if name == 'off' or emulate else ('i8mm-dotprod-fp16-acc-f32-v2' if i8mm else ('dotprod-fp16-acc-f32-v2' if precise else 'dotprod-fp16-v1'))
+                  assert f'ARM CPU numeric variant: {expected}' in log.read_text(), log.read_text()
+                  assert ('CPU audio F16 active: 132 Conformer matrices' in log.read_text()) == audio_f16, log.read_text()
+                  maps = Path(f'/proc/{process.pid}/maps').read_text()
+                  selected = 'armv8.0_1' if expected == 'armv8-baseline' else ('armv8_dotprod_fp16_i8mm' if i8mm else 'armv8_dotprod_fp16')
+                  assert f'libggml-cpu-{selected}.so' in maps, maps
+                  if expected == 'armv8-baseline': assert 'libggml-cpu-armv8_dotprod_fp16.so' not in maps
+                  if not i8mm: assert 'libggml-cpu-armv8_dotprod_fp16_i8mm.so' not in maps, 'I8MM selected without runtime support or opt-in'
+                  assert str(repo / 'build-cmake') not in maps, 'loaded build-tree runtime'
+                  return process, log
+              def stop(process):
+                  process.terminate()
+                  try:
+                      status = process.wait(timeout=60)
+                      # Only persistent-cache servers install graceful stop handlers.
+                      expected = (0,) if process.pid in persistent else (0, -signal.SIGTERM)
+                      assert status in expected, ('ARM service shutdown failed', status, expected)
+                  except subprocess.TimeoutExpired:
+                      process.kill(); process.wait(); raise
+                  processes.remove(process)
+                  persistent.discard(process.pid)
+              try:
+                  # Actual packed runtime with all modules; opt-in still must not
+                  # select I8MM on Cortex-A53. One text request is sufficient.
+                  emulated, _ = start('on', 'i8mm-unsupported-cortex-a53', emulate=True)
+                  request = urllib.request.Request('http://127.0.0.1:42667/v1/embeddings',
+                      json.dumps(cases['text'][0][0]).encode(), headers={'Content-Type': 'application/json'})
+                  with urllib.request.urlopen(request, timeout=600) as response:
+                      result = json.load(response)
+                  vector = result['data'][0]['embedding']
+                  assert len(vector) == 768 and all(math.isfinite(x) for x in vector)
+                  assert abs(sum(x*x for x in vector) - 1) < .002
+                  assert result['usage']['prompt_tokens'] == 18
+                  stop(emulated)
+                  print('I8MM flag ON safely selects ARMv8 baseline on Cortex-A53', flush=True)
+
+                  # These checks intentionally leave repacking OFF: mapped kernels
+                  # also inherit the selected module's arithmetic/cache domain.
+                  shared = root / 'i8mm-cache'
+                  text = cases['text'][0][0]
+                  audio = cases['audio'][0][0]
+                  native, _ = start('on', 'dotprod-cache', cache=shared)
+                  old_text, text_tokens = validate(endpoints['on'], text)
+                  old_audio, audio_tokens = validate(endpoints['on'], audio)
+                  stop(native)
+                  old_text_id = shared.read_bytes()[16:24]
+                  old_response_id = Path(str(shared) + '.responses').read_bytes()[8:16]
+                  golden = json.loads((repo / 'tests/fixtures/audio-1s330-hf-f32.json').read_text())
+                  assert (golden['reference_dtype'], golden['attention'], golden['audio_mask']) == ('float32', 'sdpa', 'boolean')
+                  reference = golden['embedding']
+                  assert cosine_similarity(old_audio, reference) > .999
+                  native, log = start('on', 'i8mm-cache', cache=shared, profile=True, i8mm=True)
+                  new_text, nt = validate(endpoints['on'], text)
+                  new_audio, na = validate(endpoints['on'], audio)
+                  assert nt == text_tokens == 18 and na == audio_tokens == 29
+                  assert cosine_similarity(new_text, old_text) > .999
+                  assert cosine_similarity(new_audio, old_audio) > .999
+                  audio_hf = cosine_similarity(new_audio, reference)
+                  assert audio_hf > .999, ('I8MM mapped audio HF', audio_hf)
+                  stop(native)
+                  assert log.read_text().count('backbone:') >= 2, 'DOTPROD snapshots crossed I8MM identity'
+                  assert old_text_id != shared.read_bytes()[16:24]
+                  assert old_response_id != Path(str(shared) + '.responses').read_bytes()[8:16]
+                  native, log = start('on', 'i8mm-cache-restart', cache=shared, profile=True, i8mm=True)
+                  assert validate(endpoints['on'], text) == (new_text, nt)
+                  assert validate(endpoints['on'], audio) == (new_audio, na)
+                  stop(native)
+                  assert 'backbone:' not in log.read_text(), 'I8MM snapshot failed to restore'
+                  print(json.dumps({'ARM_I8MM_persisted_identity': 'isolated and restored',
+                                    'audio_original_HF_cosine': audio_hf}), flush=True)
+              finally:
+                  for process in processes:
+                      if process.poll() is None:
+                          process.terminate()
+                          try: process.wait(timeout=30)
+                          except subprocess.TimeoutExpired: process.kill(); process.wait()
+          PY
+      - name: Build the matched ARM comparison server with installed GGML
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
+        run: |
+          cmake --install build-cmake --prefix "$PWD/build-matched"
+          cmake -S build-cmake/_deps/llama-src -B build-llama -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DLLAMA_USE_SYSTEM_GGML=ON -DCMAKE_PREFIX_PATH="$PWD/build-matched" -DLLAMA_BUILD_COMMON=ON -DLLAMA_BUILD_SERVER=ON -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_APP=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DGGML_NATIVE=OFF
+          cmake --build build-llama --target llama-server -j 2
+          for plugin in "$PWD"/build-matched/bin/libggml-cpu-*.so; do
+            ln -s "$plugin" build-llama/bin/
+          done
+          ldd build-llama/bin/llama-server
+          ldd build-matched/bin/embeddinggemma2-jetha
       - name: Isolate observed I8MM repack failure
         if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
         env:
           EI_CPU_ARM_I8MM2: '1'
           EI_ARM_FP16_ACC_F32: '1'
         run: |
-          cmake --install build-cmake --prefix "$PWD/build-matched"
           c++ -O2 -std=c++17 tests/i8mm_repack2.cpp -Ibuild-matched/include -Lbuild-matched/lib -Wl,-rpath,"$PWD/build-matched/lib:$PWD/build-matched/bin" -lggml -lggml-base -ldl -o build-matched/bin/i8mm-repack2
-          build-matched/bin/i8mm-repack2 "$PWD/build-matched/bin" || echo 'Observed repack invariant failed; retain row diagnostics and continue matched HF isolation'
+          build-matched/bin/i8mm-repack2 "$PWD/build-matched/bin"
+      - name: Qualify matched ARM engines then measure five modalities in both orders
+        if: github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && env.ARM_CUDA_COMPILE != '1'
+        env:
+          EI_CPU_AUDIO_F16_2: '1'
+          EI_ARM_FP16_ACC_F32: '1'
+          ARM_MEDIA_MODALITIES: ${{ matrix.modalities }}
+          EI_CPU_ARM_I8MM2: '1'
+        run: |
+          python3 scripts/download-model2.py
+          unset LD_LIBRARY_PATH GGML_BACKEND_PATH
+          args=(--backend cpu --threads 2 --model model/embeddinggemma-2-Q8_0.gguf --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf --embeddinggemma-bin build-matched/bin/embeddinggemma2-jetha --llama-server build-llama/bin/llama-server --modalities "$ARM_MEDIA_MODALITIES")
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --validate-only --concurrency 1 --audio-reference tests/fixtures/audio-1s330-hf-f32.json --audio-reference tests/fixtures/audio-1s660-hf-f32.json --audio-reference tests/fixtures/audio-5s660-hf-f32.json
+          python3 perf/compare_media_llamacpp2.py "${args[@]}" --concurrency 1,4 --rounds 5 --target-seconds 8 --quiet-total-cpu-percent 10
   gemma2-windows:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media) }}
     name: EmbeddingGemma 2 service (Windows x86_64 CPU)
