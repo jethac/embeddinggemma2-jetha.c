@@ -169,16 +169,26 @@ jobs:
   gemma2-linux-arm64:
     name: EmbeddingGemma 2 service (Linux ARM64 CPU)
     runs-on: ubuntu-24.04-arm
+    container: ubuntu:22.04
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Install the Ubuntu 22.04 ARM64 build tools
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends build-essential git curl ca-certificates python3-pip ffmpeg binutils file
+          python3 -m pip install --only-binary=:all: cmake==3.30.5
+          cmake --version
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Build the portable ARM64 CPU service
         run: |
           uname -m
           test "$(uname -m)" = aarch64
           lscpu
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
           cmake -S . -B build-cmake -DCMAKE_BUILD_TYPE=Release -DEI_CPU_DISPATCH=OFF -DGGML_NATIVE=OFF -DGGML_CUDA=OFF -DGGML_METAL=OFF -DGGML_HIP=OFF -DGGML_SYCL=OFF -DGGML_OPENMP=OFF
           cmake --build build-cmake --target embeddinggemma2-jetha reference2 -j 2
       - name: Stage and install the ARM64 CPU application
@@ -190,7 +200,22 @@ jobs:
           tar -xzf build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu.runtime.tar.gz -C build-packaged
           cp build-release-assets/embeddinggemma2-jetha-linux-arm64-cpu build-packaged/bin/embeddinggemma2-jetha
           python3 tests/installed_service2.py --prefix build-packaged
-          readelf --version-info build-packaged/bin/embeddinggemma2-jetha | grep -oE 'GLIBC(XX)?_[0-9.]+' | sort -Vu
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          for path in Path('build-packaged').rglob('*'):
+              if not path.is_file(): continue
+              with path.open('rb') as stream:
+                  if stream.read(4) != b'\x7fELF': continue
+              symbols = subprocess.check_output(['readelf', '--version-info', str(path)], text=True)
+              for namespace, limit in [('GLIBC', (2, 34)), ('GLIBCXX', (3, 4, 29))]:
+                  versions = [tuple(map(int, v.split('.'))) for v in
+                      re.findall(rf'\b{namespace}_(\d+(?:\.\d+)*)\b', symbols)]
+                  if not versions: continue
+                  maximum = max(versions)
+                  print(f'{path}: {namespace}_' + '.'.join(map(str, maximum)))
+                  assert maximum <= limit, f'{path}: {namespace} exceeds the Ubuntu 22.04 build baseline'
+          PY
       - name: Run all five modalities from the packaged ARM64 application
         env:
           EI_THREADS: '2'
