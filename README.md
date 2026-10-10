@@ -2,17 +2,14 @@
 
 EmbeddingGemma 2 server in C. Based on [embeddinggemma.c](https://github.com/QuixiAI/embeddinggemma.c).
 
-Inputs: text, image, audio, video, mixed. Dimensions: 128, 256, 512, 768.
-Input limit: 8192 tokens.
+Inputs: text, image, audio, video, mixed. Output: 128/256/512/768 dimensions. Maximum input: 8192 tokens.
 
-Tested: Windows CPU, WSL CPU/CUDA, Linux ARM CPU, macOS CI CPU/Metal.
-GPU operations can use the CPU. ROCm, XPU, GB10, and Strix Halo are unverified.
-No NPU support. No binary releases.
+Tested: Windows CPU, WSL CPU/CUDA, Linux ARM CPU, macOS CI CPU/Metal. GPU backends can use CPU fallback.
+Unverified: ROCm, XPU, GB10, Strix Halo. No NPU support or binary releases.
 
 ## Build
 
-Requirements: CMake >=3.24, C/C++ compiler, Git, Python >=3.9, NASM on x86.
-For video and WebP, add `ffmpeg` and `ffprobe` to `PATH`.
+Requires CMake >=3.24, a C/C++ compiler, Git, Python >=3.9, and NASM on x86. For video and WebP, put `ffmpeg` and `ffprobe` in `PATH`.
 
 ```sh
 git clone https://github.com/jethac/embeddinggemma2-jetha.c.git
@@ -27,17 +24,11 @@ local-install/bin/embeddinggemma2-jetha --bind 127.0.0.1 --port 42667 \
   --mmproj model/mmproj-embeddinggemma-2-Q8_0.gguf
 ```
 
-Windows: use MSYS2 MinGW64. Install GCC, CMake, Ninja, Python, FFmpeg, and NASM.
-Use `python` and `-G Ninja`. Run the `.exe`.
+Windows: use MSYS2 MinGW64. Install GCC, CMake, Ninja, Python, FFmpeg, and NASM. Use `python`, `-G Ninja`, and the `.exe`.
 
-| Backend | CMake options | Server option |
-|---|---|---|
-| CUDA | `-DGGML_CUDA=ON` | `--backend cuda` |
-| Metal | `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON` | `--backend metal` |
-
-CUDA requires the CUDA toolkit and a compatible NVIDIA driver. Metal requires macOS.
-Use a separate build directory for each backend. Remove `-DGGML_METAL=OFF` for Metal.
-For text only, omit `--mmproj`. [Build options](CONTRIBUTING.md).
+CUDA: `-DGGML_CUDA=ON`, `--backend cuda`. Requires the CUDA toolkit and a compatible driver.
+Metal: `-DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON`, `--backend metal`. Remove `-DGGML_METAL=OFF`. Requires macOS.
+Use separate build directories. For text only, omit `--mmproj`. [Build options](CONTRIBUTING.md).
 
 ## Use
 
@@ -46,21 +37,15 @@ python examples/embed.py --text "task: search result | query: what powers the ce
 python examples/embed.py --image picture.jpg --audio recording.wav --video clip.mp4 --dimensions 256
 ```
 
-Set the server with `--url http://HOST:PORT`.
-API: `/api/embed` or `/v1/embeddings`. Output vectors have unit length.
-[Requests](examples/embed.py) · [All input types](examples/journey2.py)
+Set the server address with `--url http://HOST:PORT`. API: `/api/embed` or `/v1/embeddings`. Output vectors have unit length.
+[Request options](examples/embed.py) · [Input examples](examples/journey2.py)
 
 ## Performance versus llama.cpp
 
-llama.cpp: [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b).
-Same Q8_0 weights, kernels, threads, inputs, tokens, and 768 dimensions.
-Caches off. Warmup, then both engine orders. Cosine >=0.999.
-Ratio >1 means this server is faster.
+Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b). Matched weights (Q8_0), kernels, threads, inputs, and output (768 dimensions). Caches off. Warmup, then both engine orders. Cosine >=0.999. Ratio >1 means faster.
 
-[CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034): EPYC 9V74, Ubuntu 24.04, two threads.
-Other CPU load: 0.8–0.9%. Mean ratio: **1.003x** (geometric).
-[Metal](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663): virtual M1, Paravirtual GPU, three threads.
-`EI_METAL_MEDIA_FLASH_ATTN2=1`. Vision attention used the CPU. Other CPU load: 1.46–97.42%.
+CPU: EPYC 9V74, Ubuntu 24.04, two threads. Other CPU load: 0.8–0.9%. [Mean: 1.003x](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/37892946034).
+Metal: virtual M1, Paravirtual GPU, three threads. Vision attention on CPU. Other CPU load: 1.46–97.42%. [Run](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663).
 
 | Backend | Input | Clients | This server, emb/s | llama.cpp, emb/s | Ratio | Range by order |
 |---|---|---:|---:|---:|---:|---:|
@@ -73,17 +58,14 @@ Other CPU load: 0.8–0.9%. Mean ratio: **1.003x** (geometric).
 | Metal | Image | 1 | 0.1302 | 0.1097 | 1.187x | 1.072–1.317x |
 | Metal | Image | 4 | 0.1915 | 0.1752 | 1.093x | 0.996–1.225x |
 
-Default Metal AUTO: [0.801x across all inputs](perf/optimization_status.md#complete-virtual-metal-comparison) (geometric).
-The Metal table shows image results with the option enabled.
-CUDA media runs failed the CPU load limit.
+Metal table: `EI_METAL_MEDIA_FLASH_ATTN2=1`. Default AUTO: [0.801x geometric mean across all inputs](perf/optimization_status.md#complete-virtual-metal-comparison).
+CUDA: other CPU load exceeded the benchmark limit.
 
-[Measurements and options](perf/optimization_status.md#embeddinggemma-2-development-results) ·
-[Text benchmark](perf/compare_llamacpp2.py) · [Media benchmark](perf/compare_media_llamacpp2.py)
+[Measurements](perf/optimization_status.md#embeddinggemma-2-development-results) · [Text benchmark](perf/compare_llamacpp2.py) · [Media benchmark](perf/compare_media_llamacpp2.py)
 
 ## License
 
-[MIT](LICENSE). Includes QuixiAI code and [Windows host code](https://github.com/jethac/embeddinggemma.c).
-Weights use a separate license. Packages include dependency notices.
+[MIT](LICENSE). Includes QuixiAI code and [Windows host code](https://github.com/jethac/embeddinggemma.c). Model weights have a separate license. Packages include dependency notices.
 This software is based in part on the work of the Independent JPEG Group.
 
 [Scope](GOAL.md) · [Release process](RELEASE.md) · [Upstream README](UPSTREAM_README.md)
