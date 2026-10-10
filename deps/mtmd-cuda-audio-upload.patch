@@ -1,0 +1,51 @@
+--- a/tools/mtmd/clip.cpp
++++ b/tools/mtmd/clip.cpp
+@@ -3828,16 +3828,39 @@
+                         const size_t target_row_bytes = ggml_row_size(cur->type, cur->ne[0]);
+                         std::vector<uint8_t> row_q8(source_row_bytes);
+                         std::vector<float> row_f32(t->ne[0]);
+-                        std::vector<ggml_fp16_t> row_f16(t->ne[0]);
+-                        const auto * traits = ggml_get_type_traits(GGML_TYPE_Q8_0);
+-                        for (int64_t row = 0; row < t->ne[1]; ++row) {
+-                            fin.read(reinterpret_cast<char *>(row_q8.data()), source_row_bytes);
+-                            if (!fin) {
+-                                throw std::runtime_error(string_format("audio F16: truncated tensor %s", t->name));
++                        if (cuda_audio_model) {
++                            // Bound temporary host storage; retain the original conversion per row.
++                            const size_t staging_limit = 8u * 1024u * 1024u;
++                            if (target_row_bytes == 0 || t->ne[1] <= 0 || target_row_bytes > staging_limit) {
++                                throw std::runtime_error("audio F16 upload has invalid row dimensions or exceeds staging limit");
+                             }
+-                            traits->to_float(row_q8.data(), row_f32.data(), t->ne[0]);
+-                            ggml_fp32_to_fp16_row(row_f32.data(), row_f16.data(), t->ne[0]);
+-                            ggml_backend_tensor_set(cur, row_f16.data(), row * target_row_bytes, target_row_bytes);
++                            const size_t chunk_rows = std::min<size_t>(t->ne[1], staging_limit / target_row_bytes);
++                            std::vector<ggml_fp16_t> staging(chunk_rows * t->ne[0]);
++                            const auto * traits = ggml_get_type_traits(GGML_TYPE_Q8_0);
++                            for (int64_t first = 0; first < t->ne[1]; first += chunk_rows) {
++                                const size_t rows = std::min<size_t>(chunk_rows, t->ne[1] - first);
++                                for (size_t row = 0; row < rows; ++row) {
++                                    fin.read(reinterpret_cast<char *>(row_q8.data()), source_row_bytes);
++                                    if (!fin) {
++                                        throw std::runtime_error(string_format("audio F16: truncated tensor %s", t->name));
++                                    }
++                                    traits->to_float(row_q8.data(), row_f32.data(), t->ne[0]);
++                                    ggml_fp32_to_fp16_row(row_f32.data(), staging.data() + row * t->ne[0], t->ne[0]);
++                                }
++                                ggml_backend_tensor_set(cur, staging.data(), first * target_row_bytes, rows * target_row_bytes);
++                            }
++                        } else {
++                            std::vector<ggml_fp16_t> row_f16(t->ne[0]);
++                            const auto * traits = ggml_get_type_traits(GGML_TYPE_Q8_0);
++                            for (int64_t row = 0; row < t->ne[1]; ++row) {
++                                fin.read(reinterpret_cast<char *>(row_q8.data()), source_row_bytes);
++                                if (!fin) {
++                                    throw std::runtime_error(string_format("audio F16: truncated tensor %s", t->name));
++                                }
++                                traits->to_float(row_q8.data(), row_f32.data(), t->ne[0]);
++                                ggml_fp32_to_fp16_row(row_f32.data(), row_f16.data(), t->ne[0]);
++                                ggml_backend_tensor_set(cur, row_f16.data(), row * target_row_bytes, target_row_bytes);
++                            }
+                         }
+                     } else if (ggml_backend_buft_is_host(buft)) {
+                         // for the CPU and Metal backend, we can read directly into the tensor

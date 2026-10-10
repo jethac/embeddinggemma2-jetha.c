@@ -297,8 +297,10 @@ when enabled. Output projections retain their original representation.
 On native Windows RTX 5060 Ti, the original FP32 660 Hz checks improved from
 0.998766/0.998786 to 0.999257/0.999294 for 1 s/5 s audio. Shared-host,
 both-order warm medians were 35.31→35.28 ms (1 s) and 37.97→37.13 ms (2 s),
-with no throughput gain claimed. Encoder loading increased from about
-0.34 s to 4.00 s; the native Windows CUDA route requires the MSVC runtime.
+with no throughput gain claimed. Encoder loading is about 1.44 s versus 0.34 s for Q8. CUDA F16 uploads use
+at most 8 MiB of staging memory; grouping reduced the initial 4.06 s F16
+encoder load to 1.44 s with byte-identical outputs. The native Windows
+CUDA route requires the MSVC runtime.
 
 ### Metal
 
