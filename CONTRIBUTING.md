@@ -250,8 +250,9 @@ Diagnostic controls:
   matrices with F16 at load time, avoiding Q8 activation rounding. Default
   OFF; applies only to a loaded CPU audio encoder. Adds 270 MiB of weights
   and separates the numeric cache domain. Output projections remain Q8_0.
-  Windows scalar/AVX2/AVX-512 and macOS ARM CPU passed the original FP32
-  audio checks. Other CPU platforms require qualification.
+  Windows scalar, AVX-only (without F16C), AVX2 and AVX-512, plus macOS
+  ARM CPU, passed the original FP32 audio checks. Other CPU platforms
+  require qualification.
 
 ### Metal
 

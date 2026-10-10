@@ -3554,3 +3554,10 @@ Native ARM64 CUDA compilation, linking, and staging passed for the 21-patch
 source in [run 38032908897](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38032908897).
 Packaged ELF imports meet GLIBC 2.34 / GLIBCXX 3.4.29; 144 cubins target sm_121a.
 NCCL was disabled; the GCC11 link library was not packaged. GPU execution is untested.
+
+
+Current 21-patch Windows runtime loaded only the Sandy Bridge CPU module,
+compiled with `-mavx` and without AVX2/F16C. F16 audio passed the original
+FP32 gate (>0.999): 1s660 cosine 0.999148055 (29 tokens), and 5s660
+0.999246229 (129 tokens). Both vectors were finite and unit-normalized.
+This is AVX-only accuracy qualification, with no speed claim.
