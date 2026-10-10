@@ -3777,7 +3777,7 @@ main. All completed quiet windows had zero other CPU load.
 
 ### Optional Linux ARM I8MM (2026-10-10)
 
-[Native N2 run 38050516943](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38050516943)
+[Linux ARM64 run 38050516943](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38050516943)
 measured the same installed prefix with I8MM OFF/ON, two threads, cache OFF,
 Q8 repacking, F32 projection and precise F16 audio enabled. Both orders and
 all 16 load windows (0.0%) passed. Text improved 5.29% (24.138→25.414 emb/s;
