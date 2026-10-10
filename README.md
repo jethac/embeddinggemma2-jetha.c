@@ -24,7 +24,7 @@ Set the server address with `--url http://HOST:PORT`. API: `/api/embed` or `/v1/
 Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa0a3c6a2e1b4cd9f22eb8d6bf5b12dbdb63b). Same weights, GGML revision, threads, and inputs. Q8_0; 768 dimensions; caches off; both orders; cosine >=0.999. Ratio >1 means faster.
 
 - [CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38035288012): EPYC 9V74; two threads; other CPU load 0.5–1.6%. Both engines: `EI_CPU_AUDIO_F16_2=1`.
-- [ARM CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38036295848): Linux ARM64 CI; two threads; other CPU load 0%. Both engines: `EI_CPU_AUDIO_F16_2=1`, `EI_ARM_FP16_ACC_F32=1`.
+- [ARM CPU](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041835959): Linux ARM64 CI; two threads; other CPU load 0%. Both engines: `EI_CPU_AUDIO_F16_2=1`, `EI_ARM_FP16_ACC_F32=1`. This server: `EI_CPU_REPACK2=1`, `EI_CPU_BF16_F32_2=1`.
 - [Metal](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38020441663): virtual M1; three threads; CPU vision attention; other CPU load 1.46–97.42%.
 
 | Backend | Input | Clients | This server, emb/s | llama.cpp, emb/s | Ratio |
@@ -39,21 +39,21 @@ Baseline: llama.cpp [de7fa0a](https://github.com/ggml-org/llama.cpp/commit/de7fa
 | CPU | Video, 2 seconds | 4 | 0.1899 | 0.1871 | 1.015x |
 | CPU | Mixed | 1 | 0.1525 | 0.1522 | 1.002x |
 | CPU | Mixed | 4 | 0.1498 | 0.1497 | 1.001x |
-| ARM CPU | Text, 18 tokens | 1 | 7.025 | 8.956 | 0.784x |
-| ARM CPU | Text, 18 tokens | 4 | 7.062 | 9.254 | 0.763x |
-| ARM CPU | Image | 1 | 0.05963 | 0.06177 | 0.965x |
-| ARM CPU | Image | 4 | 0.05964 | 0.06146 | 0.970x |
-| ARM CPU | Audio, 1 second | 1 | 1.543 | 1.669 | 0.925x |
-| ARM CPU | Audio, 1 second | 4 | 1.530 | 1.679 | 0.911x |
-| ARM CPU | Video, 2 seconds | 1 | 0.07375 | 0.07630 | 0.967x |
-| ARM CPU | Video, 2 seconds | 4 | 0.07343 | 0.07632 | 0.962x |
-| ARM CPU | Mixed | 1 | 0.05790 | 0.05974 | 0.969x |
-| ARM CPU | Mixed | 4 | 0.05794 | 0.05983 | 0.968x |
+| ARM CPU | Text, 18 tokens | 1 | 24.153 | 8.983 | 2.689x |
+| ARM CPU | Text, 18 tokens | 4 | 25.628 | 9.251 | 2.770x |
+| ARM CPU | Image | 1 | 0.06525 | 0.06135 | 1.064x |
+| ARM CPU | Image | 4 | 0.06540 | 0.06134 | 1.066x |
+| ARM CPU | Audio, 1 second | 1 | 2.077 | 1.673 | 1.241x |
+| ARM CPU | Audio, 1 second | 4 | 2.074 | 1.690 | 1.227x |
+| ARM CPU | Video, 2 seconds | 1 | 0.08256 | 0.07626 | 1.083x |
+| ARM CPU | Video, 2 seconds | 4 | 0.08271 | 0.07674 | 1.078x |
+| ARM CPU | Mixed | 1 | 0.06382 | 0.05954 | 1.072x |
+| ARM CPU | Mixed | 4 | 0.06389 | 0.05951 | 1.074x |
 | Metal | Image | 1 | 0.1302 | 0.1097 | 1.187x |
 | Metal | Image | 4 | 0.1915 | 0.1752 | 1.093x |
 
 x86 audio C1 ratio by order: 0.964–1.065x.
-ARM warm four-client audio: [comparison failed at cosine 0.998954](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38037459764/job/114170787198). This server matched serial output; llama.cpp changed.
+ARM options default OFF. [Earlier ARM baseline and warm audio failure](perf/optimization_status.md#complete-matched-cpu-media-comparison).
 Metal uses `EI_METAL_MEDIA_FLASH_ATTN2=1`. Four-client ratio by order: 0.996–1.225x. Default AUTO: [0.801x across all inputs](perf/optimization_status.md#complete-virtual-metal-comparison).
 CUDA: no result below the host CPU load limit.
 

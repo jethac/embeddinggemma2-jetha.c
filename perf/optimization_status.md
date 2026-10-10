@@ -3664,7 +3664,11 @@ versus 8.983/9.251 for llama.cpp (2.689x/2.770x). Audio measured
 2.077/2.074 versus 1.673/1.690 (1.241x/1.227x). Both orders had zero
 other CPU load. Original-FP32 1s660/5s660 cosine was 0.999222655/0.999209236;
 minimum C4 audio cross-engine cosine was 0.999199512. Full media, context
-and cache validation is now complete; full media performance comparisons remain pending.
+and cache validation is complete. All four benchmark shards passed.
+Image C1/C4 ratios were 1.063517x/1.066206x; video was
+1.082528x/1.077781x; mixed was 1.071871x/1.073542x. These six cells had
+zero other CPU load; minimum cosine was 0.999857945. The README lists all
+ten combined results. The previous ARM losses remain above.
 
 [Installed ARM run 38041916955](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38041916955)
 passed all five inputs, all reduced dimensions and original-FP32 audio gates.
