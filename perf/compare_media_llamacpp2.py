@@ -274,6 +274,10 @@ def main():
                 with ManagedServer(ours_cmd, ours, '/healthz', root / 'ours.log') as op, \
                      ManagedServer(matched_llama_cmd, llama, '/health', root / 'llama.log',
                                    env=llama_env) as lp:
+                    if os.getenv('EI_CPU_REPACK2') == '1':
+                        marker = re.search(r'CPU Q8 repack: (\d+) matrices', op.log_path.read_text(errors='replace'))
+                        if not marker or int(marker[1]) == 0:
+                            raise RuntimeError('native CPU Q8 repack did not activate')
                     log_offsets = (op.log_path.stat().st_size, lp.log_path.stat().st_size)
                     if cpu_audio_f16:
                         marker = 'CPU audio F16 active: 132 Conformer matrices'

@@ -46,6 +46,8 @@ typedef struct {
 typedef struct {
     struct ggml_context *weights;
     ggml_backend_buffer_t weight_buffer;
+    ggml_backend_buffer_t *cpu_repack_buffers;
+    size_t cpu_repack_count;
     struct ggml_context *qkv_ctx;
     ggml_backend_buffer_t qkv_buffer;
     struct ggml_tensor *qkv[LAYERS];
@@ -104,6 +106,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     const char *domains[] = {
         s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
+        s->cpu_repack_count ? "embeddinggemma2-cpu-q8-repack-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
         s->cuda_local_attn ? "embeddinggemma2-cuda-local-attn-v1" : NULL,
         s->cuda_local_range ? "embeddinggemma2-cuda-local-range-v1" : NULL,
@@ -481,6 +484,46 @@ static bool compute(ei_engine *e, const void *input, bool raw, const size_t *off
     return true;
 }
 
+static void repack_cpu_weights(engine2 *s, ggml_backend_reg_t cpu_reg) {
+    const char *enabled = getenv("EI_CPU_REPACK2");
+    if (s->n_backends != 1 || !enabled || strcmp(enabled, "1") != 0) return;
+    ggml_backend_dev_get_extra_bufts_t get_extra = (ggml_backend_dev_get_extra_bufts_t)
+        ggml_backend_reg_get_proc_address(cpu_reg, "ggml_backend_dev_get_extra_bufts");
+    ggml_backend_buffer_type_t buft = NULL;
+    ggml_backend_buffer_type_t *types = get_extra ? get_extra(ggml_backend_get_device(s->backends[0])) : NULL;
+    for (; types && *types; ++types) {
+        if (strcmp(ggml_backend_buft_name(*types), "CPU_REPACK") == 0) { buft = *types; break; }
+    }
+    if (!buft) { fprintf(stderr, "CPU Q8 repack: unavailable\n"); return; }
+    size_t tensor_count = 0;
+    for (struct ggml_tensor *w = ggml_get_first_tensor(s->weights); w; w = ggml_get_next_tensor(s->weights, w)) ++tensor_count;
+    s->cpu_repack_buffers = ei_xcalloc(tensor_count, sizeof *s->cpu_repack_buffers);
+    size_t bytes = 0;
+    for (struct ggml_tensor *w = ggml_get_first_tensor(s->weights); w; w = ggml_get_next_tensor(s->weights, w)) {
+        // Token lookup requires the original row layout. All other Q8 matrices
+        // in this model are MUL_MAT weights; BF16/F32 weights stay mapped.
+        if (w->type != GGML_TYPE_Q8_0 || ggml_n_dims(w) != 2 || strcmp(w->name, "token_embd.weight") == 0) continue;
+        void *mapped_data = w->data;
+        ggml_backend_buffer_t buffer = ggml_backend_buft_alloc_buffer(buft, ggml_backend_buft_get_alloc_size(buft, w));
+        if (!buffer) ei_die("cannot allocate CPU repacked weights");
+        w->data = NULL; w->buffer = NULL;
+        if (ggml_backend_tensor_alloc(buffer, w, ggml_backend_buffer_get_base(buffer)) != GGML_STATUS_SUCCESS)
+            ei_die("cannot initialize CPU repacked weights");
+        // The selected module chooses the layout from its actual ISA support.
+        // A baseline module can expose CPU_REPACK without a Q8 implementation.
+        if (!w->extra) {
+            w->buffer = s->weight_buffer; w->data = mapped_data;
+            ggml_backend_buffer_free(buffer);
+            continue;
+        }
+        ggml_backend_buffer_set_usage(buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+        ggml_backend_tensor_set(w, mapped_data, 0, ggml_nbytes(w));
+        bytes += ggml_backend_buffer_get_size(buffer);
+        s->cpu_repack_buffers[s->cpu_repack_count++] = buffer;
+    }
+    fprintf(stderr, "CPU Q8 repack: %zu matrices, %.2f MiB\n", s->cpu_repack_count, bytes / (1024.0 * 1024.0));
+}
+
 void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend) {
     const char *debug_logs = getenv("EI_DEBUG_LOG2");
     void *log_debug = debug_logs && strcmp(debug_logs, "1") == 0 ? (void *)"1" : NULL;
@@ -606,6 +649,7 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
         }
     }
     ggml_backend_buffer_set_usage(s->weight_buffer, GGML_BACKEND_BUFFER_USAGE_WEIGHTS);
+    repack_cpu_weights(s, cpu_reg);
     const char *qkv_flag = getenv("EI_QKV2");
     if (qkv_flag && strcmp(qkv_flag, "1") == 0 &&
         (s->n_backends == 1 || strncmp(e->backend_name, "CUDA", 4) == 0)) {
@@ -779,6 +823,8 @@ void ei_engine_free(ei_engine *e) {
         if (s->qkv_buffer) ggml_backend_buffer_free(s->qkv_buffer);
         if (s->qkv_ctx) ggml_free(s->qkv_ctx);
         ggml_backend_buffer_free(s->weight_buffer);
+        for (size_t i = 0; i < s->cpu_repack_count; ++i) ggml_backend_buffer_free(s->cpu_repack_buffers[i]);
+        free(s->cpu_repack_buffers);
         ggml_free(s->weights);
         for (int i = 0; i < s->n_backends; i++) ggml_backend_free(s->backends[i]);
         pthread_mutex_destroy(&s->mutex);
