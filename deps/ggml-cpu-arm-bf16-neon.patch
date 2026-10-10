@@ -1,0 +1,74 @@
+--- a/ggml/src/ggml-cpu/ggml-cpu-impl.h
++++ b/ggml/src/ggml-cpu/ggml-cpu-impl.h
+@@ -17,6 +17,7 @@
+ 
+ // Frozen during CPU initialization; enabled only in the portable FP16 module.
+ bool ggml_cpu_arm_fp16_acc_f32(void);
++bool ggml_cpu_arm_bf16_neon(void);
+ 
+ struct ggml_compute_params {
+     // ith = thread index, nth = number of threads
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -3857,6 +3857,9 @@
+ }
+ 
+ static bool ggml_arm_fp16_acc_f32 = false;
++static bool ggml_arm_bf16_neon = false;
++
++bool ggml_cpu_arm_bf16_neon(void) { return ggml_arm_bf16_neon; }
+ 
+ bool ggml_cpu_arm_fp16_acc_f32(void) {
+     return ggml_arm_fp16_acc_f32;
+@@ -3875,6 +3878,10 @@
+     static bool is_first_call = true;
+ 
+     if (is_first_call) {
++#if defined(__aarch64__) && defined(__ARM_NEON)
++        const char * bf16_neon = getenv("EI_ARM_BF16_NEON2");
++        ggml_arm_bf16_neon = bf16_neon && strcmp(bf16_neon, "1") == 0;
++#endif
+ #if defined(GGML_USE_ARMV82_BASELINE) && defined(__ARM_FEATURE_FP16_VECTOR_ARITHMETIC)
+         const char * fp16_acc = getenv("EI_ARM_FP16_ACC_F32");
+         ggml_arm_fp16_acc_f32 = fp16_acc && strcmp(fp16_acc, "1") == 0;
+--- a/ggml/src/ggml-cpu/ggml-cpu.cpp
++++ b/ggml/src/ggml-cpu/ggml-cpu.cpp
+@@ -588,6 +588,9 @@
+         if (ggml_cpu_has_arm_fma()) {
+             features.push_back({ "ARM_FMA", "1" });
+         }
++        if (ggml_cpu_arm_bf16_neon()) {
++            features.push_back({ "ARM_BF16_NEON", "1" });
++        }
+         if (ggml_cpu_arm_fp16_acc_f32()) {
+             features.push_back({ "ARM_FP16_ACC_F32", "1" });
+         }
+--- a/ggml/src/ggml-cpu/vec.cpp
++++ b/ggml/src/ggml-cpu/vec.cpp
+@@ -144,6 +144,26 @@
+     GGML_UNUSED(bs);
+     int i = 0;
+     ggml_float sumf = 0;
++
++#if defined(__aarch64__) && defined(__ARM_NEON)
++    if (ggml_cpu_arm_bf16_neon()) {
++        // Expand BF16 bits exactly; retain BF16 activations and FP32 products.
++        float32x4_t accum[4] = {vdupq_n_f32(0), vdupq_n_f32(0), vdupq_n_f32(0), vdupq_n_f32(0)};
++        for (; i + 16 <= n; i += 16) {
++            for (int j = 0; j < 4; ++j) {
++                const float32x4_t a = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(vld1_u16(x + i + 4*j)), 16));
++                const float32x4_t b = vreinterpretq_f32_u32(vshlq_n_u32(vmovl_u16(vld1_u16(y + i + 4*j)), 16));
++                accum[j] = vaddq_f32(accum[j], vmulq_f32(a, b));
++            }
++        }
++        sumf = (ggml_float) vaddvq_f32(vaddq_f32(vaddq_f32(accum[0], accum[2]), vaddq_f32(accum[1], accum[3])));
++        for (; i < n; ++i) {
++            sumf += (ggml_float) (GGML_BF16_TO_FP32(x[i]) * GGML_BF16_TO_FP32(y[i]));
++        }
++        *s = sumf;
++        return;
++    }
++#endif
+ 
+ #if defined(__AVX512BF16__)
+     __m512 c1 = _mm512_setzero_ps();

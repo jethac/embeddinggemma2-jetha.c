@@ -188,12 +188,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio","image","video","mixed"]' || '["full"]') }}
+        modalities: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && !inputs.arm_cuda_compile && '["text,audio"]' || '["full"]') }}
     name: ${{ inputs.arm_cuda_compile && 'EmbeddingGemma 2 (Linux ARM64 CUDA compile/link)' || (github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && format('Matched ARM CPU vs llama ({0})', matrix.modalities) || 'EmbeddingGemma 2 service (Linux ARM64 CPU)') }}
     runs-on: ubuntu-24.04-arm
     container: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && 'nvidia/cuda@sha256:d355f456f7b98601efa6af9d12e58c5503d417e6c84d2e5cde4955c90357508b' || 'ubuntu:22.04' }}
     timeout-minutes: ${{ inputs.benchmark_arm_media && 120 || inputs.arm_cuda_compile && 90 || 60 }}
     env:
+      EI_ARM_BF16_NEON2: ${{ github.event_name == 'workflow_dispatch' && inputs.benchmark_arm_media && '1' || '0' }}
       ARM_CUDA_COMPILE: ${{ github.event_name == 'workflow_dispatch' && inputs.arm_cuda_compile && '1' || '0' }}
     defaults:
       run:

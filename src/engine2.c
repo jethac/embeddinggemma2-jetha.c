@@ -73,6 +73,7 @@ typedef struct {
     bool jpeg_turbo;
     bool arm_dotprod_fp16;
     bool arm_fp16_acc_f32;
+    bool arm_bf16_neon;
     uint64_t graph_clock;
     int threads;
     bool profile;
@@ -102,6 +103,7 @@ uint64_t ei_engine_cache_fingerprint(const ei_engine *e, uint64_t fingerprint) {
     // Numeric variants can change accumulation order. Keep persisted text
     // and HTTP responses separate from the original path and each other.
     const char *domains[] = {
+        s->arm_bf16_neon ? "embeddinggemma2-arm-bf16-neon-v1" : NULL,
         s->arm_dotprod_fp16 ? (s->arm_fp16_acc_f32 ? "embeddinggemma2-arm-dotprod-fp16-acc-f32-v2" : "embeddinggemma2-arm-dotprod-fp16-v1") : NULL,
         s->qkv_buffer ? "embeddinggemma2-packed-qkv-v1" : NULL,
         s->cuda_global_attn ? "embeddinggemma2-cuda-global-attn-v2" : NULL,
@@ -543,10 +545,12 @@ void ei_engine_load_backend(ei_engine *e, const char *path, const char *backend)
     if (!get_features) ei_die("ARM dispatch backend has no feature inventory");
     bool dotprod = false, fp16 = false;
     for (struct ggml_backend_feature *f = get_features(cpu_reg); f && f->name; f++) {
+        if (strcmp(f->name, "ARM_BF16_NEON") == 0) s->arm_bf16_neon = strcmp(f->value, "1") == 0;
         if (strcmp(f->name, "DOTPROD") == 0) dotprod = strcmp(f->value, "1") == 0;
         if (strcmp(f->name, "FP16_VA") == 0) fp16 = strcmp(f->value, "1") == 0;
         if (strcmp(f->name, "ARM_FP16_ACC_F32") == 0) s->arm_fp16_acc_f32 = strcmp(f->value, "1") == 0;
     }
+    if (s->arm_bf16_neon) fprintf(stderr, "ARM BF16 NEON active\n");
     if (dotprod != fp16) ei_die("unexpected partial ARM numeric variant");
     s->arm_dotprod_fp16 = dotprod && fp16;
     fprintf(stderr, "ARM CPU numeric variant: %s\n",

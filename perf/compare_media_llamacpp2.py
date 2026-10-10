@@ -300,6 +300,11 @@ def main():
                             raise RuntimeError(f'ARM comparison loaded different GGML modules: {modules}')
                         print(json.dumps({'matched_arm_precision': 'dotprod-fp16-acc-f32-v2',
                                           'shared_module': str(modules[0])}), flush=True)
+                    if os.environ.get('EI_ARM_BF16_NEON2') == '1':
+                        if 'ARM BF16 NEON active' not in op.log_path.read_text(encoding="utf-8"):
+                            raise RuntimeError('native BF16 NEON path did not activate')
+                        if re.search(r'\bARM_BF16_NEON\s*=\s*1\b', lp.log_path.read_text(encoding="utf-8")):
+                            raise RuntimeError('BF16 NEON experiment leaked into llama.cpp baseline')
                     if a.audio_reference and not references_checked:
                         for reference_path in a.audio_reference:
                             golden = json.loads(reference_path.read_text())
