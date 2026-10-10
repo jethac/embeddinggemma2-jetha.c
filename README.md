@@ -159,6 +159,9 @@ Both engines used three threads. Minimum cosine was 0.999301. The geometric
 mean was 0.801x: one win and nine losses. Other CPU load was 0.58-149.32%;
 engine-order rates varied. This is a virtual GPU result.
 
+The [vision-clamp experiment](perf/optimization_status.md#metal-vision-clamp-experiment)
+lost 3.1% at one client and gained 2.9% at four; the option remains off by default.
+
 | Input | Clients | Ours emb/s | llama.cpp emb/s | Ratio |
 |---|---:|---:|---:|---:|
 | Text | 1 | 2.4354 | 2.6003 | 0.937× |

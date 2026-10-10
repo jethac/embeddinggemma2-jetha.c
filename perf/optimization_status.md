@@ -3008,3 +3008,33 @@ existing service cases, changed image shapes, audio lengths and tones were exact
 Alternating cache-disabled OFF/ON requests on the shared host nevertheless
 measured one-second audio 260.3 -> 262.0 ms (7/20 paired wins) and two-second
 audio 438.2 -> 470.9 ms (1/20). No flag, source path or service change was retained.
+
+## Metal vision-clamp experiment
+
+[Run 38015201441](https://github.com/jethac/embeddinggemma2-jetha.c/actions/runs/38015201441),
+source `e7c2ec3`, used Apple M1 (Virtual), VirtualMac2,1, three cores, 7 GB RAM,
+and the Apple Paravirtual GPU. Both engines used the same installed GGML,
+Q8_0 weights, three threads, 768 dimensions, disabled caches, and both orders.
+Image inputs had 260 tokens. Native enabled only `EI_VISION_CLIP_METADATA2=1`;
+llama.cpp optimization flags were unset. Phase profiling was off.
+
+All five singleton input types had exact native on/off outputs. Minimum
+cosine against llama.cpp was 0.9997692453, for audio.
+
+| Image clients | Native on emb/s | Native off emb/s | On/off ratio |
+|---|---:|---:|---:|
+| 1 | 0.123746 | 0.127764 | 0.968552x |
+| 4 | 0.156297 | 0.151880 | 1.029077x |
+
+The singleton lost 3.1%; four clients gained 2.9%. Other CPU load during the
+singleton passes was 148.98%, 125.18%, 80.80%, and 1.58%. Four-client load
+was 2.66-16.42%. This does not establish a general Metal gain.
+
+| Image clients | Native on emb/s | llama.cpp emb/s | Ratio |
+|---|---:|---:|---:|
+| 1 | 0.110280 | 0.139263 | 0.791877x |
+| 4 | 0.134469 | 0.195783 | 0.686828x |
+
+Both llama.cpp comparisons lost; geometric mean 0.737x. Other CPU load was
+1.62-5.50%. Physical Apple Silicon performance remains unverified.
+The option remains off by default.
